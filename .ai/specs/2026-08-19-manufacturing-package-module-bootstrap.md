@@ -313,6 +313,43 @@ None.
 
 **Fully compliant: Approved at specification level. Implementation remains gated by parent roadmap acceptance.**
 
+## Implementation Status
+
+| Phase | Status | Date | Notes |
+|-------|--------|------|-------|
+| Phase 1 — Package scaffold | Done | 2026-08-28 | `@open-mercato/manufacturing` created with the empty root barrel, the single `manufacturing` module entrypoint, both app manifests, and the DS lint scope. |
+| Phase 2 — Discovery and isolation verification | Done | 2026-08-28 | Metadata, package-contract, activation-parity, and generator-discovery tests added and registered in the repo-wide guard manifest. |
+| Phase 3 — Validation | Done | 2026-08-28 | Package build/typecheck/test, the `build:packages` → `generate` → `build:packages` order, template parity, DS lint, and the repo-wide guards all pass. |
+
+### Phase 1 — Detailed Progress
+- [x] Step 1: `package.json`, `tsconfig.json`, `jest.config.cjs`, `build.mjs`, `watch.mjs` following the current standalone OSS module packages.
+- [x] Step 2: Empty `src/index.ts` and the single `src/modules/manufacturing/index.ts` metadata entrypoint.
+- [x] Step 3: Explicit root and `./modules/manufacturing/index` mappings plus the depth-aware source/dist and JSON convention mappings.
+- [x] Step 4: `@open-mercato/manufacturing` added to `apps/mercato/package.json` and `packages/create-app/template/package.json.template`; neither default `enabledModules` registry activates it.
+- [x] Step 5: Strict design-system ESLint scope for `packages/manufacturing/src/modules/**/backend/**`.
+
+### Phase 2 — Detailed Progress
+- [x] Step 1: `src/modules/manufacturing/__tests__/metadata.test.ts` pins the module id, initial version, and `requires: ['catalog']`.
+- [x] Step 2: `src/__tests__/activation-parity.test.ts` asserts the dependency is installed in both manifests and activated in neither registry; `@open-mercato/manufacturing` is also enforced by `SYNC_INTERNAL_PACKAGE_KEYS` in `scripts/template-sync.ts`.
+- [x] Step 3: `packages/cli/src/lib/generators/__tests__/manufacturing-module-discovery.test.ts` runs the registry generator against the live module source and against the package's real `build.mjs` output, resolved through the published `./modules/manufacturing/index` export.
+- [x] Step 4: The metadata test rejects the retired `manufacturing_base` / `manufacturing_discrete` ids and any hard requirement on or import of WMS, `resources`, or `planner`.
+- [x] Step 5: `src/__tests__/package-contract.test.ts` locks the export map and asserts the source tree holds exactly the two entrypoints with no domain symbol on any public path.
+
+### Phase 3 — Detailed Progress
+- [x] `yarn workspace @open-mercato/manufacturing build | typecheck | test` — 3 suites, 18 tests passing.
+- [x] `yarn build:packages` → `yarn generate` → `yarn build:packages` — clean, with no generated output appearing as tracked source.
+- [x] `yarn typecheck` — 26 workspaces.
+- [x] `yarn template:sync` — src, root-file, and package-dependency parity all in sync.
+- [x] `yarn lint:ds` — 0 errors.
+- [x] `yarn test:repo-wide-guards` — 36 guard files, including the two new cross-package guards.
+
+### Implementation Notes
+
+- The registry generator refuses to emit when an enabled module's `requires` entry is not itself enabled, so the discovery fixture has to activate `catalog` alongside `manufacturing`. That behavior is now covered by the discovery test rather than assumed.
+- The new cross-package tests are enumerated in `scripts/repo-wide-guards.mjs` (a new `@open-mercato/manufacturing` group plus one entry under `@open-mercato/cli`), which the repo requires for any test that reads outside its own workspace.
+- `apps/mercato/package.json` gained a `workspace:*` dependency, so all three Docker stages that pre-copy workspace manifests before installing (`builder`, `dev-build`, and the production `runner` that runs `yarn workspaces focus @open-mercato/app --production`) now copy `packages/manufacturing/package.json`. The `/opt/prebuilt/dist` warm-start seeding list in `docker/scripts/dev-entrypoint.sh` deliberately does NOT include the package — it is a heavy-package subset that already omits eight other workspaces, and `run_setup` builds everything regardless; the loop now documents that.
+- The DS escalation block for `packages/manufacturing` starts at `error` rather than the rollout `warn`, because the package ships no backend UI and therefore has no rollout debt to pay down; the deviation from the two-consecutive-zero-runs procedure is documented inline in `eslint.ds.config.mjs`.
+
 ## Changelog
 
 - 2026-08-19: Created the P1.0a skeleton and recorded activation, dependency, and export questions.
@@ -330,3 +367,4 @@ None.
 - **Commands**: N/A; no mutation exists.
 - **Risks**: Passed; activation, public-surface, dependency, discovery, and future-model risks are explicit.
 - **Verdict**: Approved. Fresh-context scope-cohesion review returned **KEEP**; no split is warranted.
+- 2026-08-28: Implemented Phases 1-3; recorded the implementation status, the catalog-activation requirement surfaced by the registry generator, and the DS escalation rationale.

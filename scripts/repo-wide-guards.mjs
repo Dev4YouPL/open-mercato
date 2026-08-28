@@ -139,6 +139,21 @@ export const REPO_WIDE_GUARDS = [
         path: 'src/lib/generators/__tests__/module-facts.local-reference.test.ts',
         scans: 'live apps/mercato/src/modules/example sources — local-reference fact discovery, projection and source fingerprints (#4991)',
       },
+      {
+        path: 'src/lib/generators/__tests__/manufacturing-module-discovery.test.ts',
+        scans: 'live packages/manufacturing/src/modules sources — the manufacturing module entrypoint resolves from monorepo source and from a built standalone dist tree after explicit activation (#5387)',
+      },
+    ],
+  },
+  {
+    workspace: '@open-mercato/manufacturing',
+    workspaceDir: 'packages/manufacturing',
+    jestConfig: 'jest.config.cjs',
+    tests: [
+      {
+        path: 'src/__tests__/activation-parity.test.ts',
+        scans: 'apps/mercato and packages/create-app/template manifests and module registries — the manufacturing package is installed in both apps and activated in neither (#5387)',
+      },
     ],
   },
   {

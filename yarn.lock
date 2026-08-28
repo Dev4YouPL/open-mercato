@@ -8105,6 +8105,7 @@ __metadata:
     "@open-mercato/enterprise": "workspace:*"
     "@open-mercato/events": "workspace:*"
     "@open-mercato/gateway-stripe": "workspace:*"
+    "@open-mercato/manufacturing": "workspace:*"
     "@open-mercato/onboarding": "workspace:*"
     "@open-mercato/queue": "workspace:*"
     "@open-mercato/scheduler": "workspace:*"
@@ -8534,6 +8535,21 @@ __metadata:
     "@open-mercato/shared": "workspace:*"
     react: ^19.0.0
     react-dom: ^19.0.0
+  languageName: unknown
+  linkType: soft
+
+"@open-mercato/manufacturing@workspace:*, @open-mercato/manufacturing@workspace:packages/manufacturing":
+  version: 0.0.0-use.local
+  resolution: "@open-mercato/manufacturing@workspace:packages/manufacturing"
+  dependencies:
+    "@open-mercato/shared": "workspace:*"
+    "@types/jest": "npm:^30.0.0"
+    "@types/node": "npm:^26.1.2"
+    jest: "npm:^30.4.2"
+    ts-jest: "npm:^29.4.12"
+    typescript: "npm:7.0.2"
+  peerDependencies:
+    "@open-mercato/shared": "workspace:*"
   languageName: unknown
   linkType: soft
 
