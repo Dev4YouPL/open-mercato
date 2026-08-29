@@ -39,6 +39,8 @@ Source doc: `.ai/specs/2026-08-19-manufacturing-work-centres.md`
 
 ## Progress
 
+PR: #3 (link: https://github.com/Dev4YouPL/open-mercato/pull/3)
+
 > Convention: `- [ ]` pending, `- [x]` done. Append ` â€” <commit sha>` when a step lands. Do not rename step titles.
 
 ### Phase 1: Review corrections
@@ -49,4 +51,4 @@ Source doc: `.ai/specs/2026-08-19-manufacturing-work-centres.md`
 ### Phase 2: Publication
 
 - [x] 2.1 Validate the documentation diff and commit it with this execution record. — cd91f433a
-- [ ] 2.2 Push the branch and open a ready-for-review documentation PR with the required labels and review summary.
+- [x] 2.2 Push the branch and open a ready-for-review documentation PR with the required labels and review summary. — c729ff2cb
