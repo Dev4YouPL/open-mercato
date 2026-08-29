@@ -1,0 +1,52 @@
+# Execution Plan: Manufacturing Work Centres Specification Review
+
+## Goal
+
+Publish the implementation-readiness corrections and independent re-review for
+the Manufacturing Work Centres specification.
+
+## Scope
+
+- Update only the Work Centres specification and this execution record.
+- Preserve the documented P1.0a prerequisite; do not implement Manufacturing.
+- Open a documentation PR to `Dev4YouPL/open-mercato` against `develop`.
+
+## Non-goals
+
+- No package, runtime-module, API, database, generated-file, or dependency
+  implementation changes.
+- No branch rebase or attempt to satisfy P1.0a in this documentation PR.
+
+## Implementation Plan
+
+### Phase 1: Review corrections
+
+1. Record the implementation-readiness corrections in the Work Centres spec.
+2. Re-review the amended spec independently and record the conditional verdict.
+
+### Phase 2: Publication
+
+1. Validate the documentation diff and commit it with this execution record.
+2. Push the branch and open a ready-for-review documentation PR with the
+   required labels and review summary.
+
+## Risks
+
+The P1.0a implementation prerequisite is deliberately unsatisfied on the
+current branch. This PR documents that gate; it does not bypass it.
+
+Source doc: `.ai/specs/2026-08-19-manufacturing-work-centres.md`
+
+## Progress
+
+> Convention: `- [ ]` pending, `- [x]` done. Append ` â€” <commit sha>` when a step lands. Do not rename step titles.
+
+### Phase 1: Review corrections
+
+- [ ] 1.1 Record the implementation-readiness corrections in the Work Centres spec.
+- [ ] 1.2 Re-review the amended spec independently and record the conditional verdict.
+
+### Phase 2: Publication
+
+- [ ] 2.1 Validate the documentation diff and commit it with this execution record.
+- [ ] 2.2 Push the branch and open a ready-for-review documentation PR with the required labels and review summary.
