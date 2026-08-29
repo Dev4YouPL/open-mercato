@@ -43,10 +43,10 @@ Source doc: `.ai/specs/2026-08-19-manufacturing-work-centres.md`
 
 ### Phase 1: Review corrections
 
-- [ ] 1.1 Record the implementation-readiness corrections in the Work Centres spec.
-- [ ] 1.2 Re-review the amended spec independently and record the conditional verdict.
+- [x] 1.1 Record the implementation-readiness corrections in the Work Centres spec. — cd91f433a
+- [x] 1.2 Re-review the amended spec independently and record the conditional verdict. — cd91f433a
 
 ### Phase 2: Publication
 
-- [ ] 2.1 Validate the documentation diff and commit it with this execution record.
+- [x] 2.1 Validate the documentation diff and commit it with this execution record. — cd91f433a
 - [ ] 2.2 Push the branch and open a ready-for-review documentation PR with the required labels and review summary.
