@@ -196,9 +196,15 @@ consumption. That contract is the conventional Work Centre GET with
 `isActive=true`; it is not a second endpoint or service. It requires
 `manufacturing.work_centers.view`, applies the caller's tenant/organization
 scope, excludes soft-deleted records, and answers an unknown or foreign `ids`
-value with the standard empty, non-disclosing collection result. P1.5 must use
-this predicate for its selector and may not infer activity from a response that
-omits it.
+value with the standard empty, non-disclosing collection result. P1.5 uses this
+predicate for its selector and may not infer activity from a response that
+omits it. P1.5's deliberately permissive draft authoring still requires every
+new non-null `workCenterId` to resolve to a live Work Centre in the caller's
+tenant/organization and protects the stored reference with a scoped composite
+FK. Inactive-but-live Work Centres remain assignable to drafts; the public
+active read contract is a picker, not the authoritative write validator. P1.7
+owns release-time activity/readiness validation before capturing immutable
+Work Centre evidence.
 P1.5 owns the routing contract: one routing operation may reference at most one
 Work Centre, along with operation order, setup/run time, instructions, and any
 future direct operation-level constraints. P1.6 does not select a concrete
@@ -222,8 +228,9 @@ The Work Centre response exposes the stored scalar IDs and count, while an
 authorized UI may resolve current display data through the resources API.
 Missing or unavailable display data is shown as unresolved; Manufacturing does
 not copy a resource state or silently remove the relation or choose a
-replacement. New routing or release validation rejects an inactive or deleted
-resource.
+replacement. A routing's scoped Work Centre FK remains valid when membership
+resources later change; P1.7 decides whether the resulting Work Centre/resource
+evidence is eligible for release.
 
 Manufacturing must not import `ResourcesResource` as a cross-module ORM
 relation or copy name, capacity, type, availability, or active state into its
@@ -467,7 +474,7 @@ the corresponding snake_case names, including `tenant_id`, `organization_id`,
 | `code` | text | Required, trimmed, 1–100 characters, case-insensitively unique per tenant/org among rows with `deletedAt IS NULL`. |
 | `name` | text | Required, trimmed, 1–200 characters. |
 | `description` | text nullable | Optional purpose/instructions, maximum 8000 characters. |
-| `isActive` | boolean | Defaults to `true`. Inactive records cannot be newly referenced by routing or release. |
+| `isActive` | boolean | Defaults to `true`. P1.5 may newly reference an inactive-but-live same-scope Work Centre after authorization; a later soft delete preserves the existing FK for history, while P1.7 decides release eligibility. |
 | `createdAt` | timestamp | Standard creation timestamp. |
 | `updatedAt` | timestamp | Required optimistic-lock version; changes on every parent or membership mutation. |
 | `deletedAt` | timestamp nullable | Soft-delete marker. |
@@ -723,7 +730,7 @@ dashboard are out of scope.
 The list registers the stable DataTable host in module-root
 `extension-points.ts` as `workCentersTable`, using
 `dataTableExtensionHost({ tableId: 'manufacturing.work_centers.list', source:
-'backend/work-centers/components/WorkCentersTableClient.tsx' })`. The client
+'backend/manufacturing/work-centers/components/WorkCentersTableClient.tsx' })`. The client
 passes that exact `extensionTableId` to `DataTable`, exposing the standard
 `data-table:manufacturing.work_centers.list:{columns,row-actions,filters,
 search-trailing,toolbar}` spots. The table context remains the normal scoped
@@ -768,17 +775,17 @@ time, run time, instructions, and operation order.
 
 | Route | Server root | Client island | Data owner |
 |---|---|---|---|
-| `/backend/manufacturing/work-centers` | `backend/work-centers/page.tsx` | `backend/work-centers/components/WorkCentersTableClient.tsx` | Work Centre API |
-| `/backend/manufacturing/work-centers/create` | `backend/work-centers/create/page.tsx` | `backend/work-centers/components/WorkCenterFormClient.tsx` | Work Centre API + optional resources API |
-| `/backend/manufacturing/work-centers/<id>` | `backend/work-centers/[id]/page.tsx` | `backend/work-centers/components/WorkCenterFormClient.tsx` | Work Centre API + optional resources API |
+| `/backend/manufacturing/work-centers` | `backend/manufacturing/work-centers/page.tsx` | `backend/manufacturing/work-centers/components/WorkCentersTableClient.tsx` | Work Centre API |
+| `/backend/manufacturing/work-centers/create` | `backend/manufacturing/work-centers/create/page.tsx` | `backend/manufacturing/work-centers/components/WorkCenterFormClient.tsx` | Work Centre API + optional resources API |
+| `/backend/manufacturing/work-centers/<id>` | `backend/manufacturing/work-centers/[id]/page.tsx` | `backend/manufacturing/work-centers/components/WorkCenterFormClient.tsx` | Work Centre API + optional resources API |
 
 All page roots stay server components and resolve translations, declarative
 feature metadata, and the route shell without loading an optional provider.
 
 | Client file | Exact browser-only reason | Imported by | Heavy deps | Cleanup / hydration risk | Rejected alternative |
 |---|---|---|---|---|---|
-| `backend/work-centers/components/WorkCentersTableClient.tsx` | DataTable state and row-delete conflict recovery | `backend/work-centers/page.tsx` | Shared DataTable only | No subscription; clear mutation state on unmount | A server-only table cannot provide DataTable selection/actions. |
-| `backend/work-centers/components/WorkCenterFormClient.tsx` | CrudForm state and resource lookup through `apiCall` | Create and detail server roots above | Shared CrudForm only | Abort or ignore an unmounted resource lookup; retain no provider state globally | A server form cannot use CrudForm validation, optimistic-lock retry, or asynchronous lookup. |
+| `backend/manufacturing/work-centers/components/WorkCentersTableClient.tsx` | DataTable state and row-delete conflict recovery | `backend/manufacturing/work-centers/page.tsx` | Shared DataTable only | No subscription; clear mutation state on unmount | A server-only table cannot provide DataTable selection/actions. |
+| `backend/manufacturing/work-centers/components/WorkCenterFormClient.tsx` | CrudForm state and resource lookup through `apiCall` | Create and detail server roots above | Shared CrudForm only | Abort or ignore an unmounted resource lookup; retain no provider state globally | A server form cannot use CrudForm validation, optimistic-lock retry, or asynchronous lookup. |
 
 No global provider or bootstrap registry changes; both islands remain route-local.
 
@@ -809,8 +816,9 @@ route errors.
   gets the standard optimistic-lock 409 and the membership set is never
   partially applied. Headerless clients retain the platform's additive behavior.
 - A resource becomes inactive or deleted after membership assignment. The
-  membership remains for history, but new routing/release consumers reject it;
-  no replacement is selected implicitly.
+  membership and any same-scope routing-to-Work-Centre FK remain for history;
+  P1.7 release validation decides whether the resulting evidence is eligible,
+  and no replacement is selected implicitly.
 - Undo or redo encounters a changed parent, a code collision, or a missing
   provider for resource IDs it introduces. It fails closed and never restores
   data in another module.
@@ -1143,6 +1151,7 @@ permission.
 Required database constraints:
 
 - scope index on `manufacturing_work_centers(tenant_id, organization_id)`;
+- unique parent key on `manufacturing_work_centers(id, tenant_id, organization_id)` for P1.5's scoped routing-operation FK;
 - case-insensitive unique index on
   `(tenant_id, organization_id, lower(code)) WHERE deleted_at IS NULL`;
 - scope/index support for membership reads;
@@ -1379,6 +1388,26 @@ existing resources-to-planner module contract;
 planner-independent resources remain a separate future decision.
 
 ## Changelog
+
+- 2026-08-30: Corrected backend source and extension-host paths to
+  `backend/manufacturing/work-centers/**`, matching their documented public
+  routes and module page auto-discovery.
+
+- 2026-08-30: Superseded the earlier opaque-routing-reference decision: P1.5
+  authorizes and resolves every changed non-null Work Centre in scope, uses a
+  composite FK, permits inactive-but-live drafts, preserves later soft deletes,
+  and leaves only release readiness to P1.7.
+
+- 2026-08-30: Removed stale routing-save language from resource and Work Centre
+  rules: inactive/deleted master data remains readable as historical evidence;
+  only P1.7 release validation rejects it after P1.5's permissive draft write.
+
+- 2026-08-30: Aligned the P1.6 active Work Centre selector with P1.5's
+  deliberately permissive draft contract: the selector remains active/scoped
+  and non-blocking for routing-owned saves, while every changed non-null
+  reference is authorized, resolved live in scope, and FK-protected. An
+  unchanged historic reference may be preserved or cleared; P1.7 owns
+  release-time activity validation and immutable evidence.
 
 - 2026-08-30: Closed independent implementation-readiness findings: separated
   `ModuleInfo.requires` from the required npm dependency contract, made

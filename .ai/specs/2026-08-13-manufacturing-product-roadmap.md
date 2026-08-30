@@ -411,7 +411,7 @@ Readiness is evaluated per delivered slice. A later capability is not an implici
 
 ### Gate A: draft definition authoring
 
-After this roadmap is accepted and the dedicated P1.4a/P1.4b/P1.5 implementation specifications pass their readiness reviews, direct-level BOM authoring, bounded multi-level draft preview, and optional sequential-routing CRUD/API/UI may be implemented before stock execution. P1.4a is independently useful without P1.4b, and P1.4b depends on P1.4a. Quantity-bearing Manufacturing contracts consume the Catalog public exact-decimal/UoM policy without owning or tracking Catalog work. Before released routing references freeze, P1.6 must confirm the minimal work-centre extension over `resources`. Drafts may omit `siteId`; they have no stock effects and cannot create executable work.
+After this roadmap is accepted and the dedicated P1.4a/P1.4b/P1.5 implementation specifications pass their readiness reviews, direct-level BOM authoring, bounded multi-level draft preview, and optional sequential-routing CRUD/API/UI may be implemented before stock execution. P1.4a is independently useful without P1.4b, and P1.4b depends on P1.4a. Routing delivery is split: P1.5a establishes product-neutral family/initial-draft identity after P1.0a and shared mutation-resource support; P1.6 independently establishes Work Centres; P1.5b then adds Work Centre-backed operations, and optional P1.5c adds manual reorder. Quantity-bearing Manufacturing contracts consume the Catalog public exact-decimal/UoM policy without owning or tracking Catalog work. Drafts may omit `siteId`; they have no stock effects and cannot create executable work.
 
 ### Gate B: released definitions and production-order lifecycle
 
@@ -419,7 +419,7 @@ Before P1.10 releases an executable order:
 
 1. The external WMS Site contract provides inactive-by-default Sites, required raw-material/finished-goods defaults, one-active-site-per-warehouse semantics, scoping, and immutable consumer snapshots.
 2. The Catalog exact quantity/UoM contract is available for definition and order quantities.
-3. P1.4a/P1.5 provide the accepted BOM/routing definition contracts, and P1.6 defines minimal work centres; P1.4b preview is not a release prerequisite, while calendars and finite scheduling remain optional.
+3. P1.4a, P1.5a and P1.5b provide the accepted BOM/routing definition contracts, and P1.6 defines minimal work centres; P1.5c reorder and P1.4b preview are not release prerequisites, while calendars and finite scheduling remain optional.
 4. P1.7 defines atomic definition release, child-revision selection, occurrence-preserving immutable definition snapshots, cycle rejection and optional sequential routing.
 5. P1.9 defines the Manufacturing-model-neutral append-only fact ledger, acceptance/correction/idempotency primitives and opaque evidence references.
 6. P1.10 defines normal discrete order/operation entities, selects the top-level definition by `plannedStartDate`, persists the execution and warehouse-role snapshots, provides UUID identity plus a simple concurrency-safe site-scoped display number, and owns the basic stock-free confirmation/correction lifecycle.
@@ -451,7 +451,7 @@ The following do not block the first production flow and receive dedicated speci
 | Slice | Primary owner | Required evidence | Current document status |
 |---|---|---|---|
 | WMS Site | WMS | Scope, activation roles, one-active-site-per-warehouse, snapshots, migration, setup UI | External WMS capability; design complete, readiness review pending |
-| Work centres | `resources`, `planner`, Manufacturing | Minimal work-centre/resource boundary and optional sequential routing | Not authored |
+| Work centres | `resources`, `planner`, Manufacturing | Minimal work-centre/resource boundary and optional sequential routing | Full P1.6 specification complete; P1.0a implementation evidence pending |
 | Released definitions | `manufacturing` | Lifecycle, child selection, immutable definition snapshots, cycle validation, fixed/variable/yield semantics; order release is excluded | Not authored; tracked by #5396 |
 | Minimum fact ledger | `manufacturing` model-neutral boundary | Append-only model-neutral facts, acceptance/correction/idempotency primitives and opaque evidence references | Not authored; tracked by #5399 |
 | Discrete order lifecycle and confirmations | `manufacturing` | Order/operation state, top-level definition selection, execution snapshot, simple display number and basic stock-free confirmations/corrections | Not authored; tracked by #5400 |
@@ -695,7 +695,7 @@ Before implementation, every capability spec must:
 7. Include self-contained integration tests for every affected API path and key UI path, disabled optional modules, conflicts/concurrency, reversals, partial failure, and scope isolation.
 8. Complete a pre-implementation review against all public contract surfaces and confirm that the capability is generic product rather than client-specific customization.
 9. For ownership, lifecycle, data-model, effectivity, posting, and public-contract decisions, benchmark current official documentation for SAP S/4HANA, Oracle Fusion Cloud SCM, IFS Cloud, Microsoft Dynamics 365 Supply Chain Management, and Infor CloudSuite Industrial. A capability-specific analysis may omit non-material products only with an explicit rationale. Routine CRUD/UI/ACL or implementation-detail work may rely on an accepted architecture decision without repeating the benchmark. A single vendor is never sufficient evidence for a new architecture rule.
-10. Preserve basic data portability: document bounded BOM/routing import and export plus production-order/fact export when those records ship. Small jobs may run synchronously with explicit limits. Advanced mappings, cross-version migration, continuous synchronization, connectors, and queued bulk migration are separate capabilities.
+10. Preserve basic data portability by assigning bounded BOM/routing import and export plus production-order/fact export to a named capability before the first released-definition or execution slice depends on those records. A deliberately permissive draft-authoring slice may defer this surface explicitly; when introduced, small jobs may run synchronously with explicit limits. Advanced mappings, cross-version migration, continuous synchronization, connectors, and queued bulk migration are separate capabilities.
 
 ## Final Compliance Report - 2026-08-13
 
@@ -745,6 +745,11 @@ No closer `AGENTS.md` exists under `packages/core/src/modules/wms`, `resources`,
 
 ## Changelog
 
+- 2026-08-30: Clarified the data-portability rule: deliberately permissive
+  draft-authoring slices may defer bounded import/export, but a named
+  capability must own it before a released-definition or execution slice
+  depends on the affected records.
+
 - 2026-08-13: Reframed the document as the Manufacturing product roadmap and capability architecture.
 - 2026-08-13: Added Wave 0 foundation contracts for sites, shared resources/calendars, released definitions, WMS postings, UoM precision, minimum facts, quality-aware availability, and ERP-MES confirmations.
 - 2026-08-13: Established that production issues, returns, and receipts belong to Manufacturing while WMS executes and owns physical inventory postings.
@@ -776,6 +781,7 @@ No closer `AGENTS.md` exists under `packages/core/src/modules/wms`, `resources`,
 - 2026-08-28: Proposed in [PR #5729](https://github.com/open-mercato/open-mercato/pull/5729), pending maintainer review: correct ownership boundaries by removing Catalog and WMS delivery tasks from the Manufacturing work-item sequence. Manufacturing consumes their public contracts without owning their scope, tracking, or delivery order; the Manufacturing readiness dashboard retains a complete linked table of the external contracts and the slices they gate.
 - 2026-08-28: Proposed in PR #5729, pending maintainer review: move the WMS Site and warehouse-role capability out of the Manufacturing work-item sequence. It remains an external WMS-owned public contract for later release and order flows, alongside the external Catalog quantity/UoM, WMS precision/evidence, provider-neutral posting, and status/expiry-aware availability contracts.
 - 2026-08-29: Clarified that Catalog/UoM is an external capability-level contract, not a Manufacturing delivery dependency: bootstrap, Work Center/routing, fact-ledger, and other non-quantity work may proceed independently; only quantity-bearing BOM, definition-release, and production-order paths consume the accepted public contract.
+- 2026-08-30: Refined routing delivery into P1.5a family/initial-draft, P1.5b append-operation, and P1.5c reorder slices. P1.6 gates Work Centre-backed P1.5b, not the product-neutral P1.5a foundation; P1.5c is not a P1.7 release prerequisite.
 
 ### Review - 2026-08-13
 

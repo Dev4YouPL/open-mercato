@@ -2,7 +2,7 @@
 
 > A single operational view of the Manufacturing programme. It links the product roadmap, delivery workstreams, capability specifications, and the relevant GitHub Issues and Pull Requests.
 
-**Last reviewed:** 2026-08-29
+**Last reviewed:** 2026-08-30
 **Programme status:** The product roadmap is the accepted baseline for staged Wave 0 delivery. Each slice proceeds only through a dedicated ready specification and its named safety gates.
 
 ## How to use this document
@@ -36,9 +36,9 @@ Catalog and UoM are an external contract boundary, not a Manufacturing delivery 
 | P1.4f | Compare BOM revisions and show where-used | [Spec task #5411](https://github.com/open-mercato/open-mercato/issues/5411) | Post-Wave 0 decision/specification work | P1.4a, P1.4b; P1.7/P1.10 for released/execution visibility | Define occurrence diff and bounded reverse-dependency views without adding planning behavior |
 | P1.4g | Copy a BOM into a new target | [Spec task #5412](https://github.com/open-mercato/open-mercato/issues/5412) | Post-Wave 0 decision/specification work | P1.4a, Catalog exact quantity/UoM contract | One validated copy flow only; no import/export or mass copy |
 | P1.4h | Add BOM customisation and document control | [Spec task #5413](https://github.com/open-mercato/open-mercato/issues/5413) | Post-Wave 0 decision/specification work | P1.4a; P1.7 for released-document semantics | Custom fields, optional tags and controlled attachments/links; provider, retention and ownership remain decisions |
-| P1.5 | Author draft routings and operations | [Spec task #5395](https://github.com/open-mercato/open-mercato/issues/5395) open | Preparation after P1.6 questions are known | P1.0a, P1.6 | Author the specification for an optional single-sequence routing draft without scheduling semantics |
-| P1.6 | Establish the work-centre extension boundary | [Spec task #5394](https://github.com/open-mercato/open-mercato/issues/5394) open | Skeleton/current-state audit now | P1.0a | Resolve resource cardinality, snapshot and planner-absent behavior |
-| P1.7 | Define the released-definition lifecycle and immutable definition snapshots | [Spec task #5396](https://github.com/open-mercato/open-mercato/issues/5396) open | Preparation only until upstream shapes stabilize | External WMS Site contract, Catalog exact quantity/UoM contract, P1.4a, P1.5, P1.6 | Freeze child revisions and occurrence-preserving definition snapshots; stop before order release; P1.4b preview is not a release prerequisite |
+| P1.5 | Author draft routings and operations | [P1.5a families](../../.ai/specs/2026-08-30-manufacturing-routing-drafts.md), [P1.5b operations](../../.ai/specs/2026-08-30-manufacturing-routing-operations.md), [P1.5c reorder](../../.ai/specs/2026-08-30-manufacturing-routing-operation-reordering.md); [spec task #5395](https://github.com/open-mercato/open-mercato/issues/5395) open | Design complete in three independently deployable slices | P1.5a: P1.0a + shared mutation-resource support; P1.5b: P1.5a + P1.6; P1.5c: P1.5b | Deliver family/draft foundation independently, then Work Centre-backed append operation authoring, then bounded manual reorder; no scheduling semantics |
+| P1.6 | Establish the work-centre extension boundary | [Full specification](../../.ai/specs/2026-08-19-manufacturing-work-centres.md); [spec task #5394](https://github.com/open-mercato/open-mercato/issues/5394) open | Design complete; implementation gated | P1.0a | Implement the minimal Work Centre/resource boundary, active scoped lookup, snapshot input and planner-absent behavior |
+| P1.7 | Define the released-definition lifecycle and immutable definition snapshots | [Spec task #5396](https://github.com/open-mercato/open-mercato/issues/5396) open | Preparation only until upstream shapes stabilize | External WMS Site contract, Catalog exact quantity/UoM contract, P1.4a, P1.5a, P1.5b, P1.6; P1.5c optional | Freeze child revisions and occurrence-preserving definition snapshots; stop before order release; P1.4b preview and P1.5c reorder are not release prerequisites |
 | P1.8b | Define the Manufacturing inventory posting adapter | [Spec task #5398](https://github.com/open-mercato/open-mercato/issues/5398) open | Semantic preparation only | External provider-neutral WMS posting contract, P1.9, P1.10 | Translate issue, return, backflush, output, scrap and reversal intent into the generic WMS contract |
 | P1.9 | Define the minimum Manufacturing fact ledger | [Spec task #5399](https://github.com/open-mercato/open-mercato/issues/5399) open | Skeleton/spike pending baseline acceptance | P1.0a | Define append-only model-neutral facts, correction/idempotency primitives and opaque evidence references; no discrete confirmation UI |
 | P1.10 | Add the first discrete production-order lifecycle, execution snapshot and basic confirmations | [Spec task #5400](https://github.com/open-mercato/open-mercato/issues/5400) open; blocked as a shippable feature | Use-case preparation only | External WMS Site contract, Catalog exact quantity/UoM contract, P1.7, P1.9 | Specify top-level definition selection, immutable execution snapshot, lifecycle and stock-free confirmation/correction flow |
@@ -65,10 +65,11 @@ Parallel foundation work
   P1.4a direct BOM draft authoring/integrity → P1.4b bounded multi-level preview
   Post-Wave 0 BOM usability/control lane: P1.4c list workspace, P1.4d identity, P1.4e history/comments,
     P1.4f revision comparison/where-used, P1.4g copy, P1.4h extensibility/document control
-  P1.5 optional sequential routing drafts, P1.6 work-centre boundary
+  P1.5a routing family/initial draft and P1.6 work-centre boundary may proceed independently
+  P1.5a + P1.6 → P1.5b append operations → P1.5c optional reorder
 
 Foundation contracts
-  External WMS Site contract + Catalog quantity/UoM contract for release data + P1.4a + P1.5 + P1.6 → P1.7 released definitions
+  External WMS Site contract + Catalog quantity/UoM contract for release data + P1.4a + P1.5a + P1.5b + P1.6 → P1.7 released definitions
   P1.0a → P1.9 Manufacturing fact ledger
 First shippable production flow
   External WMS Site contract + Catalog quantity/UoM contract for order data + P1.7 + P1.9 → P1.10 lifecycle + execution snapshot + basic confirmations
@@ -79,7 +80,7 @@ Later capability
   P1.13 configurable order/batch/lot/serial number ranges and offline allocation
 ```
 
-The first staged increment is the P1.0a package/module bootstrap, alongside the P1.4a BOM lane, the P1.6 Work Center boundary, and then P1.5 routing/operation drafts. P1.4a consumes Catalog only through its public quantity/UoM contract, which gates its quantity-bearing write paths rather than the wider Manufacturing programme; P1.5 follows P1.6. P1.10 and P1.11 are not implementation work to start now. The WMS Site capability is tracked and delivered by WMS; Manufacturing consumes its public contract only when release and order flows need a site.
+The first staged increment is the P1.0a package/module bootstrap, alongside the P1.4a BOM lane, the P1.5a routing family/initial-draft foundation, and the P1.6 Work Center boundary. P1.5a and P1.6 may proceed independently after their shared bootstrap; P1.5b operation authoring waits for both, and P1.5c waits for P1.5b. P1.4a consumes Catalog only through its public quantity/UoM contract, which gates its quantity-bearing write paths rather than the wider Manufacturing programme. P1.10 and P1.11 are not implementation work to start now. The WMS Site capability is tracked and delivered by WMS; Manufacturing consumes its public contract only when release and order flows need a site.
 
 ## Mandatory BOM rules
 
@@ -109,7 +110,7 @@ The first staged increment is the P1.0a package/module bootstrap, alongside the 
 - Normal completion requires cumulative `good + scrap` to reach planned quantity. Overproduction is rejected; `complete_short` closes the remaining quantity with a required reason.
 - No MRP/demand-signal contract, full bitemporal query engine, mandatory costing valuation context, advanced quality provider, or automatic lot/serial numbering blocks the first production flow.
 - Initial UI and ACL stay narrow: list/detail, create/edit, release, confirm, reverse, with view/manage/execute/reverse permissions; no bulk actions, saved views, advanced analytics, approvals, or segregation-of-duties engine.
-- Manufacturing starts without list/read caching. Basic bounded BOM/routing import/export and production-order/fact export may run synchronously; advanced mappings, connectors, and queued migration remain later capabilities.
+- Manufacturing starts without list/read caching. A named later capability owns basic bounded BOM/routing import/export and production-order/fact export before released-definition or execution flows depend on it; deliberately permissive draft authoring may defer that surface. When introduced, small jobs may run synchronously; advanced mappings, connectors, and queued migration remain later capabilities.
 - Custom fields remain on Site for this slice. BOM/order custom fields and full document control are later; the first core may retain basic instructions and immutable attachment references in release snapshots.
 
 ## Research benchmark policy
