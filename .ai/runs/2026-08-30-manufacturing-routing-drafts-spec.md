@@ -34,6 +34,8 @@ Publish the reviewed Manufacturing P1.5 routing specification set and its aligne
 
 ## Progress
 
+PR: #4
+
 > Convention: `- [ ]` pending, `- [x]` done. Append ` — <commit sha>` when a step lands. Do not rename step titles.
 
 ### Phase 1: Publish reviewed specification set
@@ -43,5 +45,5 @@ Publish the reviewed Manufacturing P1.5 routing specification set and its aligne
 
 ### Phase 2: Verify and publish
 
-- [x] 2.1 Run docs-relevant validation and review the complete diff — pending progress commit
-- [ ] 2.2 Open and finalize the pull request
+- [x] 2.1 Run docs-relevant validation and review the complete diff — 9d8f46fc2
+- [x] 2.2 Open and finalize the pull request — PR #4
