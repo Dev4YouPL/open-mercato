@@ -38,10 +38,10 @@ Publish the reviewed Manufacturing P1.5 routing specification set and its aligne
 
 ### Phase 1: Publish reviewed specification set
 
-- [ ] 1.1 Commit the execution plan
-- [ ] 1.2 Commit the reviewed specifications and documentation alignment
+- [x] 1.1 Commit the execution plan — 60565a40b
+- [x] 1.2 Commit the reviewed specifications and documentation alignment — 81e73bbd7
 
 ### Phase 2: Verify and publish
 
-- [ ] 2.1 Run docs-relevant validation and review the complete diff
+- [x] 2.1 Run docs-relevant validation and review the complete diff — pending progress commit
 - [ ] 2.2 Open and finalize the pull request
