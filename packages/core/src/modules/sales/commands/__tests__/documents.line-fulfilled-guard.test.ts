@@ -12,6 +12,7 @@
  */
 
 import { createContainer, asValue, InjectionMode } from 'awilix'
+import { createCatalogQuantityNormalizationService } from '../../../catalog/services/quantityNormalizationService'
 import { commandRegistry } from '@open-mercato/shared/lib/commands/registry'
 import { CrudHttpError, isCrudHttpError } from '@open-mercato/shared/lib/crud/errors'
 import { SalesOrder, SalesShipment, SalesShipmentItem } from '../../data/entities'
@@ -150,6 +151,9 @@ function makeCtx(em: unknown) {
         lines: input.lines.map(calculateLineResult),
       })),
     }),
+    catalogQuantityNormalizationService: asValue(
+      createCatalogQuantityNormalizationService({ em: em as never }),
+    ),
   })
   return {
     container,

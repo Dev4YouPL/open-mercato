@@ -58,19 +58,14 @@ describe('@open-mercato/manufacturing public surface', () => {
     expect(Object.keys(moduleEntry).sort()).toEqual(['default', 'metadata'])
   })
 
-  it('ships no convention file or domain source beyond the two entrypoints', () => {
-    const sources: string[] = []
-    const walk = (dir: string) => {
-      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-        if (entry.isDirectory()) {
-          if (entry.name === '__tests__') continue
-          walk(path.join(dir, entry.name))
-        } else {
-          sources.push(path.relative(srcRoot, path.join(dir, entry.name)).split(path.sep).join('/'))
-        }
-      }
-    }
-    walk(srcRoot)
-    expect(sources.sort()).toEqual(['index.ts', 'modules/manufacturing/index.ts'])
+  it('adds no BOM-specific DI service key, custom-field declaration, or nested runtime module', () => {
+    const moduleRoot = path.join(srcRoot, 'modules', 'manufacturing')
+    // P1.4a resolves Catalog's frozen resolver through the existing
+    // `catalogQuantityNormalizationService` container key — it never
+    // registers its own DI service (see lib/bom/quantity.ts).
+    expect(fs.existsSync(path.join(moduleRoot, 'di.ts'))).toBe(false)
+    expect(fs.existsSync(path.join(moduleRoot, 'ce.ts'))).toBe(false)
+    const modulesRoot = path.join(srcRoot, 'modules')
+    expect(fs.readdirSync(modulesRoot).sort()).toEqual(['manufacturing'])
   })
 })

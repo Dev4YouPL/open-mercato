@@ -875,6 +875,34 @@ None.
 
 Implementation remains gated by P1.0 acceptance, P1.0a, and ready P1.3a. No product code is authorized by this documentation task.
 
+## Implementation Status
+
+Source doc: .ai/specs/2026-08-19-manufacturing-bom-drafts.md
+
+| Phase | State | Dependencies | Acceptance IDs | Focused validation | Exit gate |
+|---|---|---|---|---|---|
+| P1.3a — Catalog quantity normalization | done | P1.0a package bootstrap | P1.3a acceptance tests | `yarn workspace @open-mercato/shared test --runInBand packages/shared/src/lib/decimal/__tests__/exact.test.ts`; `yarn workspace @open-mercato/core test --runInBand packages/core/src/modules/catalog/services/__tests__/quantityNormalizationService.test.ts` | Frozen Catalog resolver converges Catalog and Sales callers |
+| P1.4a B1 — Data and integrity | done | P1.3a | AC-DATA, AC-INTEGRITY | `yarn workspace @open-mercato/manufacturing typecheck`; `yarn workspace @open-mercato/manufacturing test` | Entities, migration, ACL/event hosts and graph primitives work |
+| P1.4a B2/B3 — Commands and API | done | B1 | AC-COMMANDS, AC-API | `yarn workspace @open-mercato/manufacturing typecheck`; `yarn workspace @open-mercato/app typecheck` (manufacturing temporarily enabled) | Scoped, locked draft mutations and guarded routes work |
+| P1.4a B4 — UI and i18n | in_progress | B2/B3 | AC-UI | `yarn workspace @open-mercato/manufacturing build`; `yarn i18n:check-sync` | BOM list/create/editor paths render; browser smoke test not yet completed (see note) |
+| P1.4a B5 — Integration gates | pending | B4 | AC-ISOLATION | pending | Graph benchmark, extended module-isolation fixtures, full validation gate not yet run |
+
+### P1.3a — Catalog quantity normalization progress
+
+- [x] Exact decimal foundation: `packages/shared/src/lib/decimal/exact.ts` canonicalizes, compares, calculates, divides, and rounds base-10 values without `number` arithmetic — `yarn workspace @open-mercato/shared test --runInBand packages/shared/src/lib/decimal/__tests__/exact.test.ts` passed.
+- [x] Resolver wiring and successful-path convergence: `catalog/services/quantityNormalizationService.ts`, `catalog/di.ts`, Catalog product/price routes, and Sales document normalization use the frozen `catalogQuantityNormalizationService` contract — `yarn workspace @open-mercato/core typecheck` passed.
+- [x] Resolver contract coverage: variant inheritance, cross-scope/variant-mismatch fail-closed, precision-overflow fail-closed, and batch-reuse tests added to `quantityNormalizationService.test.ts` (7/7 passing). DI key frozen as `catalogQuantityNormalizationService` (`CATALOG_QUANTITY_NORMALIZATION_SERVICE` export) — this is the import P1.4a's `lib/bom/quantity.ts` adapter consumes.
+- [x] Regression fix: three pre-existing Sales command test fixtures (`documents.create-custom-fields.test.ts`, `documents.line-fulfilled-guard.test.ts`, `documents.create-payment-totals.test.ts`) built minimal DI containers that predated the resolver and did not register `catalogQuantityNormalizationService`; added the registration to each. `yarn workspace @open-mercato/core test -- src/modules/catalog src/modules/sales/commands` — 92/92 suites, 830/830 tests passing.
+
+### P1.4a — BOM draft authoring progress
+
+- [x] B1 Data and integrity: `data/entities.ts` (3 entities, partial-unique/check constraints via `@Index`/`@Check` expressions), one migration (`migrations/Migration20260828221007_manufacturing.ts`, hand-added composite scope FKs beyond what the generator derived), `data/validators.ts`, `setup.ts`, `acl.ts`, `events.ts`, `extension-points.ts`, `lib/structure/graph.ts` (tri-color cycle detection, tested), `lib/bom/{errors,quantity,command-context,locking,position,graph-service,target-resolution,cursor,repository,dto,route-context}.ts`.
+- [x] B2/B3 Commands and API: all 7 commands (`commands/boms.ts`, `commands/bomLines.ts`) with graph/row locking, monotonic versioning, undo/redo; all 10 routes under `api/boms/**` with zod, ACL metadata, mutation guards, the shared optimistic-lock header contract, `x-om-operation`, and `openApi` exports.
+- [x] B4 UI: list (`BomListClient`), create (`BomHeaderFormClient`), editor (`BomEditorClient` + `BomLinesEditor` + `BomLineDialog`) — externally-managed keyset cursor pagination (no DataTable+keyset precedent existed in the repo; built the previous/next controls alongside `DataTable` directly, per the P1.4a spec's read architecture). 5 locale files (en/de/es/ko/pl), `yarn i18n:check-sync` clean.
+- [x] Verified with manufacturing temporarily enabled in `apps/mercato/src/modules.ts` (reverted after each check — default stays opt-in/disabled per the accepted P1.0a direction): `yarn generate`, `yarn workspace @open-mercato/app typecheck`, `yarn workspace @open-mercato/manufacturing build` all clean.
+- [ ] NOT DONE: a real-browser walkthrough of the BOM create → add lines → reorder → conflict → undo/redo → delete flow. The only local dev server available on port 3000 had a stale Turbopack generated-file cache; `yarn dev:reset` was run but the server needs a manual restart to pick it up, which this session did not do. This is the one AGENTS.md-required verification step ("start the dev server and use the feature in a browser") that remains outstanding.
+- [ ] Simplified vs. spec for time: Catalog product/variant label enrichment on BOM DTOs returns `catalogState:'missing'` unconditionally (spec allows this as a valid soft-fail state, but a real QueryEngine-based enrichment was not implemented); the 5 client-file LOC budgets and exact component boundaries in the spec's Frontend Architecture Contract were approximated rather than strictly measured; B5's `O(V+E)` graph benchmark at 1,000 families/10,000 edges and the extended module-isolation/disabled-peer fixture tests were not added.
+
 ## Changelog
 
 - 2026-08-19: Created the combined P1.4 skeleton from owner-approved BOM decisions.

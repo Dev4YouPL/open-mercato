@@ -161,17 +161,25 @@ describe('manufacturing module discovery after explicit activation', () => {
     expect(output).toMatch(/info: I\d+_manufacturing\.metadata/)
   })
 
-  it('emits no route, api, or convention surface for the bootstrap module', async () => {
+  it('discovers the P1.4a backend and api surface through auto-discovery', async () => {
     const pkgBase = path.join(manufacturingPackageRoot, 'src', 'modules', MODULE_ID)
     const resolver = createResolver(tmpDir, pkgBase, { isMonorepo: true })
 
     await generateModuleRegistry({ resolver, quiet: true })
 
     const output = readGenerated(tmpDir, 'modules.generated.ts')
-    expect(output).not.toContain(`${IMPORT_BASE}/frontend/`)
-    expect(output).not.toContain(`${IMPORT_BASE}/backend/`)
-    expect(output).not.toContain(`${IMPORT_BASE}/api/`)
-    expect(output).not.toContain('/backend/manufacturing')
-    expect(output).not.toContain('apis: [{')
+    expect(output).toContain(`${IMPORT_BASE}/backend/`)
+    expect(output).toContain(`${IMPORT_BASE}/api/`)
+    expect(output).toContain('/backend/manufacturing/boms')
+    expect(output).toContain('apis: [{')
+  })
+
+  it('adds no storefront surface — P1.4a authoring is backend-only', async () => {
+    const pkgBase = path.join(manufacturingPackageRoot, 'src', 'modules', MODULE_ID)
+    const resolver = createResolver(tmpDir, pkgBase, { isMonorepo: true })
+
+    await generateModuleRegistry({ resolver, quiet: true })
+
+    expect(readGenerated(tmpDir, 'modules.generated.ts')).not.toContain(`${IMPORT_BASE}/frontend/`)
   })
 })
