@@ -16,7 +16,7 @@ const BLACK = 2
  */
 export function detectCycle(edges: DirectedGraphEdges): CycleDetectionResult {
   const color = new Map<string, number>()
-  const nodes = Array.from(edges.keys()).sort()
+  const nodes = Array.from(edges.keys()).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
 
   for (const start of nodes) {
     if (color.get(start) === BLACK) continue

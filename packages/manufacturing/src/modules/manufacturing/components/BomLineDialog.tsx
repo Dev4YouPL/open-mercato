@@ -1,20 +1,15 @@
 "use client"
 
 import * as React from "react"
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@open-mercato/ui/primitives/dialog"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@open-mercato/ui/primitives/dialog"
 import { useDialogKeyHandler } from "@open-mercato/ui/hooks/useDialogKeyHandler"
 import { CrudForm, type CrudField, type CrudCustomFieldRenderProps } from "@open-mercato/ui/backend/CrudForm"
-import { LookupSelect } from "@open-mercato/ui/backend/inputs"
+import type { ComboboxOption } from "@open-mercato/ui/backend/inputs"
 import { createCrud, updateCrud } from "@open-mercato/ui/backend/utils/crud"
 import { buildOptimisticLockHeader, extractOptimisticLockConflict } from "@open-mercato/ui/backend/utils/optimisticLock"
 import { flash } from "@open-mercato/ui/backend/FlashMessages"
 import { useT } from "@open-mercato/shared/lib/i18n/context"
-import {
-  loadProductDefaultUnitCode,
-  loadProductOptions,
-  loadProductUnitOptions,
-  loadVariantOptions,
-} from "./catalogLookups"
+import { ProductPicker, UnitPicker, VariantPicker, applyProductSelection } from "./BomCatalogPickers"
 import { toBomFormError } from "./bomFormErrors"
 import { extensionPoints } from "../extension-points"
 
@@ -29,10 +24,15 @@ export type BomLineFormValues = {
   supplyMode: "stock" | "produce"
 }
 
+const PRODUCT_SCOPED_FIELDS = { variant: "componentVariantId", unit: "quantityUnitCode" }
+
 export function BomLineDialog({
   bomId,
   revisionUpdatedAt,
   initial,
+  position,
+  componentSeed,
+  variantSeed,
   onClose,
   onSaved,
   onConflict,
@@ -40,6 +40,9 @@ export function BomLineDialog({
   bomId: string
   revisionUpdatedAt: string
   initial?: BomLineFormValues
+  position?: number
+  componentSeed?: ComboboxOption | null
+  variantSeed?: ComboboxOption | null
   onClose: () => void
   onSaved: () => void
   onConflict: () => void
@@ -94,19 +97,13 @@ export function BomLineDialog({
       required: true,
       layout: "half",
       component: ({ value, setValue, setFormValue }: CrudCustomFieldRenderProps) => (
-        <LookupSelect
-          value={typeof value === "string" ? value : null}
+        <ProductPicker
+          value={value}
+          seed={componentSeed}
           onChange={(next) => {
-            setValue(next ?? null)
-            setFormValue?.("componentVariantId", null)
-            setFormValue?.("quantityUnitCode", null)
-            if (next) {
-              loadProductDefaultUnitCode(next)
-                .then((code) => { if (code) setFormValue?.("quantityUnitCode", code) })
-                .catch(() => { /* the unit picker still lists every valid option */ })
-            }
+            setValue(next)
+            applyProductSelection(next, setFormValue, PRODUCT_SCOPED_FIELDS)
           }}
-          fetchOptions={loadProductOptions}
         />
       ),
     },
@@ -115,18 +112,14 @@ export function BomLineDialog({
       label: t("manufacturing.boms.lines.form.variant", "Variant"),
       type: "custom",
       layout: "half",
-      component: ({ value, setValue, values }: CrudCustomFieldRenderProps) => {
-        const productId = typeof values?.componentProductId === "string" ? values.componentProductId : null
-        return (
-          <LookupSelect
-            key={`variant-${productId ?? "none"}`}
-            value={typeof value === "string" ? value : null}
-            onChange={(next) => setValue(next ?? null)}
-            fetchOptions={(query) => (productId ? loadVariantOptions(productId, query) : Promise.resolve([]))}
-            disabled={!productId}
-          />
-        )
-      },
+      component: ({ value, setValue, values }: CrudCustomFieldRenderProps) => (
+        <VariantPicker
+          value={value}
+          seed={variantSeed}
+          productId={typeof values?.componentProductId === "string" ? values.componentProductId : null}
+          onChange={setValue}
+        />
+      ),
     },
     { id: "quantityValue", label: t("manufacturing.boms.lines.form.quantity", "Quantity"), type: "text", required: true, layout: "third", defaultValue: "1" },
     {
@@ -134,21 +127,13 @@ export function BomLineDialog({
       label: t("manufacturing.boms.lines.form.unit", "Unit"),
       type: "custom",
       layout: "third",
-      component: ({ value, setValue, values }: CrudCustomFieldRenderProps) => {
-        const productId = typeof values?.componentProductId === "string" ? values.componentProductId : null
-        return (
-          <LookupSelect
-            key={`unit-${productId ?? "none"}`}
-            value={typeof value === "string" ? value : null}
-            onChange={(next) => setValue(next ?? null)}
-            fetchOptions={(query) => loadProductUnitOptions(productId, query)}
-            minQuery={0}
-            disabled={!productId}
-            placeholder={t("manufacturing.boms.form.baseOutputUnitPlaceholder", "Select a unit")}
-            emptyLabel={t("manufacturing.boms.form.unitsEmpty", "No units configured for this product in Catalog")}
-          />
-        )
-      },
+      component: ({ value, setValue, values }: CrudCustomFieldRenderProps) => (
+        <UnitPicker
+          value={value}
+          productId={typeof values?.componentProductId === "string" ? values.componentProductId : null}
+          onChange={setValue}
+        />
+      ),
     },
     {
       id: "consumptionBasis",
@@ -161,19 +146,27 @@ export function BomLineDialog({
         { value: "fixed", label: t("manufacturing.boms.lines.basis.fixed", "Fixed") },
       ],
     },
-    { id: "yieldFactor", label: t("manufacturing.boms.lines.form.yield", "Yield factor"), type: "text", layout: "half", defaultValue: "1" },
+    {
+      id: "yieldFactor",
+      label: t("manufacturing.boms.lines.form.yield", "Yield factor"),
+      type: "text",
+      layout: "half",
+      defaultValue: "1",
+      description: t("manufacturing.boms.lines.form.yieldHint", "Between 0 and 1 — the usable share of the consumed quantity."),
+    },
     {
       id: "supplyMode",
       label: t("manufacturing.boms.lines.form.supply", "Supply mode"),
       type: "select",
       layout: "half",
       defaultValue: "stock",
+      description: t("manufacturing.boms.lines.form.supplyHint", "Produce resolves a child BOM; stock is a leaf component."),
       options: [
         { value: "stock", label: t("manufacturing.boms.lines.supply.stock", "Stock") },
         { value: "produce", label: t("manufacturing.boms.lines.supply.produce", "Produce") },
       ],
     },
-  ], [t])
+  ], [componentSeed, t, variantSeed])
 
   const initialValues = React.useMemo<Partial<BomLineFormValues>>(() => initial ?? {
     componentProductId: null,
@@ -197,6 +190,11 @@ export function BomLineDialog({
           <DialogTitle>
             {isEdit ? t("manufacturing.boms.lines.editTitle", "Edit component occurrence") : t("manufacturing.boms.lines.addTitle", "Add component occurrence")}
           </DialogTitle>
+          {isEdit && position !== undefined ? (
+            <DialogDescription>
+              {t("manufacturing.boms.lines.editSubtitle", "Occurrence at position {position}", { position: String(position) })}
+            </DialogDescription>
+          ) : null}
         </DialogHeader>
         <CrudForm<BomLineFormValues>
           entityId={extensionPoints.hosts.bomLineForm.entityId}

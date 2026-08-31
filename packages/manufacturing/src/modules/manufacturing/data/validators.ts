@@ -45,12 +45,19 @@ export const bomLinePatchSchema = z.object({
   supplyMode: supplyModeSchema.optional(),
 })
 
+/**
+ * Form-editable custom fields travel as a flat map of definition key to value;
+ * the platform data engine owns their storage, validation, and typing.
+ */
+export const customFieldsInputSchema = z.record(z.string(), z.unknown())
+
 export const revisionLabelSchema = z.string().trim().max(120).nullable().optional()
 
 export const createBomSchema = z.object({
   target: bomTargetInputSchema,
   revisionLabel: revisionLabelSchema,
   baseOutput: quantityInputSchema,
+  customFields: customFieldsInputSchema.optional(),
 })
 
 export const updateBomSchema = z
@@ -62,9 +69,10 @@ export const updateBomSchema = z
         baseOutput: quantityInputSchema.optional(),
       })
       .optional(),
+    customFields: customFieldsInputSchema.optional(),
   })
-  .refine((value) => value.target !== undefined || value.draft !== undefined, {
-    message: '[internal] At least one of target or draft must be supplied',
+  .refine((value) => value.target !== undefined || value.draft !== undefined || value.customFields !== undefined, {
+    message: '[internal] At least one of target, draft, or customFields must be supplied',
   })
 
 export const reorderLineSchema = z.object({

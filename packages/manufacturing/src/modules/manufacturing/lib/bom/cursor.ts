@@ -64,7 +64,7 @@ export function decodeLineCursor(token: string | undefined): LineCursor | null {
 
 export function filterDigest(parts: Record<string, string | undefined | null>): string {
   const normalized = Object.keys(parts)
-    .sort()
+    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
     .map((key) => `${key}=${parts[key] ?? ''}`)
     .join('&')
   let hash = 0

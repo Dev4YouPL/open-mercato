@@ -5,13 +5,12 @@ import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { Page, PageBody } from "@open-mercato/ui/backend/Page"
 import { DataTable } from "@open-mercato/ui/backend/DataTable"
+import type { FilterDef, FilterValues } from "@open-mercato/ui/backend/FilterOverlay"
 import type { LegacyColumnDef as ColumnDef } from "@tanstack/react-table/legacy"
 import { Button } from "@open-mercato/ui/primitives/button"
-import { IconButton } from "@open-mercato/ui/primitives/icon-button"
+import { StatusBadge } from "@open-mercato/ui/primitives/status-badge"
 import { RowActions } from "@open-mercato/ui/backend/RowActions"
 import { ListEmptyState } from "@open-mercato/ui/backend/filters/ListEmptyState"
-import { FilteredEmptyResults } from "@open-mercato/ui/backend/filters/FilteredEmptyResults"
-import { LookupSelect } from "@open-mercato/ui/backend/inputs"
 import { ErrorMessage } from "@open-mercato/ui/backend/detail"
 import { apiCall, apiCallOrThrow } from "@open-mercato/ui/backend/utils/apiCall"
 import { buildOptimisticLockHeader } from "@open-mercato/ui/backend/utils/optimisticLock"
@@ -19,9 +18,9 @@ import { useGuardedMutation } from "@open-mercato/ui/backend/injection/useGuarde
 import { useConfirmDialog } from "@open-mercato/ui/backend/confirm-dialog"
 import { flash } from "@open-mercato/ui/backend/FlashMessages"
 import { useT } from "@open-mercato/shared/lib/i18n/context"
-import { ChevronLeft, ChevronRight } from "lucide-react"
 import { formatCatalogTarget, parseCatalogLabel, type CatalogLabel } from "./catalogLabels"
-import { loadProductOptionsWithSelection, loadVariantOptionsWithSelection } from "./catalogLookups"
+import { loadProductOptions, loadVariantFilterOptions } from "./catalogLookups"
+import { BomKeysetPager } from "./BomKeysetPager"
 import { useBomPermissions } from "./useBomPermissions"
 
 type BomListRow = {
@@ -63,6 +62,11 @@ function mapItem(item: NonNullable<ListResponse["items"]>[number]): BomListRow {
   }
 }
 
+function readFilterId(values: FilterValues, key: string): string | null {
+  const value = values[key]
+  return typeof value === "string" && value.trim().length ? value : null
+}
+
 export function BomListClient({ extensionTableId }: { extensionTableId: string }) {
   const t = useT()
   const router = useRouter()
@@ -76,9 +80,26 @@ export function BomListClient({ extensionTableId }: { extensionTableId: string }
   const [nextCursor, setNextCursor] = React.useState<string | null>(null)
   const [hasMore, setHasMore] = React.useState(false)
   const [reloadToken, setReloadToken] = React.useState(0)
-  const [filterProductId, setFilterProductId] = React.useState<string | null>(null)
-  const [filterVariantId, setFilterVariantId] = React.useState<string | null>(null)
+  const [filterValues, setFilterValues] = React.useState<FilterValues>({})
+
+  const filterProductId = readFilterId(filterValues, "productId")
+  const filterVariantId = readFilterId(filterValues, "variantId")
   const hasFilters = Boolean(filterProductId || filterVariantId)
+
+  // Filter chips and the reopened overlay both render a raw id until Catalog
+  // answers, so every option a loader returns is remembered by id here.
+  const optionLabels = React.useRef(new Map<string, string>())
+  const [labelVersion, setLabelVersion] = React.useState(0)
+  const rememberOptions = React.useCallback(<T extends { value: string; label: string }>(options: T[]): T[] => {
+    let changed = false
+    for (const option of options) {
+      if (optionLabels.current.get(option.value) === option.label) continue
+      optionLabels.current.set(option.value, option.label)
+      changed = true
+    }
+    if (changed) setLabelVersion((n) => n + 1)
+    return options
+  }, [])
 
   const mutationContextId = "manufacturing-boms-list:delete"
   const { runMutation, retryLastMutation } = useGuardedMutation<{
@@ -128,35 +149,17 @@ export function BomListClient({ extensionTableId }: { extensionTableId: string }
 
   // Any filter change invalidates the cursor stack: a keyset cursor is bound to
   // its filter digest server-side, so replaying it across filters is rejected.
-  const resetCursors = React.useCallback(() => {
+  const applyFilters = React.useCallback((values: FilterValues) => {
+    setFilterValues(values ?? {})
     setCursorStack([undefined])
     setCursorIndex(0)
   }, [])
 
-  const handleProductFilter = React.useCallback((next: string | null) => {
-    setFilterProductId(next)
-    setFilterVariantId(null)
-    resetCursors()
-  }, [resetCursors])
-
-  const handleVariantFilter = React.useCallback((next: string | null) => {
-    setFilterVariantId(next)
-    resetCursors()
-  }, [resetCursors])
-
-  const handleClearFilters = React.useCallback(() => {
-    setFilterProductId(null)
-    setFilterVariantId(null)
-    resetCursors()
-  }, [resetCursors])
+  const handleClearFilters = React.useCallback(() => applyFilters({}), [applyFilters])
 
   const handleNext = React.useCallback(() => {
     if (!nextCursor) return
-    setCursorStack((prev) => {
-      const next = prev.slice(0, cursorIndex + 1)
-      next.push(nextCursor)
-      return next
-    })
+    setCursorStack((prev) => [...prev.slice(0, cursorIndex + 1), nextCursor])
     setCursorIndex((i) => i + 1)
   }, [cursorIndex, nextCursor])
 
@@ -187,11 +190,36 @@ export function BomListClient({ extensionTableId }: { extensionTableId: string }
     }
   }, [confirm, handleRefresh, retryLastMutation, runMutation, t])
 
+  const formatOptionLabel = React.useCallback(
+    (value: string) => optionLabels.current.get(value) ?? value,
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the ref content is versioned by labelVersion
+    [labelVersion],
+  )
+
+  const filters = React.useMemo<FilterDef[]>(() => [
+    {
+      id: "productId",
+      label: t("manufacturing.boms.form.product", "Product"),
+      type: "combobox",
+      placeholder: t("manufacturing.boms.list.filters.productPlaceholder", "Filter by product"),
+      loadOptions: async (query) => rememberOptions(await loadProductOptions(query)),
+      formatValue: formatOptionLabel,
+    },
+    {
+      id: "variantId",
+      label: t("manufacturing.boms.form.variant", "Variant"),
+      type: "combobox",
+      placeholder: t("manufacturing.boms.list.filters.variantPlaceholder", "Filter by variant"),
+      loadOptions: async (query) => rememberOptions(await loadVariantFilterOptions(query)),
+      formatValue: formatOptionLabel,
+    },
+  ], [formatOptionLabel, rememberOptions, t])
+
   const columns = React.useMemo<ColumnDef<BomListRow>[]>(() => [
     {
       accessorKey: "productId",
       header: t("manufacturing.boms.list.columns.target", "Target"),
-      meta: { alwaysVisible: true },
+      meta: { alwaysVisible: true, truncate: true, maxWidth: "320px" },
       cell: ({ row }) => (
         <Link href={`/backend/manufacturing/boms/${row.original.id}`} className="font-medium hover:underline">
           {formatCatalogTarget(row.original.targetLabel, {
@@ -204,21 +232,29 @@ export function BomListClient({ extensionTableId }: { extensionTableId: string }
     {
       accessorKey: "revisionNumber",
       header: t("manufacturing.boms.list.columns.revision", "Revision"),
+      meta: { truncate: true, maxWidth: "220px" },
       cell: ({ row }) => `#${row.original.revisionNumber}${row.original.revisionLabel ? ` — ${row.original.revisionLabel}` : ""}`,
     },
     {
       accessorKey: "lineCount",
       header: t("manufacturing.boms.list.columns.lines", "Direct lines"),
+      meta: { maxWidth: "140px" },
       cell: ({ row }) => row.original.lineCount,
     },
     {
       accessorKey: "unresolvedProduceCount",
       header: t("manufacturing.boms.list.columns.unresolved", "Unresolved"),
-      cell: ({ row }) => row.original.unresolvedProduceCount,
+      meta: { maxWidth: "160px" },
+      cell: ({ row }) => (
+        <StatusBadge variant={row.original.unresolvedProduceCount > 0 ? "warning" : "neutral"} dot>
+          {row.original.unresolvedProduceCount}
+        </StatusBadge>
+      ),
     },
     {
       accessorKey: "updatedAt",
       header: t("manufacturing.boms.list.columns.updatedAt", "Updated"),
+      meta: { maxWidth: "220px" },
       cell: ({ row }) => new Date(row.original.updatedAt).toLocaleString(),
     },
   ], [t])
@@ -233,30 +269,10 @@ export function BomListClient({ extensionTableId }: { extensionTableId: string }
           />
         ) : (
           <>
-            <div className="mb-3 grid gap-3 sm:grid-cols-2">
-              <div>
-                <div className="mb-1 text-sm text-muted-foreground">{t("manufacturing.boms.form.product", "Product")}</div>
-                <LookupSelect
-                  value={filterProductId}
-                  onChange={handleProductFilter}
-                  fetchOptions={(query) => loadProductOptionsWithSelection(query, filterProductId)}
-                  placeholder={t("manufacturing.boms.list.filters.productPlaceholder", "Filter by product")}
-                />
-              </div>
-              <div>
-                <div className="mb-1 text-sm text-muted-foreground">{t("manufacturing.boms.form.variant", "Variant")}</div>
-                <LookupSelect
-                  key={`filter-variant-${filterProductId ?? "none"}`}
-                  value={filterVariantId}
-                  onChange={handleVariantFilter}
-                  fetchOptions={(query) => loadVariantOptionsWithSelection(filterProductId, query, filterVariantId)}
-                  disabled={!filterProductId}
-                  placeholder={t("manufacturing.boms.list.filters.variantPlaceholder", "Filter by variant")}
-                />
-              </div>
-            </div>
             <DataTable<BomListRow>
               extensionTableId={extensionTableId}
+              perspective={{ tableId: extensionTableId }}
+              columnChooser={{ auto: true }}
               title={t("manufacturing.boms.list.title", "BOM drafts")}
               refreshButton={{ label: t("manufacturing.boms.list.actions.refresh", "Refresh"), onRefresh: handleRefresh }}
               actions={canManage ? (
@@ -267,6 +283,10 @@ export function BomListClient({ extensionTableId }: { extensionTableId: string }
               columns={columns}
               data={rows}
               isLoading={isLoading}
+              filters={filters}
+              filterValues={filterValues}
+              onFiltersApply={applyFilters}
+              onFiltersClear={handleClearFilters}
               onRowClick={(row) => router.push(`/backend/manufacturing/boms/${row.id}`)}
               rowActions={(row) => (
                 <RowActions
@@ -278,39 +298,31 @@ export function BomListClient({ extensionTableId }: { extensionTableId: string }
                   ]}
                 />
               )}
-              emptyState={hasFilters ? (
-                <FilteredEmptyResults
-                  entityNamePlural={t("manufacturing.boms.entityPlural", "BOM drafts")}
-                  canRemoveLast={Boolean(filterVariantId)}
-                  onClearAll={handleClearFilters}
-                  onRemoveLast={() => handleVariantFilter(null)}
-                />
-              ) : (
+              filterAwareEmptyState={{
+                active: hasFilters,
+                entityNamePlural: t("manufacturing.boms.entityPlural", "BOM drafts"),
+                entityNamePluralGenitive: t("manufacturing.boms.entityPluralGenitive", "BOM drafts"),
+                canRemoveLast: Boolean(filterVariantId),
+                onClearAll: handleClearFilters,
+                onRemoveLast: () => applyFilters({ ...filterValues, variantId: undefined }),
+              }}
+              emptyState={(
                 <ListEmptyState
                   entityName={t("manufacturing.boms.entityPlural", "BOM drafts")}
+                  entityNameGenitive={t("manufacturing.boms.entityPluralGenitive", "BOM drafts")}
                   createHref={canManage ? "/backend/manufacturing/boms/create" : undefined}
                   createLabel={t("manufacturing.boms.list.actions.new", "New BOM")}
                 />
               )}
             />
-            <div className="mt-3 flex items-center justify-end gap-2">
-              <IconButton
-                type="button"
-                aria-label={t("manufacturing.boms.list.actions.previous", "Previous page")}
-                disabled={cursorIndex === 0 || isLoading}
-                onClick={handlePrevious}
-              >
-                <ChevronLeft />
-              </IconButton>
-              <IconButton
-                type="button"
-                aria-label={t("manufacturing.boms.list.actions.next", "Next page")}
-                disabled={!hasMore || isLoading}
-                onClick={handleNext}
-              >
-                <ChevronRight />
-              </IconButton>
-            </div>
+            <BomKeysetPager
+              page={cursorIndex + 1}
+              hasPrevious={cursorIndex > 0}
+              hasNext={hasMore}
+              isLoading={isLoading}
+              onPrevious={handlePrevious}
+              onNext={handleNext}
+            />
           </>
         )}
         {ConfirmDialogElement}

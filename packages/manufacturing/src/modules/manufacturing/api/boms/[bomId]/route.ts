@@ -9,6 +9,7 @@ import type { UpdateBomCommandInput, DeleteBomCommandInput } from '../../../comm
 import { resolveBomRequestContext, runBomMutationGuards, readExpectedUpdatedAt, operationHeaders, toErrorResponse } from '../../../lib/bom/route-context'
 import { toBomDetailDto, toBomMutationResultDto } from '../../../lib/bom/dto'
 import { loadCatalogLabels } from '../../../lib/bom/catalog-enrichment'
+import { readBomCustomFields } from '../../../lib/bom/custom-fields'
 
 const idParamSchema = z.object({ bomId: z.string().uuid() })
 
@@ -41,7 +42,10 @@ export async function GET(req: Request, routeContext: RouteContext): Promise<Res
   const labels = await loadCatalogLabels(ctx.container, { tenantId, organizationId }, [
     { productId: active.bom.productId, variantId: active.bom.variantId ?? null },
   ])
-  return Response.json(toBomDetailDto(active.bom, active.revision, { count: lineCount, unresolvedProduceCount }, labels))
+  const customFields = await readBomCustomFields(em, { tenantId, organizationId }, active.bom.id)
+  return Response.json(
+    toBomDetailDto(active.bom, active.revision, { count: lineCount, unresolvedProduceCount }, labels, customFields),
+  )
 }
 
 export async function PUT(req: Request, routeContext: RouteContext): Promise<Response> {
@@ -77,6 +81,7 @@ export async function PUT(req: Request, routeContext: RouteContext): Promise<Res
       expectedUpdatedAt: readExpectedUpdatedAt(req),
       target: parsed.data.target,
       draft: parsed.data.draft,
+      customFields: parsed.data.customFields,
     }
     const { result, logEntry } = await commandBus.execute<UpdateBomCommandInput, { bom: import('../../../data/entities').ManufacturingBom; revision: import('../../../data/entities').ManufacturingBomRevision }>(
       'manufacturing.bom.update',

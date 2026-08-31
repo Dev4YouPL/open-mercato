@@ -5,8 +5,8 @@ import { DataTable } from "@open-mercato/ui/backend/DataTable"
 import type { LegacyColumnDef as ColumnDef } from "@tanstack/react-table/legacy"
 import { Button } from "@open-mercato/ui/primitives/button"
 import { IconButton } from "@open-mercato/ui/primitives/icon-button"
+import { StatusBadge, type StatusBadgeVariant } from "@open-mercato/ui/primitives/status-badge"
 import { RowActions } from "@open-mercato/ui/backend/RowActions"
-import { Alert, AlertDescription } from "@open-mercato/ui/primitives/alert"
 import { ListEmptyState } from "@open-mercato/ui/backend/filters/ListEmptyState"
 import { apiCall, apiCallOrThrow } from "@open-mercato/ui/backend/utils/apiCall"
 import { buildOptimisticLockHeader, extractOptimisticLockConflict } from "@open-mercato/ui/backend/utils/optimisticLock"
@@ -17,13 +17,20 @@ import { flash } from "@open-mercato/ui/backend/FlashMessages"
 import { useT } from "@open-mercato/shared/lib/i18n/context"
 import { ArrowUp, ArrowDown } from "lucide-react"
 import { BomLineDialog, type BomLineFormValues } from "./BomLineDialog"
+import { BomKeysetPager } from "./BomKeysetPager"
+import { formatDecimalForDisplay, formatQuantityForDisplay } from "./bomFormatting"
 import { formatCatalogTarget, parseCatalogLabel, type CatalogLabel } from "./catalogLabels"
 import { useBomPermissions } from "./useBomPermissions"
 import { extensionPoints } from "../extension-points"
 
+const PAGE_SIZE = 50
+
 export type BomLineRow = {
   id: string
+  /** Sparse internal ordering key (1024, 2048, …) — never shown to the author. */
   position: number
+  /** The occurrence number an author sees and the dialogs refer to. */
+  ordinal: number
   componentProductId: string
   componentVariantId: string | null
   componentLabel: CatalogLabel
@@ -56,10 +63,18 @@ type LinesResponse = {
   hasMore?: boolean
 }
 
-function mapLine(item: NonNullable<LinesResponse["items"]>[number]): BomLineRow {
+const RESOLUTION_VARIANTS: Record<BomLineRow["resolutionState"], StatusBadgeVariant> = {
+  stock_leaf: "neutral",
+  variant: "success",
+  product_fallback: "info",
+  unresolved: "warning",
+}
+
+function mapLine(item: NonNullable<LinesResponse["items"]>[number], ordinal: number): BomLineRow {
   return {
     id: item.id,
     position: item.position,
+    ordinal,
     componentProductId: item.componentProductId,
     componentVariantId: item.componentVariantId,
     componentLabel: parseCatalogLabel(item.componentLabel),
@@ -121,7 +136,7 @@ export function BomLinesEditor({
     async function load() {
       setIsLoading(true)
       const cursor = cursorStack[cursorIndex]
-      const params = new URLSearchParams({ limit: "50" })
+      const params = new URLSearchParams({ limit: String(PAGE_SIZE) })
       if (cursor) params.set("cursor", cursor)
       const call = await apiCall<LinesResponse>(`/api/manufacturing/boms/${bomId}/lines?${params.toString()}`, undefined, {
         fallback: { items: [], nextCursor: null, hasMore: false },
@@ -135,7 +150,10 @@ export function BomLinesEditor({
         return
       }
       const payload = call.result ?? { items: [] }
-      setRows((payload.items ?? []).map(mapLine))
+      // Every page but the last is exactly `PAGE_SIZE` long, so the page index
+      // is enough to turn the in-page order into an absolute occurrence number.
+      const firstOrdinal = cursorIndex * PAGE_SIZE + 1
+      setRows((payload.items ?? []).map((item, index) => mapLine(item, firstOrdinal + index)))
       setNextCursor(payload.nextCursor ?? null)
       setHasMore(Boolean(payload.hasMore))
       setIsLoading(false)
@@ -186,7 +204,7 @@ export function BomLinesEditor({
         "manufacturing.boms.lines.deleteConfirmDescription",
         "Position {position} — {component}. This cannot be undone from another device.",
         {
-          position: String(row.position),
+          position: String(row.ordinal),
           component: formatCatalogTarget(row.componentLabel, {
             productId: row.componentProductId,
             variantId: row.componentVariantId,
@@ -215,33 +233,83 @@ export function BomLinesEditor({
     }
   }, [bomId, confirm, handleAfterMutation, mutationContextId, onAggregateChange, retryLastMutation, revisionUpdatedAt, runMutation, t])
 
+  const firstPosition = rows.length ? Math.min(...rows.map((row) => row.position)) : null
+  const lastPosition = rows.length ? Math.max(...rows.map((row) => row.position)) : null
+
   const columns = React.useMemo<ColumnDef<BomLineRow>[]>(() => [
-    { accessorKey: "position", header: t("manufacturing.boms.lines.columns.position", "#"), meta: { alwaysVisible: true, maxWidth: "60px" } },
+    {
+      accessorKey: "ordinal",
+      header: t("manufacturing.boms.lines.columns.position", "#"),
+      meta: { alwaysVisible: true, maxWidth: "64px" },
+    },
     {
       accessorKey: "componentProductId",
       header: t("manufacturing.boms.lines.columns.component", "Component"),
-      cell: ({ row }) =>
-        formatCatalogTarget(row.original.componentLabel, {
-          productId: row.original.componentProductId,
-          variantId: row.original.componentVariantId,
-        }),
+      meta: { alwaysVisible: true, truncate: true, maxWidth: "300px" },
+      cell: ({ row }) => (
+        <span className="font-medium">
+          {formatCatalogTarget(row.original.componentLabel, {
+            productId: row.original.componentProductId,
+            variantId: row.original.componentVariantId,
+          })}
+        </span>
+      ),
     },
     {
       accessorKey: "enteredValue",
       header: t("manufacturing.boms.lines.columns.quantity", "Quantity"),
-      cell: ({ row }) => `${row.original.enteredValue} ${row.original.enteredUnitCode} (${row.original.normalizedValue} ${row.original.baseUnitCode})`,
+      meta: { maxWidth: "180px" },
+      cell: ({ row }) => (
+        <span className="whitespace-nowrap">
+          {formatQuantityForDisplay(row.original.enteredValue, row.original.enteredUnitCode)}
+        </span>
+      ),
     },
-    { accessorKey: "consumptionBasis", header: t("manufacturing.boms.lines.columns.basis", "Basis") },
-    { accessorKey: "yieldFactor", header: t("manufacturing.boms.lines.columns.yield", "Yield") },
-    { accessorKey: "supplyMode", header: t("manufacturing.boms.lines.columns.supply", "Supply") },
+    {
+      accessorKey: "normalizedValue",
+      header: t("manufacturing.boms.lines.columns.normalized", "Normalized"),
+      meta: { maxWidth: "180px" },
+      cell: ({ row }) => (
+        <span className="whitespace-nowrap text-muted-foreground">
+          {formatQuantityForDisplay(row.original.normalizedValue, row.original.baseUnitCode)}
+        </span>
+      ),
+    },
+    {
+      accessorKey: "consumptionBasis",
+      header: t("manufacturing.boms.lines.columns.basis", "Basis"),
+      meta: { maxWidth: "140px" },
+      cell: ({ row }) => (row.original.consumptionBasis === "fixed"
+        ? t("manufacturing.boms.lines.basis.fixed", "Fixed")
+        : t("manufacturing.boms.lines.basis.variable", "Variable")),
+    },
+    {
+      accessorKey: "yieldFactor",
+      header: t("manufacturing.boms.lines.columns.yield", "Yield"),
+      meta: { maxWidth: "120px" },
+      cell: ({ row }) => formatDecimalForDisplay(row.original.yieldFactor),
+    },
+    {
+      accessorKey: "supplyMode",
+      header: t("manufacturing.boms.lines.columns.supply", "Supply"),
+      meta: { maxWidth: "140px" },
+      cell: ({ row }) => (
+        <StatusBadge variant={row.original.supplyMode === "produce" ? "info" : "neutral"}>
+          {row.original.supplyMode === "produce"
+            ? t("manufacturing.boms.lines.supply.produce", "Produce")
+            : t("manufacturing.boms.lines.supply.stock", "Stock")}
+        </StatusBadge>
+      ),
+    },
     {
       accessorKey: "resolutionState",
       header: t("manufacturing.boms.lines.columns.resolution", "Resolution"),
-      cell: ({ row }) => row.original.resolutionState === "unresolved" ? (
-        <Alert status="warning" className="py-1">
-          <AlertDescription>{t("manufacturing.boms.lines.unresolvedWarning", "No child BOM found")}</AlertDescription>
-        </Alert>
-      ) : row.original.resolutionState,
+      meta: { maxWidth: "220px" },
+      cell: ({ row }) => (
+        <StatusBadge variant={RESOLUTION_VARIANTS[row.original.resolutionState] ?? "neutral"} dot>
+          {t(`manufacturing.boms.lines.resolution.${row.original.resolutionState}`, row.original.resolutionState)}
+        </StatusBadge>
+      ),
     },
   ], [t])
 
@@ -249,7 +317,11 @@ export function BomLinesEditor({
     <div>
       <DataTable<BomLineRow>
         extensionTableId={extensionPoints.hosts.bomLinesTable.tableId}
+        perspective={{ tableId: extensionPoints.hosts.bomLinesTable.tableId }}
+        columnChooser={{ auto: true }}
+        stickyActionsColumn
         title={t("manufacturing.boms.lines.title", "Direct component occurrences")}
+        refreshButton={{ label: t("manufacturing.boms.lines.actions.refresh", "Refresh"), onRefresh: reloadLines }}
         actions={canManage ? (
           <Button type="button" onClick={() => setDialogState({ mode: "create" })}>
             {t("manufacturing.boms.lines.actions.add", "Add component")}
@@ -258,20 +330,23 @@ export function BomLinesEditor({
         columns={columns}
         data={rows}
         isLoading={isLoading}
+        onRowClick={canManage ? (row) => setDialogState({ mode: "edit", line: row }) : undefined}
         rowActions={canManage ? (row) => (
           <div className="flex items-center gap-1">
             <IconButton
               type="button"
+              variant="ghost"
               aria-label={t("manufacturing.boms.lines.actions.moveUp", "Move up")}
-              disabled={row.position === Math.min(...rows.map((r) => r.position))}
+              disabled={row.position === firstPosition}
               onClick={() => handleMove(row, "up")}
             >
               <ArrowUp />
             </IconButton>
             <IconButton
               type="button"
+              variant="ghost"
               aria-label={t("manufacturing.boms.lines.actions.moveDown", "Move down")}
-              disabled={row.position === Math.max(...rows.map((r) => r.position))}
+              disabled={row.position === lastPosition}
               onClick={() => handleMove(row, "down")}
             >
               <ArrowDown />
@@ -287,38 +362,32 @@ export function BomLinesEditor({
         emptyState={(
           <ListEmptyState
             entityName={t("manufacturing.boms.lines.entityPlural", "component occurrences")}
+            entityNameGenitive={t("manufacturing.boms.lines.entityPluralGenitive", "component occurrences")}
             createLabel={t("manufacturing.boms.lines.actions.add", "Add component")}
             onCreate={canManage ? () => setDialogState({ mode: "create" }) : undefined}
           />
         )}
       />
-      <div className="mt-3 flex items-center justify-end gap-2">
-        <Button
-          type="button"
-          variant="outline"
-          disabled={cursorIndex === 0 || isLoading}
-          onClick={() => setCursorIndex((i) => Math.max(0, i - 1))}
-        >
-          {t("manufacturing.boms.lines.actions.previous", "Previous")}
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          disabled={!hasMore || isLoading}
-          onClick={() => {
-            if (!nextCursor) return
-            setCursorStack((prev) => [...prev.slice(0, cursorIndex + 1), nextCursor])
-            setCursorIndex((i) => i + 1)
-          }}
-        >
-          {t("manufacturing.boms.lines.actions.next", "Next")}
-        </Button>
-      </div>
+      <BomKeysetPager
+        page={cursorIndex + 1}
+        hasPrevious={cursorIndex > 0}
+        hasNext={hasMore}
+        isLoading={isLoading}
+        onPrevious={() => setCursorIndex((i) => Math.max(0, i - 1))}
+        onNext={() => {
+          if (!nextCursor) return
+          setCursorStack((prev) => [...prev.slice(0, cursorIndex + 1), nextCursor])
+          setCursorIndex((i) => i + 1)
+        }}
+      />
       {dialogState ? (
         <BomLineDialog
           bomId={bomId}
           revisionUpdatedAt={revisionUpdatedAt}
           initial={dialogState.mode === "edit" ? toFormValues(dialogState.line) : undefined}
+          position={dialogState.mode === "edit" ? dialogState.line.ordinal : undefined}
+          componentSeed={dialogState.mode === "edit" ? toComponentSeed(dialogState.line) : undefined}
+          variantSeed={dialogState.mode === "edit" ? toVariantSeed(dialogState.line) : undefined}
           onClose={() => setDialogState(null)}
           onSaved={() => {
             setDialogState(null)
@@ -340,12 +409,23 @@ function toFormValues(line: BomLineRow): BomLineFormValues {
     lineId: line.id,
     componentProductId: line.componentProductId,
     componentVariantId: line.componentVariantId,
-    quantityValue: line.enteredValue,
+    // Text inputs get the author-facing value, not the scale-padded storage
+    // form; both re-normalize to the same stored evidence on save.
+    quantityValue: formatDecimalForDisplay(line.enteredValue),
     quantityUnitCode: line.enteredUnitCode,
     consumptionBasis: line.consumptionBasis,
-    yieldFactor: line.yieldFactor,
+    yieldFactor: formatDecimalForDisplay(line.yieldFactor),
     supplyMode: line.supplyMode,
   }
+}
+
+function toComponentSeed(line: BomLineRow) {
+  return { value: line.componentProductId, label: line.componentLabel.productName ?? line.componentProductId }
+}
+
+function toVariantSeed(line: BomLineRow) {
+  if (!line.componentVariantId) return null
+  return { value: line.componentVariantId, label: line.componentLabel.variantName ?? line.componentVariantId }
 }
 
 export default BomLinesEditor

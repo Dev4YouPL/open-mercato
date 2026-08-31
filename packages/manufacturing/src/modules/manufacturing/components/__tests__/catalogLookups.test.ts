@@ -7,10 +7,11 @@ jest.mock('@open-mercato/ui/backend/utils/apiCall', () => ({
 import {
   loadProductDefaultUnitCode,
   loadProductOptions,
-  loadProductOptionsWithSelection,
   loadProductUnitOptions,
+  loadVariantFilterOptions,
   loadVariantOptions,
-  loadVariantOptionsWithSelection,
+  resolveProductLabel,
+  resolveVariantLabel,
 } from '../catalogLookups'
 
 type ApiResponse = { items?: Array<Record<string, unknown>> }
@@ -41,11 +42,11 @@ describe('loadVariantOptions', () => {
     const options = await loadVariantOptions('product-1')
 
     expect(options).toEqual([
-      { id: 'ea6d499c-d4ba-41b0-9a94-3b2b2cd39bbb', title: 'Razor finish', subtitle: 'SHF-RAZ' },
-      { id: '11111111-1111-1111-1111-111111111111', title: 'Classic', subtitle: null },
-      { id: '22222222-2222-2222-2222-222222222222', title: 'SHF-ONLY', subtitle: null },
+      { value: 'ea6d499c-d4ba-41b0-9a94-3b2b2cd39bbb', label: 'Razor finish', description: 'SHF-RAZ' },
+      { value: '11111111-1111-1111-1111-111111111111', label: 'Classic', description: null },
+      { value: '22222222-2222-2222-2222-222222222222', label: 'SHF-ONLY', description: null },
     ])
-    expect(options.every((option) => option.title !== option.id)).toBe(true)
+    expect(options.every((option) => option.label !== option.value)).toBe(true)
   })
 
   it('falls back to the id only when the variant carries no readable label', async () => {
@@ -54,7 +55,7 @@ describe('loadVariantOptions', () => {
     })
 
     await expect(loadVariantOptions('product-1')).resolves.toEqual([
-      { id: 'variant-1', title: 'variant-1', subtitle: null },
+      { value: 'variant-1', label: 'variant-1', description: null },
     ])
   })
 
@@ -64,8 +65,20 @@ describe('loadVariantOptions', () => {
   })
 })
 
+describe('loadVariantFilterOptions', () => {
+  it('searches the whole variant space without pinning a product first', async () => {
+    respondPerUrl({ '/api/catalog/variants': { items: [{ id: 'v-1', name: 'Senior', sku: 'SEN-1' }] } })
+
+    await expect(loadVariantFilterOptions('sen')).resolves.toEqual([
+      { value: 'v-1', label: 'Senior', description: 'SEN-1' },
+    ])
+    expect(apiCallMock.mock.calls[0][0]).toContain('search=sen')
+    expect(apiCallMock.mock.calls[0][0]).not.toContain('productId=')
+  })
+})
+
 describe('loadProductOptions', () => {
-  it('keeps the catalog title and exposes the sku as a subtitle', async () => {
+  it('keeps the catalog title and exposes the sku as a description', async () => {
     respondPerUrl({
       '/api/catalog/products': {
         items: [{ id: 'product-1', title: 'Signature Haircut & Finish', sku: 'SHF' }],
@@ -73,7 +86,7 @@ describe('loadProductOptions', () => {
     })
 
     await expect(loadProductOptions('sig')).resolves.toEqual([
-      { id: 'product-1', title: 'Signature Haircut & Finish', subtitle: 'SHF' },
+      { value: 'product-1', label: 'Signature Haircut & Finish', description: 'SHF' },
     ])
     expect(apiCallMock.mock.calls[0][0]).toContain('search=sig')
   })
@@ -93,9 +106,9 @@ describe('loadProductUnitOptions', () => {
     })
 
     await expect(loadProductUnitOptions('product-1')).resolves.toEqual([
-      { id: 'pc', title: 'pc' },
-      { id: 'box', title: 'box' },
-      { id: 'pallet', title: 'pallet' },
+      { value: 'pc', label: 'pc' },
+      { value: 'box', label: 'box' },
+      { value: 'pallet', label: 'pallet' },
     ])
   })
 
@@ -106,7 +119,7 @@ describe('loadProductUnitOptions', () => {
     })
 
     await expect(loadProductUnitOptions('product-1', 'bo')).resolves.toEqual([
-      { id: 'box', title: 'box' },
+      { value: 'box', label: 'box' },
     ])
   })
 
@@ -139,70 +152,28 @@ describe('loadProductDefaultUnitCode', () => {
   })
 })
 
-describe('selection-aware loaders', () => {
-  it('prepends the saved product so a restored editor value still renders', async () => {
-    apiCallMock.mockImplementation(async (url: string) => {
-      if (url.includes('id=p-saved')) {
-        return { ok: true, status: 200, result: { items: [{ id: 'p-saved', title: 'Saved product', sku: 'SP-1' }] } }
-      }
-      return { ok: true, status: 200, result: { items: [{ id: 'p-other', title: 'Other', sku: null }] } }
-    })
-
-    const options = await loadProductOptionsWithSelection('oth', 'p-saved')
-
-    expect(options.map((option) => option.id)).toEqual(['p-saved', 'p-other'])
-    expect(options[0].title).toBe('Saved product')
-  })
-
-  it('does not duplicate the selection when the query already returned it', async () => {
+describe('label resolvers', () => {
+  it('resolves a saved product id to its catalog label', async () => {
     respondPerUrl({
-      '/api/catalog/products': { items: [{ id: 'p1', title: 'Only', sku: null }] },
+      '/api/catalog/products': { items: [{ id: 'p-saved', title: 'Saved product', sku: 'SP-1' }] },
     })
 
-    const options = await loadProductOptionsWithSelection('onl', 'p1')
-
-    expect(options.map((option) => option.id)).toEqual(['p1'])
+    await expect(resolveProductLabel('p-saved')).resolves.toBe('Saved product')
+    expect(apiCallMock.mock.calls[0][0]).toContain('id=p-saved')
   })
 
-  it('shows only the current selection until something is typed', async () => {
-    apiCallMock.mockImplementation(async (url: string) => {
-      if (url.includes('id=p-saved')) {
-        return { ok: true, status: 200, result: { items: [{ id: 'p-saved', title: 'Saved product', sku: null }] } }
-      }
-      return { ok: true, status: 200, result: { items: [{ id: 'p-a' }, { id: 'p-b' }] } }
-    })
-
-    await expect(loadProductOptionsWithSelection(undefined, 'p-saved')).resolves.toEqual([
-      { id: 'p-saved', title: 'Saved product', subtitle: null },
-    ])
-  })
-
-  it('still lists everything when there is no selection to show', async () => {
+  it('resolves a saved variant id to its catalog label', async () => {
     respondPerUrl({
-      '/api/catalog/products': { items: [{ id: 'p-a', title: 'A', sku: null }, { id: 'p-b', title: 'B', sku: null }] },
+      '/api/catalog/variants': { items: [{ id: 'v-saved', name: 'Saved variant', sku: 'SV-1' }] },
     })
 
-    const options = await loadProductOptionsWithSelection(undefined, null)
-
-    expect(options.map((option) => option.id)).toEqual(['p-a', 'p-b'])
+    await expect(resolveVariantLabel('v-saved')).resolves.toBe('Saved variant')
   })
 
-  it('prepends the saved variant so the editor target stays visible', async () => {
-    apiCallMock.mockImplementation(async (url: string) => {
-      if (url.includes('id=v-saved')) {
-        return { ok: true, status: 200, result: { items: [{ id: 'v-saved', name: 'Saved variant', sku: 'SV-1' }] } }
-      }
-      return { ok: true, status: 200, result: { items: [{ id: 'v-other', name: 'Other', sku: null }] } }
-    })
+  it('keeps an unresolvable reference readable by its raw id (US-BOM-10)', async () => {
+    respondPerUrl({ '/api/catalog/products': { items: [] } })
 
-    const options = await loadVariantOptionsWithSelection('product-1', 'oth', 'v-saved')
-
-    expect(options.map((option) => option.id)).toEqual(['v-saved', 'v-other'])
-  })
-
-  it('returns nothing and skips every request without a product', async () => {
-    await expect(loadVariantOptionsWithSelection(null, 'q', 'v1')).resolves.toEqual([])
-    expect(apiCallMock).not.toHaveBeenCalled()
+    await expect(resolveProductLabel('p-gone')).resolves.toBe('p-gone')
   })
 })
 

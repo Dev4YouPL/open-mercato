@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Page, PageBody } from "@open-mercato/ui/backend/Page"
+import { Page, PageBody, PageHeader } from "@open-mercato/ui/backend/Page"
 import { LoadingMessage, ErrorMessage, RecordNotFoundState } from "@open-mercato/ui/backend/detail"
 import { StatusBadge } from "@open-mercato/ui/primitives/status-badge"
 import { Button } from "@open-mercato/ui/primitives/button"
@@ -10,6 +10,8 @@ import { surfaceRecordConflict } from "@open-mercato/ui/backend/conflicts"
 import { useT } from "@open-mercato/shared/lib/i18n/context"
 import { BomHeaderFormClient, type BomHeaderFormInitial } from "./BomHeaderFormClient"
 import { BomLinesEditor } from "./BomLinesEditor"
+import { formatCatalogTarget, parseCatalogLabel } from "./catalogLabels"
+import { formatDecimalForDisplay } from "./bomFormatting"
 
 type BomDetail = {
   id: string
@@ -23,6 +25,7 @@ type BomDetail = {
     updatedAt: string
   }
   directLineSummary: { count: number; unresolvedProduceCount: number }
+  customFields?: Record<string, unknown>
   updatedAt: string
 }
 
@@ -95,26 +98,49 @@ export function BomEditorClient({ bomId }: { bomId: string }) {
     baseOutputUnitCode: detail.activeDraft.baseOutput.unitCode,
     productName: detail.targetLabel?.productName ?? null,
     variantName: detail.targetLabel?.variantName ?? null,
+    customFields: detail.customFields,
   }
+
+  const targetTitle = formatCatalogTarget(parseCatalogLabel(detail.targetLabel), {
+    productId: detail.target.productId,
+    variantId: detail.target.variantId,
+  })
+  const revisionSuffix = detail.activeDraft.revisionLabel ? ` — ${detail.activeDraft.revisionLabel}` : ""
 
   return (
     <Page>
+      <PageHeader
+        title={targetTitle}
+        description={t("manufacturing.boms.editor.baseOutput", "Base output: {value} {unit} ({normalized} {baseUnit})", {
+          value: formatDecimalForDisplay(detail.activeDraft.baseOutput.value),
+          unit: detail.activeDraft.baseOutput.unitCode,
+          normalized: formatDecimalForDisplay(detail.activeDraft.baseOutput.normalizedValue),
+          baseUnit: detail.activeDraft.baseOutput.baseUnitCode,
+        })}
+        actions={(
+          <>
+            <StatusBadge variant="info" dot>{t("manufacturing.boms.editor.draftBadge", "Draft")}</StatusBadge>
+            <StatusBadge variant="neutral">
+              {`${t("manufacturing.boms.editor.revisionLabel", "Revision #{number}", { number: String(detail.activeDraft.revisionNumber) })}${revisionSuffix}`}
+            </StatusBadge>
+            {detail.directLineSummary.unresolvedProduceCount > 0 ? (
+              <StatusBadge variant="warning" dot>
+                {t("manufacturing.boms.editor.unresolvedBadge", "{count} unresolved", {
+                  count: String(detail.directLineSummary.unresolvedProduceCount),
+                })}
+              </StatusBadge>
+            ) : null}
+          </>
+        )}
+      />
       <PageBody>
-        <div className="mb-4 flex items-center gap-2">
-          <StatusBadge variant="info">{t("manufacturing.boms.editor.draftBadge", "Draft")}</StatusBadge>
-          <span className="text-sm text-muted-foreground">
-            {t("manufacturing.boms.editor.revisionLabel", "Revision #{number}", { number: detail.activeDraft.revisionNumber })}
-          </span>
-        </div>
         <BomHeaderFormClient initial={initial} onSaved={reload} />
-        <div className="mt-6">
-          <BomLinesEditor
-            bomId={detail.id}
-            revisionId={detail.activeDraft.id}
-            revisionUpdatedAt={detail.activeDraft.updatedAt}
-            onAggregateChange={reload}
-          />
-        </div>
+        <BomLinesEditor
+          bomId={detail.id}
+          revisionId={detail.activeDraft.id}
+          revisionUpdatedAt={detail.activeDraft.updatedAt}
+          onAggregateChange={reload}
+        />
       </PageBody>
     </Page>
   )

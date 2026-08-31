@@ -40,9 +40,11 @@ export function toBomDetailDto(
   revision: ManufacturingBomRevision,
   summary: { count: number; unresolvedProduceCount: number },
   labels?: CatalogLabelIndex,
+  customFields?: Record<string, unknown>,
 ) {
   return {
     id: bom.id,
+    customFields: customFields ?? {},
     target: targetOf(bom),
     targetLabel: targetLabelOf(bom, labels),
     activeDraft: {

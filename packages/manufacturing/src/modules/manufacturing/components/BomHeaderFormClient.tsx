@@ -5,20 +5,19 @@ import { useRouter } from "next/navigation"
 import {
   CrudForm,
   type CrudField,
+  type CrudFormGroup,
   type CrudCustomFieldRenderProps,
 } from "@open-mercato/ui/backend/CrudForm"
-import { LookupSelect, type LookupSelectItem } from "@open-mercato/ui/backend/inputs"
+import type { ComboboxOption } from "@open-mercato/ui/backend/inputs"
 import { createCrud, updateCrud } from "@open-mercato/ui/backend/utils/crud"
+import { collectCustomFieldValues } from "@open-mercato/ui/backend/utils/customFieldValues"
 import { flash } from "@open-mercato/ui/backend/FlashMessages"
 import { useT } from "@open-mercato/shared/lib/i18n/context"
-import {
-  loadProductDefaultUnitCode,
-  loadProductOptionsWithSelection,
-  loadProductUnitOptions,
-  loadVariantOptionsWithSelection,
-} from "./catalogLookups"
+import { ProductPicker, UnitPicker, VariantPicker, applyProductSelection } from "./BomCatalogPickers"
+import { formatDecimalForDisplay } from "./bomFormatting"
 import { toBomFormError } from "./bomFormErrors"
 import { useBomPermissions } from "./useBomPermissions"
+import { BOM_ENTITY_ID } from "../lib/bom/entity-ids"
 import { extensionPoints } from "../extension-points"
 
 type BomHeaderFormValues = {
@@ -39,7 +38,10 @@ export type BomHeaderFormInitial = {
   baseOutputUnitCode: string
   productName?: string | null
   variantName?: string | null
+  customFields?: Record<string, unknown>
 }
+
+const PRODUCT_SCOPED_FIELDS = { variant: "variantId", unit: "baseOutputUnitCode" }
 
 export function BomHeaderFormClient({ initial, onSaved }: { initial?: BomHeaderFormInitial; onSaved?: () => void }) {
   const t = useT()
@@ -47,23 +49,14 @@ export function BomHeaderFormClient({ initial, onSaved }: { initial?: BomHeaderF
   const isEdit = Boolean(initial?.bomId)
   const { canManage } = useBomPermissions()
 
-  // Seeds the pickers so an existing target renders immediately instead of an
-  // empty "start typing" box; the loaders keep the selection across queries.
-  const productSeed = React.useMemo<LookupSelectItem[] | undefined>(() => (
-    initial?.productId
-      ? [{ id: initial.productId, title: initial.productName ?? initial.productId }]
-      : undefined
+  // Seeds the pickers so an existing target renders its Catalog label instead
+  // of the stored uuid before the first lookup resolves.
+  const productSeed = React.useMemo<ComboboxOption | null>(() => (
+    initial?.productId ? { value: initial.productId, label: initial.productName ?? initial.productId } : null
   ), [initial?.productId, initial?.productName])
-  const variantSeed = React.useMemo<LookupSelectItem[] | undefined>(() => (
-    initial?.variantId
-      ? [{ id: initial.variantId, title: initial.variantName ?? initial.variantId }]
-      : undefined
+  const variantSeed = React.useMemo<ComboboxOption | null>(() => (
+    initial?.variantId ? { value: initial.variantId, label: initial.variantName ?? initial.variantId } : null
   ), [initial?.variantId, initial?.variantName])
-  const unitSeed = React.useMemo<LookupSelectItem[] | undefined>(() => (
-    initial?.baseOutputUnitCode
-      ? [{ id: initial.baseOutputUnitCode, title: initial.baseOutputUnitCode }]
-      : undefined
-  ), [initial?.baseOutputUnitCode])
 
   const fields = React.useMemo<CrudField[]>(() => [
     {
@@ -71,23 +64,16 @@ export function BomHeaderFormClient({ initial, onSaved }: { initial?: BomHeaderF
       label: t("manufacturing.boms.form.product", "Product"),
       type: "custom",
       required: true,
-      layout: "half",
+      layout: "full",
+      description: t("manufacturing.boms.form.productHint", "The manufactured output this BOM defines."),
       component: ({ value, setValue, setFormValue }: CrudCustomFieldRenderProps) => (
-        <LookupSelect
-          value={typeof value === "string" ? value : null}
+        <ProductPicker
+          value={value}
+          seed={productSeed}
           onChange={(next) => {
-            setValue(next ?? null)
-            setFormValue?.("variantId", null)
-            setFormValue?.("baseOutputUnitCode", null)
-            if (next) {
-              loadProductDefaultUnitCode(next)
-                .then((code) => { if (code) setFormValue?.("baseOutputUnitCode", code) })
-                .catch(() => { /* the unit picker still lists every valid option */ })
-            }
+            setValue(next)
+            applyProductSelection(next, setFormValue, PRODUCT_SCOPED_FIELDS)
           }}
-          options={productSeed}
-          fetchOptions={(query) => loadProductOptionsWithSelection(query, typeof value === "string" ? value : null)}
-          placeholder={t("manufacturing.boms.form.productPlaceholder", "Select a product")}
         />
       ),
     },
@@ -95,77 +81,104 @@ export function BomHeaderFormClient({ initial, onSaved }: { initial?: BomHeaderF
       id: "variantId",
       label: t("manufacturing.boms.form.variant", "Variant"),
       type: "custom",
-      layout: "half",
-      component: ({ value, setValue, values }: CrudCustomFieldRenderProps) => {
-        const productId = typeof values?.productId === "string" ? values.productId : null
-        return (
-          <LookupSelect
-            key={`variant-${productId ?? "none"}`}
-            value={typeof value === "string" ? value : null}
-            onChange={(next) => setValue(next ?? null)}
-            options={variantSeed}
-            fetchOptions={(query) => loadVariantOptionsWithSelection(productId, query, typeof value === "string" ? value : null)}
-            disabled={!productId}
-            placeholder={t("manufacturing.boms.form.variantPlaceholder", "Optional — product-scoped")}
-          />
-        )
-      },
+      layout: "full",
+      component: ({ value, setValue, values }: CrudCustomFieldRenderProps) => (
+        <VariantPicker
+          value={value}
+          seed={variantSeed}
+          productId={typeof values?.productId === "string" ? values.productId : null}
+          onChange={setValue}
+        />
+      ),
     },
     {
       id: "revisionLabel",
       label: t("manufacturing.boms.form.revisionLabel", "Revision label"),
       type: "text",
       layout: "full",
+      description: t("manufacturing.boms.form.revisionLabelHint", "Optional — the system revision number is assigned automatically."),
     },
     {
       id: "baseOutputValue",
       label: t("manufacturing.boms.form.baseOutputValue", "Base output quantity"),
       type: "text",
       required: true,
-      layout: "half",
+      // Stacked, not side by side: this group sits in the narrow second column,
+      // where two half-width fields wrap their labels unevenly and clip the
+      // unit picker.
+      layout: "full",
       defaultValue: "1",
     },
     {
       id: "baseOutputUnitCode",
       label: t("manufacturing.boms.form.baseOutputUnit", "Base unit"),
       type: "custom",
-      layout: "half",
-      component: ({ value, setValue, values }: CrudCustomFieldRenderProps) => {
-        const productId = typeof values?.productId === "string" ? values.productId : null
-        return (
-          <LookupSelect
-            key={`unit-${productId ?? "none"}`}
-            value={typeof value === "string" ? value : null}
-            onChange={(next) => setValue(next ?? null)}
-            options={unitSeed}
-            fetchOptions={(query) => loadProductUnitOptions(productId, query)}
-            minQuery={0}
-            disabled={!productId}
-            placeholder={t("manufacturing.boms.form.baseOutputUnitPlaceholder", "Select a unit")}
-            emptyLabel={t("manufacturing.boms.form.unitsEmpty", "No units configured for this product in Catalog")}
-          />
-        )
-      },
+      layout: "full",
+      description: t("manufacturing.boms.form.baseOutputUnitHint", "Only units configured in Catalog."),
+      component: ({ value, setValue, values }: CrudCustomFieldRenderProps) => (
+        <UnitPicker
+          value={value}
+          productId={typeof values?.productId === "string" ? values.productId : null}
+          onChange={setValue}
+        />
+      ),
     },
-  ], [t, productSeed, variantSeed, unitSeed])
+  ], [productSeed, t, variantSeed])
 
-  const initialValues = React.useMemo<Partial<BomHeaderFormValues>>(() => ({
-    productId: initial?.productId ?? null,
-    variantId: initial?.variantId ?? null,
-    revisionLabel: initial?.revisionLabel ?? null,
-    baseOutputValue: initial?.baseOutputValue ?? "1",
-    baseOutputUnitCode: initial?.baseOutputUnitCode ?? null,
-  }), [initial])
+  const groups = React.useMemo<CrudFormGroup[]>(() => [
+    {
+      id: "target",
+      title: t("manufacturing.boms.form.group.target", "Output target"),
+      column: 1,
+      fields: ["productId", "variantId", "revisionLabel"],
+    },
+    {
+      id: "output",
+      title: t("manufacturing.boms.form.group.output", "Base output"),
+      column: 2,
+      description: t("manufacturing.boms.form.group.outputDescription", "The quantity this BOM produces in one run. Component quantities are entered against it."),
+      fields: ["baseOutputValue", "baseOutputUnitCode"],
+    },
+    {
+      id: "custom",
+      title: t("entities.customFields.title", "Custom Attributes"),
+      column: 2,
+      kind: "customFields",
+    },
+  ], [t])
+
+  const initialValues = React.useMemo<Partial<BomHeaderFormValues>>(() => {
+    const customFieldValues: Record<string, unknown> = {}
+    for (const [key, value] of Object.entries(initial?.customFields ?? {})) {
+      customFieldValues[`cf_${key}`] = value
+    }
+    return {
+      ...customFieldValues,
+      productId: initial?.productId ?? null,
+      variantId: initial?.variantId ?? null,
+      revisionLabel: initial?.revisionLabel ?? null,
+      // The stored value is padded to its column scale; an author edits `1`,
+      // not `1.000000`, and either re-normalizes to the same evidence.
+      baseOutputValue: initial ? formatDecimalForDisplay(initial.baseOutputValue) : "1",
+      baseOutputUnitCode: initial?.baseOutputUnitCode ?? null,
+    }
+  }, [initial])
 
   return (
     <CrudForm<BomHeaderFormValues>
-      entityId={extensionPoints.hosts.bomHeaderForm.entityId}
+      // Custom fields are stored against the platform entity id, while the
+      // widget spot and replacement handle stay on the published
+      // `crud-form:manufacturing.bom` contract.
+      entityIds={[BOM_ENTITY_ID]}
+      injectionSpotId={extensionPoints.hosts.bomHeaderForm.spotId}
+      replacementHandle={extensionPoints.hosts.bomHeaderForm.spotId}
       title={isEdit
         ? t("manufacturing.boms.editor.headerTitle", "BOM header")
         : t("manufacturing.boms.create.title", "New BOM draft")}
       backHref="/backend/manufacturing/boms"
       cancelHref="/backend/manufacturing/boms"
       fields={fields}
+      groups={groups}
       initialValues={initialValues}
       optimisticLockUpdatedAt={initial?.updatedAt ?? null}
       readOnly={!canManage}
@@ -173,11 +186,14 @@ export function BomHeaderFormClient({ initial, onSaved }: { initial?: BomHeaderF
       onSubmit={async (values) => {
         const target = { productId: values.productId, variantId: values.variantId || null }
         const baseOutput = { value: values.baseOutputValue, unitCode: values.baseOutputUnitCode || null }
+        const customFields = collectCustomFieldValues(values as Record<string, unknown>)
+        const hasCustomFields = Object.keys(customFields).length > 0
         try {
           if (isEdit && initial) {
             await updateCrud(`manufacturing/boms/${initial.bomId}`, {
               target,
               draft: { revisionLabel: values.revisionLabel || null, baseOutput },
+              ...(hasCustomFields ? { customFields } : {}),
             })
             flash(t("manufacturing.boms.form.saveSuccess", "BOM header saved"), "success")
             onSaved?.()
@@ -187,6 +203,7 @@ export function BomHeaderFormClient({ initial, onSaved }: { initial?: BomHeaderF
             target,
             revisionLabel: values.revisionLabel || null,
             baseOutput,
+            ...(hasCustomFields ? { customFields } : {}),
           })
           flash(t("manufacturing.boms.form.createSuccess", "BOM draft created"), "success")
           if (result?.bom?.id) router.push(`/backend/manufacturing/boms/${result.bom.id}`)

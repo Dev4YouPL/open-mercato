@@ -9,6 +9,12 @@ import { resolveBomQuantity, type BomQuantityNormalizationSnapshot } from '../li
 import { assertNoCandidateCycle } from '../lib/bom/graph-service'
 import { nextMonotonicTimestamp } from '../lib/bom/version'
 import { BomDomainError } from '../lib/bom/errors'
+import {
+  readBomCustomFields,
+  restoreBomCustomFields,
+  writeBomCustomFields,
+  type CustomFieldSnapshot,
+} from '../lib/bom/custom-fields'
 
 type BomTarget = { productId: string; variantId?: string | null }
 type QuantityInput = { value: string; unitCode?: string | null }
@@ -41,10 +47,16 @@ type BomSnapshot = {
   baseOutputNormalizedQuantity: string
   baseOutputNormalizedUnitCode: string
   baseOutputUomSnapshot: BomQuantityNormalizationSnapshot
+  customFields?: CustomFieldSnapshot
 }
 
-function snapshotOf(bom: ManufacturingBom, revision: ManufacturingBomRevision): BomSnapshot {
+function snapshotOf(
+  bom: ManufacturingBom,
+  revision: ManufacturingBomRevision,
+  customFields?: CustomFieldSnapshot,
+): BomSnapshot {
   return {
+    ...(customFields ? { customFields } : {}),
     bomId: bom.id,
     revisionId: revision.id,
     productId: bom.productId,
@@ -69,6 +81,7 @@ export type CreateBomCommandInput = {
   target: BomTarget
   revisionLabel?: string | null
   baseOutput: QuantityInput
+  customFields?: Record<string, unknown>
 }
 
 type CreateBomResult = { bom: ManufacturingBom; revision: ManufacturingBomRevision }
@@ -78,7 +91,7 @@ const createBomCommand: CommandHandler<CreateBomCommandInput, CreateBomResult> =
   isUndoable: true,
   execute: async (input, ctx) => {
     const scope = requireBomScope(ctx, input)
-    return withBomTransaction(ctx, scope, async (em) => {
+    const created = await withBomTransaction(ctx, scope, async (em) => {
       const variantId = input.target.variantId ?? null
       await assertTargetAvailable(em, { ...scope, productId: input.target.productId, variantId })
 
@@ -128,16 +141,21 @@ const createBomCommand: CommandHandler<CreateBomCommandInput, CreateBomResult> =
       await em.flush()
       return { bom, revision }
     })
+    await writeBomCustomFields(ctx, scope, created.bom.id, input.customFields)
+    return created
   },
-  buildLog: ({ result, ctx }) => ({
-    resourceKind: 'manufacturing.bom',
-    resourceId: result.bom.id,
-    tenantId: result.bom.tenantId,
-    organizationId: result.bom.organizationId,
-    actorUserId: ctx.auth?.userId ?? null,
-    snapshotAfter: snapshotOf(result.bom, result.revision),
-    payload: { undo: { after: snapshotOf(result.bom, result.revision) } },
-  }),
+  buildLog: ({ input, result, ctx }) => {
+    const snapshot = snapshotOf(result.bom, result.revision, input.customFields ?? {})
+    return {
+      resourceKind: 'manufacturing.bom',
+      resourceId: result.bom.id,
+      tenantId: result.bom.tenantId,
+      organizationId: result.bom.organizationId,
+      actorUserId: ctx.auth?.userId ?? null,
+      snapshotAfter: snapshot,
+      payload: { undo: { after: snapshot } },
+    }
+  },
   undo: async ({ logEntry, ctx }) => {
     const payload = extractUndoPayload<{ after: BomSnapshot }>(logEntry)
     const bomId = logEntry?.resourceId ?? payload?.after?.bomId ?? null
@@ -189,6 +207,7 @@ export type UpdateBomCommandInput = {
   expectedUpdatedAt?: string | null
   target?: BomTarget
   draft?: { revisionLabel?: string | null; baseOutput?: QuantityInput }
+  customFields?: Record<string, unknown>
 }
 
 const updateBomCommand: CommandHandler<UpdateBomCommandInput, CreateBomResult> = {
@@ -196,7 +215,10 @@ const updateBomCommand: CommandHandler<UpdateBomCommandInput, CreateBomResult> =
   isUndoable: true,
   execute: async (input, ctx) => {
     const scope = requireBomScope(ctx, input)
-    return withBomTransaction(ctx, scope, async (em) => {
+    const customFieldsBefore = input.customFields
+      ? await readBomCustomFields(ctx.container.resolve<EntityManager>('em').fork(), scope, input.bomId)
+      : undefined
+    const updated = await withBomTransaction(ctx, scope, async (em) => {
       const bom = await em.findOne(ManufacturingBom, { id: input.bomId, ...scope, deletedAt: null })
       if (!bom) throw new BomDomainError('bom.target_conflict', { reason: 'not_found' })
       const revision = await em.findOne(ManufacturingBomRevision, { bom: bom.id, ...scope, status: 'draft', deletedAt: null })
@@ -260,9 +282,18 @@ const updateBomCommand: CommandHandler<UpdateBomCommandInput, CreateBomResult> =
       await em.flush()
       return { bom, revision, before } as CreateBomResult & { before: BomSnapshot }
     })
+    await writeBomCustomFields(ctx, scope, updated.bom.id, input.customFields)
+    const withBefore = updated as CreateBomResult & { before?: BomSnapshot }
+    if (customFieldsBefore && withBefore.before) withBefore.before.customFields = customFieldsBefore
+    return updated
   },
-  buildLog: ({ result, ctx }) => {
+  buildLog: ({ input, result, ctx }) => {
     const withBefore = result as CreateBomResult & { before?: BomSnapshot }
+    const after = snapshotOf(
+      result.bom,
+      result.revision,
+      input.customFields ? { ...withBefore.before?.customFields, ...input.customFields } : undefined,
+    )
     return {
       resourceKind: 'manufacturing.bom',
       resourceId: result.bom.id,
@@ -270,15 +301,16 @@ const updateBomCommand: CommandHandler<UpdateBomCommandInput, CreateBomResult> =
       organizationId: result.bom.organizationId,
       actorUserId: ctx.auth?.userId ?? null,
       snapshotBefore: withBefore.before ?? null,
-      snapshotAfter: snapshotOf(result.bom, result.revision),
-      payload: { undo: { before: withBefore.before ?? null, after: snapshotOf(result.bom, result.revision) } },
+      snapshotAfter: after,
+      payload: { undo: { before: withBefore.before ?? null, after } },
     }
   },
   undo: async ({ logEntry, ctx }) => {
-    const payload = extractUndoPayload<{ before: BomSnapshot | null }>(logEntry)
+    const payload = extractUndoPayload<{ before: BomSnapshot | null; after: BomSnapshot | null }>(logEntry)
     const before = payload?.before
     if (!before || !logEntry?.tenantId || !logEntry?.organizationId) return
     const scope = { tenantId: logEntry.tenantId, organizationId: logEntry.organizationId }
+    await restoreBomCustomFields(ctx, scope, before.bomId, before.customFields, payload?.after?.customFields)
     await withBomTransaction(ctx, scope, async (em) => {
       const bom = await em.findOne(ManufacturingBom, { id: before.bomId, ...scope, deletedAt: null })
       const revision = bom ? await em.findOne(ManufacturingBomRevision, { id: before.revisionId, ...scope, deletedAt: null }) : null

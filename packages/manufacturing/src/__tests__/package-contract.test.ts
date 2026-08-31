@@ -58,14 +58,23 @@ describe('@open-mercato/manufacturing public surface', () => {
     expect(Object.keys(moduleEntry).sort()).toEqual(['default', 'metadata'])
   })
 
-  it('adds no BOM-specific DI service key, custom-field declaration, or nested runtime module', () => {
+  it('adds no BOM-specific DI service key or nested runtime module', () => {
     const moduleRoot = path.join(srcRoot, 'modules', 'manufacturing')
     // P1.4a resolves Catalog's frozen resolver through the existing
     // `catalogQuantityNormalizationService` container key — it never
     // registers its own DI service (see lib/bom/quantity.ts).
     expect(fs.existsSync(path.join(moduleRoot, 'di.ts'))).toBe(false)
-    expect(fs.existsSync(path.join(moduleRoot, 'ce.ts'))).toBe(false)
     const modulesRoot = path.join(srcRoot, 'modules')
     expect(fs.readdirSync(modulesRoot).sort()).toEqual(['manufacturing'])
+  })
+
+  it('declares the BOM family as a custom-field host without shipping field definitions', () => {
+    // Engineering metadata attaches to the family record (US-BOM-30). The
+    // definitions themselves are tenant-owned, so the module registers the
+    // attachment point and nothing else.
+    const ceSource = fs.readFileSync(path.join(srcRoot, 'modules', 'manufacturing', 'ce.ts'), 'utf8')
+    expect(ceSource).toContain('BOM_ENTITY_ID')
+    expect(ceSource).toContain('fields: []')
+    expect(ceSource).not.toContain('manufacturing_bom_line')
   })
 })

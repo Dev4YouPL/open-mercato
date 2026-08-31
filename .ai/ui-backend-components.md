@@ -146,9 +146,9 @@ import { useAdvancedFilterTree } from '@open-mercato/ui/backend/hooks/useAdvance
 | `ActiveFilterChips` | `…/backend/filters/ActiveFilterChips` | `tree`, `fields`, `onRemoveNode`, `onOpen` — renders applied conditions as removable chips |
 | `QuickFilters` | `…/backend/filters/QuickFilters` | `presets: FilterPreset[]` (`{ id, labelKey, build(ctx) }`), `userId`, `onApply` |
 | `useAdvancedFilter` / `useAdvancedFilterTree` | `…/backend/hooks/useAdvancedFilter` | State + validation + serialization for the tree; pair with `AdvancedFilterPanel` |
-| `ListEmptyState` | `…/backend/filters/ListEmptyState` | `entityName`, `createHref`/`onCreate`, `createLabel` — "no records yet" state with create action |
-| `FilteredEmptyResults` | `…/backend/filters/FilteredEmptyResults` | `entityNamePlural`, `onClearAll`, `onRemoveLast`, `onClearSearch` — "filters matched nothing" state |
-| `SearchEmptyResults` | `…/backend/filters/SearchEmptyResults` | `query`, `entityNamePlural`, `onClearSearch` — "search matched nothing" state |
+| `ListEmptyState` | `…/backend/filters/ListEmptyState` | `entityName`, `entityNameGenitive`, `createHref`/`onCreate`, `createLabel` — "no records yet" state with create action |
+| `FilteredEmptyResults` | `…/backend/filters/FilteredEmptyResults` | `entityNamePlural`, `entityNamePluralGenitive`, `onClearAll`, `onRemoveLast`, `onClearSearch` — "filters matched nothing" state |
+| `SearchEmptyResults` | `…/backend/filters/SearchEmptyResults` | `query`, `entityNamePlural`, `entityNamePluralGenitive`, `onClearSearch` — "search matched nothing" state |
 
 ### Example
 

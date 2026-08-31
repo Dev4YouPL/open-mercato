@@ -2,7 +2,7 @@
 
 import { apiCall } from "@open-mercato/ui/backend/utils/apiCall"
 import { toUnitLookupKey } from "@open-mercato/shared/lib/units/unitCodes"
-import type { LookupSelectItem } from "@open-mercato/ui/backend/inputs"
+import type { ComboboxOption } from "@open-mercato/ui/backend/inputs"
 
 type CatalogListResponse = { items?: Array<Record<string, unknown>> }
 
@@ -19,29 +19,35 @@ async function fetchCatalogItems(url: string): Promise<Array<Record<string, unkn
   return Array.isArray(items) ? items : []
 }
 
-export async function loadProductOptions(query?: string): Promise<LookupSelectItem[]> {
-  const params = new URLSearchParams({ pageSize: "8" })
+/**
+ * Catalog pickers render as compact comboboxes: one line of label plus the SKU
+ * as a secondary description. They deliberately carry no product imagery — a
+ * BOM author scans hundreds of component rows, and a thumbnail per option
+ * turns a searchable list into a scrolling gallery.
+ */
+function toProductOption(item: Record<string, unknown>): ComboboxOption {
+  const id = String(item.id)
+  const title = readTrimmedString(item, "title")
+  const sku = readTrimmedString(item, "sku")
+  return { value: id, label: title ?? sku ?? id, description: title && sku ? sku : null }
+}
+
+function toVariantOption(item: Record<string, unknown>): ComboboxOption {
+  const id = String(item.id)
+  const name = readTrimmedString(item, "name")
+  const sku = readTrimmedString(item, "sku")
+  return { value: id, label: name ?? sku ?? id, description: name && sku ? sku : null }
+}
+
+export async function loadProductOptions(query?: string): Promise<ComboboxOption[]> {
+  const params = new URLSearchParams({ pageSize: "20" })
   const term = query?.trim()
   if (term) params.set("search", term)
   const items = await fetchCatalogItems(`/api/catalog/products?${params.toString()}`)
   return items.map(toProductOption)
 }
 
-function toProductOption(item: Record<string, unknown>): LookupSelectItem {
-  const id = String(item.id)
-  const title = readTrimmedString(item, "title")
-  const sku = readTrimmedString(item, "sku")
-  return { id, title: title ?? sku ?? id, subtitle: title && sku ? sku : null }
-}
-
-function toVariantOption(item: Record<string, unknown>): LookupSelectItem {
-  const id = String(item.id)
-  const name = readTrimmedString(item, "name")
-  const sku = readTrimmedString(item, "sku")
-  return { id, title: name ?? sku ?? id, subtitle: name && sku ? sku : null }
-}
-
-export async function loadVariantOptions(productId: string, query?: string): Promise<LookupSelectItem[]> {
+export async function loadVariantOptions(productId: string, query?: string): Promise<ComboboxOption[]> {
   if (!productId) return []
   const params = new URLSearchParams({ productId, pageSize: "50" })
   const term = query?.trim()
@@ -50,68 +56,44 @@ export async function loadVariantOptions(productId: string, query?: string): Pro
   return items.map(toVariantOption)
 }
 
-async function loadProductById(productId: string): Promise<LookupSelectItem | null> {
+/**
+ * The list filter narrows by one variant without first pinning its product, so
+ * it searches the whole Catalog variant space. Product scoping stays inside the
+ * authoring forms, where the product is already chosen.
+ */
+export async function loadVariantFilterOptions(query?: string): Promise<ComboboxOption[]> {
+  const params = new URLSearchParams({ pageSize: "20" })
+  const term = query?.trim()
+  if (term) params.set("search", term)
+  const items = await fetchCatalogItems(`/api/catalog/variants?${params.toString()}`)
+  return items.map(toVariantOption)
+}
+
+async function loadProductById(productId: string): Promise<ComboboxOption | null> {
   const items = await fetchCatalogItems(`/api/catalog/products?id=${encodeURIComponent(productId)}&pageSize=1`)
   return items[0] ? toProductOption(items[0]) : null
 }
 
-async function loadVariantById(variantId: string): Promise<LookupSelectItem | null> {
+async function loadVariantById(variantId: string): Promise<ComboboxOption | null> {
   const items = await fetchCatalogItems(`/api/catalog/variants?id=${encodeURIComponent(variantId)}&pageSize=1`)
   return items[0] ? toVariantOption(items[0]) : null
 }
 
 /**
- * `LookupSelect` renders the selected chip from its own item list, so a value
- * restored from a saved record (the editor's current target) disappears unless
- * the fetcher keeps returning it. Both selection-aware loaders prepend the
- * current selection whenever the query result does not already contain it.
+ * A combobox holding a saved id renders that raw id until the label is
+ * resolved, so both authoring forms and the filter chips resolve eagerly and
+ * fall back to the id when Catalog no longer knows the record (US-BOM-10).
  */
-async function withSelection(
-  items: LookupSelectItem[],
-  selectedId: string | null | undefined,
-  loadById: (id: string) => Promise<LookupSelectItem | null>,
-): Promise<LookupSelectItem[]> {
-  if (!selectedId || items.some((item) => item.id === selectedId)) return items
-  const selected = await loadById(selectedId)
-  return selected ? [selected, ...items] : items
+export async function resolveProductLabel(productId: string): Promise<string> {
+  if (!productId) return productId
+  const option = await loadProductById(productId).catch(() => null)
+  return option?.label ?? productId
 }
 
-/**
- * With no query typed, a picker holding a saved value shows just that value —
- * the compact "current selection" chip. Typing switches to a real search that
- * still keeps the selection in the list so it never vanishes mid-edit.
- */
-async function selectionOnly(
-  selectedId: string | null | undefined,
-  loadById: (id: string) => Promise<LookupSelectItem | null>,
-): Promise<LookupSelectItem[] | null> {
-  if (!selectedId) return null
-  const selected = await loadById(selectedId)
-  return selected ? [selected] : null
-}
-
-export async function loadProductOptionsWithSelection(
-  query: string | undefined,
-  selectedId: string | null | undefined,
-): Promise<LookupSelectItem[]> {
-  if (!query?.trim()) {
-    const only = await selectionOnly(selectedId, loadProductById)
-    if (only) return only
-  }
-  return withSelection(await loadProductOptions(query), selectedId, loadProductById)
-}
-
-export async function loadVariantOptionsWithSelection(
-  productId: string | null,
-  query: string | undefined,
-  selectedId: string | null | undefined,
-): Promise<LookupSelectItem[]> {
-  if (!productId) return []
-  if (!query?.trim()) {
-    const only = await selectionOnly(selectedId, loadVariantById)
-    if (only) return only
-  }
-  return withSelection(await loadVariantOptions(productId, query), selectedId, loadVariantById)
+export async function resolveVariantLabel(variantId: string): Promise<string> {
+  if (!variantId) return variantId
+  const option = await loadVariantById(variantId).catch(() => null)
+  return option?.label ?? variantId
 }
 
 export async function loadProductDefaultUnitCode(productId: string): Promise<string | null> {
@@ -141,7 +123,7 @@ async function loadProductConversionUnitCodes(productId: string): Promise<string
 export async function loadProductUnitOptions(
   productId: string | null,
   query?: string,
-): Promise<LookupSelectItem[]> {
+): Promise<ComboboxOption[]> {
   if (!productId) return []
   const [defaultUnitCode, conversionUnitCodes] = await Promise.all([
     loadProductDefaultUnitCode(productId),
@@ -158,5 +140,5 @@ export async function loadProductUnitOptions(
   }
   const term = query?.trim().toLowerCase()
   const filtered = term ? codes.filter((code) => code.toLowerCase().includes(term)) : codes
-  return filtered.map((code) => ({ id: code, title: code }))
+  return filtered.map((code) => ({ value: code, label: code }))
 }
