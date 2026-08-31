@@ -32,7 +32,7 @@ seed_prebuilt() {
   # workspace (channel-*, enterprise, gateway-stripe, manufacturing, storage-s3, sync-akeneo,
   # telemetry and webhooks are all absent). Omission costs nothing: the loop is guarded, and
   # run_setup below always runs `yarn build:packages`, which builds every package anyway.
-  for pkg in core shared ui cli cache content checkout events onboarding queue search scheduler ai-assistant create-app; do
+  for pkg in core shared ui cli cache content checkout events onboarding queue search scheduler ai-assistant create-app documents; do
     src="$PREBUILT/dist/$pkg"
     dst="/app/packages/$pkg/dist"
     if [ -d "$src" ] && [ -z "$(ls -A "$dst" 2>/dev/null)" ]; then
