@@ -178,8 +178,13 @@ export function BomLineDialog({
     supplyMode: "stock",
   }, [initial])
 
+  const submitEmbeddedForm = React.useCallback(() => {
+    const form = dialogContentRef.current?.querySelector("form")
+    if (form) form.requestSubmit()
+  }, [])
+
   const handleKeyDown = useDialogKeyHandler({
-    onConfirm: () => { /* CrudForm owns Cmd/Ctrl+Enter submit internally */ },
+    onConfirm: submitEmbeddedForm,
     onCancel: onClose,
   })
 

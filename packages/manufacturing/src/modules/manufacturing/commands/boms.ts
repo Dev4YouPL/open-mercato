@@ -8,7 +8,7 @@ import { requireBomScope, withBomTransaction } from '../lib/bom/command-context'
 import { resolveBomQuantity, type BomQuantityNormalizationSnapshot } from '../lib/bom/quantity'
 import { assertNoCandidateCycle } from '../lib/bom/graph-service'
 import { nextMonotonicTimestamp } from '../lib/bom/version'
-import { BomDomainError } from '../lib/bom/errors'
+import { BomDomainError, assertAggregateVersion } from '../lib/bom/errors'
 import {
   readBomCustomFields,
   restoreBomCustomFields,
@@ -224,12 +224,7 @@ const updateBomCommand: CommandHandler<UpdateBomCommandInput, CreateBomResult> =
       const revision = await em.findOne(ManufacturingBomRevision, { bom: bom.id, ...scope, status: 'draft', deletedAt: null })
       if (!revision) throw new BomDomainError('bom.target_conflict', { reason: 'not_found' })
 
-      if (input.expectedUpdatedAt && revision.updatedAt.toISOString() !== input.expectedUpdatedAt) {
-        throw new BomDomainError('bom.version_conflict', {
-          currentUpdatedAt: revision.updatedAt.toISOString(),
-          expectedUpdatedAt: input.expectedUpdatedAt,
-        })
-      }
+      assertAggregateVersion(revision.updatedAt, input.expectedUpdatedAt)
 
       const before = snapshotOf(bom, revision)
       const effectiveProductId = input.target?.productId ?? bom.productId
@@ -357,12 +352,7 @@ const deleteBomCommand: CommandHandler<DeleteBomCommandInput, DeleteBomResult> =
       if (!bom) throw new BomDomainError('bom.target_conflict', { reason: 'not_found' })
       const revision = await em.findOne(ManufacturingBomRevision, { bom: bom.id, ...scope, status: 'draft', deletedAt: null })
       if (!revision) throw new BomDomainError('bom.target_conflict', { reason: 'not_found' })
-      if (input.expectedUpdatedAt && revision.updatedAt.toISOString() !== input.expectedUpdatedAt) {
-        throw new BomDomainError('bom.version_conflict', {
-          currentUpdatedAt: revision.updatedAt.toISOString(),
-          expectedUpdatedAt: input.expectedUpdatedAt,
-        })
-      }
+      assertAggregateVersion(revision.updatedAt, input.expectedUpdatedAt)
       const lines = await em.find(ManufacturingBomLine, { revision: revision.id, ...scope, deletedAt: null })
       const now = nextMonotonicTimestamp(revision.updatedAt)
       bom.deletedAt = now

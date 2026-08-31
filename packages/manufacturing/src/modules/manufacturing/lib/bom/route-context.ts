@@ -10,7 +10,10 @@ import {
 import { getAllMutationGuardInstances } from '@open-mercato/shared/lib/crud/mutation-guard-store'
 import { OPTIMISTIC_LOCK_HEADER_NAME } from '@open-mercato/shared/lib/crud/optimistic-lock-headers'
 import { serializeOperationMetadata } from '@open-mercato/shared/lib/commands/operationMetadata'
+import { createLogger } from '@open-mercato/shared/lib/logger'
 import { BomDomainError } from './errors'
+
+const logger = createLogger('manufacturing')
 
 export type BomRequestContext = {
   ctx: CommandRuntimeContext
@@ -112,5 +115,9 @@ export function toErrorResponse(error: unknown): Response {
     const httpError = error as { status: number; body: unknown }
     return Response.json(httpError.body, { status: httpError.status })
   }
+  logger.error('Unhandled manufacturing BOM route error', {
+    error: error instanceof Error ? error.message : String(error),
+    stack: error instanceof Error ? error.stack : undefined,
+  })
   return Response.json({ error: '[internal] Unexpected manufacturing error' }, { status: 500 })
 }

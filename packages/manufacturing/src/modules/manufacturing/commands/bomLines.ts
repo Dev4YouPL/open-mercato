@@ -10,7 +10,8 @@ import { assertNoCandidateCycle } from '../lib/bom/graph-service'
 import { resolveComponentTarget } from '../lib/bom/target-resolution'
 import { nextAppendPosition, swapLinePositions } from '../lib/bom/position'
 import { nextMonotonicTimestamp } from '../lib/bom/version'
-import { BomDomainError } from '../lib/bom/errors'
+import { BomDomainError, assertAggregateVersion } from '../lib/bom/errors'
+import { compareDecimals } from '@open-mercato/shared/lib/decimal/exact'
 
 type BomTarget = { productId: string; variantId?: string | null }
 type QuantityInput = { value: string; unitCode?: string | null }
@@ -33,6 +34,18 @@ type LineSnapshot = {
   position: string
 }
 
+/**
+ * Yield lives in `(0, 1]` (spec "Quantity persistence"). Enforced here rather
+ * than in zod so an out-of-range value returns the stable `bom.quantity_invalid`
+ * 422 instead of a generic shape error or an opaque check-constraint failure.
+ */
+function assertYieldFactorInRange(value: string | undefined): void {
+  if (value === undefined) return
+  if (compareDecimals(value, '0') <= 0 || compareDecimals(value, '1') > 0) {
+    throw new BomDomainError('bom.quantity_invalid', { field: 'yieldFactor' })
+  }
+}
+
 function snapshotOfLine(line: ManufacturingBomLine): LineSnapshot {
   return {
     lineId: line.id,
@@ -47,7 +60,7 @@ function snapshotOfLine(line: ManufacturingBomLine): LineSnapshot {
     consumptionBasis: line.consumptionBasis,
     yieldFactor: line.yieldFactor,
     supplyMode: line.supplyMode,
-    position: line.position,
+    position: String(line.position),
   }
 }
 
@@ -64,12 +77,7 @@ async function loadActiveDraftLocked(
 }
 
 function assertFreshRevision(revision: ManufacturingBomRevision, expectedUpdatedAt?: string | null): void {
-  if (expectedUpdatedAt && revision.updatedAt.toISOString() !== expectedUpdatedAt) {
-    throw new BomDomainError('bom.version_conflict', {
-      currentUpdatedAt: revision.updatedAt.toISOString(),
-      expectedUpdatedAt,
-    })
-  }
+  assertAggregateVersion(revision.updatedAt, expectedUpdatedAt)
 }
 
 async function assertLineCycleSafe(
@@ -130,6 +138,7 @@ const createLineCommand: CommandHandler<CreateLineCommandInput, LineResult> = {
       const supplyMode = input.line.supplyMode ?? 'stock'
       await assertLineCycleSafe(em, scope, bom.id, supplyMode, input.line.component.productId, variantId)
 
+      assertYieldFactorInRange(input.line.yieldFactor)
       const resolution = await resolveBomQuantity({
         container: ctx.container,
         tenantId: scope.tenantId,
@@ -260,7 +269,10 @@ const updateLineCommand: CommandHandler<UpdateLineCommandInput, LineResult & { b
         line.componentVariantId = effectiveVariantId
       }
       if (input.consumptionBasis) line.consumptionBasis = input.consumptionBasis
-      if (input.yieldFactor) line.yieldFactor = input.yieldFactor
+      if (input.yieldFactor) {
+        assertYieldFactorInRange(input.yieldFactor)
+        line.yieldFactor = input.yieldFactor
+      }
       if (input.supplyMode) line.supplyMode = input.supplyMode
 
       const now = touchAggregate(bom, revision)
@@ -431,13 +443,13 @@ const reorderLineCommand: CommandHandler<ReorderLineCommandInput, ReorderResult>
       tenantId: result.line.tenantId,
       organizationId: result.line.organizationId,
       actorUserId: ctx.auth?.userId ?? null,
-      snapshotAfter: { lineId: result.line.id, adjacentLineId: result.adjacentLine.id, linePosition: result.line.position, adjacentPosition: result.adjacentLine.position },
+      snapshotAfter: { lineId: result.line.id, adjacentLineId: result.adjacentLine.id, linePosition: String(result.line.position), adjacentPosition: String(result.adjacentLine.position) },
       payload: {
         undo: {
           lineId: result.line.id,
           adjacentLineId: result.adjacentLine.id,
-          linePosition: result.line.position,
-          adjacentPosition: result.adjacentLine.position,
+          linePosition: String(result.line.position),
+          adjacentPosition: String(result.adjacentLine.position),
         },
       },
     }
@@ -450,7 +462,7 @@ const reorderLineCommand: CommandHandler<ReorderLineCommandInput, ReorderResult>
       const line = await em.findOne(ManufacturingBomLine, { id: payload.lineId, ...scope, deletedAt: null }, { populate: ['revision', 'revision.bom'] as never })
       const adjacent = await em.findOne(ManufacturingBomLine, { id: payload.adjacentLineId, ...scope, deletedAt: null })
       if (!line || !adjacent) return
-      if (line.position !== payload.adjacentPosition || adjacent.position !== payload.linePosition) return
+      if (String(line.position) !== String(payload.adjacentPosition) || String(adjacent.position) !== String(payload.linePosition)) return
       const revision = await em.findOne(ManufacturingBomRevision, { id: line.revision.id, ...scope })
       const bom = revision ? await em.findOne(ManufacturingBom, { id: revision.bom.id, ...scope }) : null
       if (!revision || !bom) return

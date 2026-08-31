@@ -1,4 +1,4 @@
-import { OptionalProps } from '@mikro-orm/core'
+import { BigIntType, OptionalProps } from '@mikro-orm/core'
 import {
   Check,
   Entity,
@@ -269,7 +269,13 @@ export class ManufacturingBomLine {
   @Property({ name: 'supply_mode', type: 'text', default: 'stock' })
   supplyMode: BomSupplyMode = 'stock'
 
-  @Property({ type: 'bigint' })
+  /**
+   * `bigint` in Postgres, but string-typed in JS: the position travels through
+   * command action-log payloads, which are JSON-serialised. A native BigInt
+   * would make that serialisation throw, so the column is read back as a
+   * string (see lib/bom/position.ts).
+   */
+  @Property({ name: 'position', type: new BigIntType('string') })
   position!: string
 
   @Property({ name: 'created_at', type: Date, onCreate: () => new Date() })

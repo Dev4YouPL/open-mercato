@@ -1,3 +1,8 @@
+import {
+  OPTIMISTIC_LOCK_CONFLICT_CODE,
+  OPTIMISTIC_LOCK_CONFLICT_ERROR,
+} from '@open-mercato/shared/lib/crud/optimistic-lock-headers'
+
 export type BomDomainErrorCode =
   | 'bom.target_conflict'
   | 'bom.active_draft_conflict'
@@ -45,4 +50,40 @@ const QUANTITY_ERROR_MAP: Record<string, BomDomainErrorCode> = {
 export function mapQuantityNormalizationError(error: unknown): BomDomainError {
   const code = error && typeof error === 'object' && 'code' in error ? String((error as { code: unknown }).code) : ''
   return new BomDomainError(QUANTITY_ERROR_MAP[code] ?? 'bom.quantity_invalid')
+}
+
+/**
+ * Aggregate optimistic-lock conflict.
+ *
+ * The BOM draft revision is the optimistic-lock root, and the spec requires
+ * these endpoints to behave exactly like the platform guard (Sales documents):
+ * the canonical `record_modified` / `optimistic_lock_conflict` body is what
+ * `extractOptimisticLockConflict` and the shared conflict banner recognise.
+ * `bom.version_conflict` stays reserved for a stale direct-line cursor.
+ */
+export class BomOptimisticLockConflictError extends Error {
+  readonly status = 409
+  readonly body: {
+    error: typeof OPTIMISTIC_LOCK_CONFLICT_ERROR
+    code: typeof OPTIMISTIC_LOCK_CONFLICT_CODE
+    currentUpdatedAt: string
+    expectedUpdatedAt: string
+  }
+
+  constructor(currentUpdatedAt: string, expectedUpdatedAt: string) {
+    super('[internal] optimistic_lock_conflict')
+    this.name = 'BomOptimisticLockConflictError'
+    this.body = {
+      error: OPTIMISTIC_LOCK_CONFLICT_ERROR,
+      code: OPTIMISTIC_LOCK_CONFLICT_CODE,
+      currentUpdatedAt,
+      expectedUpdatedAt,
+    }
+  }
+}
+
+export function assertAggregateVersion(currentUpdatedAt: Date, expectedUpdatedAt?: string | null): void {
+  if (!expectedUpdatedAt) return
+  const current = currentUpdatedAt.toISOString()
+  if (current !== expectedUpdatedAt) throw new BomOptimisticLockConflictError(current, expectedUpdatedAt)
 }
