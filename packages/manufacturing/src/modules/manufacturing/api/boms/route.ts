@@ -1,5 +1,6 @@
 import type { OpenApiRouteDoc } from '@open-mercato/shared/lib/openapi'
 import type { CommandBus } from '@open-mercato/shared/lib/commands'
+import { readJsonSafe } from '@open-mercato/shared/lib/http/readJsonSafe'
 import { listBomsQuerySchema, createBomSchema } from '../../data/validators'
 import { listActiveDrafts } from '../../lib/bom/repository'
 import type { CreateBomCommandInput } from '../../commands/boms'
@@ -56,7 +57,7 @@ export async function POST(req: Request): Promise<Response> {
   if (context instanceof Response) return context
   const { ctx, tenantId, organizationId, userId } = context
 
-  const body = await req.json().catch(() => null)
+  const body = await readJsonSafe(req, null)
   const parsed = createBomSchema.safeParse(body)
   if (!parsed.success) return Response.json({ error: 'validation_error', issues: parsed.error.issues }, { status: 400 })
 

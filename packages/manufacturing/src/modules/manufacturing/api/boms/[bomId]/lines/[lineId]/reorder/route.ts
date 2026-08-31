@@ -1,5 +1,6 @@
 import type { OpenApiRouteDoc } from '@open-mercato/shared/lib/openapi'
 import type { CommandBus } from '@open-mercato/shared/lib/commands'
+import { readJsonSafe } from '@open-mercato/shared/lib/http/readJsonSafe'
 import { z } from 'zod'
 import { reorderLineSchema } from '../../../../../../data/validators'
 import type { ReorderLineCommandInput } from '../../../../../../commands/bomLines'
@@ -23,7 +24,7 @@ export async function POST(req: Request, routeContext: RouteContext): Promise<Re
   const params = idParamSchema.safeParse(await routeContext.params)
   if (!params.success) return Response.json({ error: 'validation_error' }, { status: 400 })
 
-  const body = await req.json().catch(() => null)
+  const body = await readJsonSafe(req, null)
   const parsed = reorderLineSchema.safeParse(body)
   if (!parsed.success) return Response.json({ error: 'validation_error', issues: parsed.error.issues }, { status: 400 })
 

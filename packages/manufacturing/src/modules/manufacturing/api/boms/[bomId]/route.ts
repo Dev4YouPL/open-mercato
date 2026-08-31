@@ -1,6 +1,7 @@
 import type { EntityManager } from '@mikro-orm/postgresql'
 import type { OpenApiRouteDoc } from '@open-mercato/shared/lib/openapi'
 import type { CommandBus } from '@open-mercato/shared/lib/commands'
+import { readJsonSafe } from '@open-mercato/shared/lib/http/readJsonSafe'
 import { z } from 'zod'
 import { updateBomSchema } from '../../../data/validators'
 import { loadActiveDraft } from '../../../lib/bom/repository'
@@ -55,7 +56,7 @@ export async function PUT(req: Request, routeContext: RouteContext): Promise<Res
   const params = idParamSchema.safeParse(await routeContext.params)
   if (!params.success) return Response.json({ error: 'validation_error' }, { status: 400 })
 
-  const body = await req.json().catch(() => null)
+  const body = await readJsonSafe(req, null)
   const parsed = updateBomSchema.safeParse(body)
   if (!parsed.success) return Response.json({ error: 'validation_error', issues: parsed.error.issues }, { status: 400 })
 

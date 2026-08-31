@@ -1,6 +1,7 @@
 import type { EntityManager } from '@mikro-orm/postgresql'
 import type { OpenApiRouteDoc } from '@open-mercato/shared/lib/openapi'
 import type { CommandBus } from '@open-mercato/shared/lib/commands'
+import { readJsonSafe } from '@open-mercato/shared/lib/http/readJsonSafe'
 import { z } from 'zod'
 import { bomLinePatchSchema } from '../../../../../data/validators'
 import { resolveComponentTarget } from '../../../../../lib/bom/target-resolution'
@@ -27,11 +28,11 @@ export async function PUT(req: Request, routeContext: RouteContext): Promise<Res
   const params = idParamSchema.safeParse(await routeContext.params)
   if (!params.success) return Response.json({ error: 'validation_error' }, { status: 400 })
 
-  const body = await req.json().catch(() => null)
+  const body = await readJsonSafe(req, null)
   const parsed = bomLinePatchSchema.safeParse(body)
   if (!parsed.success) return Response.json({ error: 'validation_error', issues: parsed.error.issues }, { status: 400 })
   if (Object.keys(parsed.data).length === 0) {
-    return Response.json({ error: 'validation_error', issues: ['at least one field must change'] }, { status: 400 })
+    return Response.json({ error: 'validation_error', issues: ['empty_update'] }, { status: 400 })
   }
 
   const guardResponse = await runBomMutationGuards(ctx, {
