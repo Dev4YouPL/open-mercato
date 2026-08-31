@@ -568,7 +568,7 @@ Events are declared through `createModuleEvents({moduleId:'manufacturing',events
 - `manufacturing.bom.view`: list/detail and P1.4b preview read.
 - `manufacturing.bom.manage`: all P1.4a writes.
 
-`setup.ts` declares both features in `defaultRoleFeatures` for the administrator role and none for employee; the ACL sync command materializes them. `manufacturing.bom.manage` does not implicitly grant view, so administrators receive both explicitly. List page metadata requires view; create page requires manage; editor page requires view and hides manage-only affordances when absent. Create/editor routes are `navHidden`, and only the BOM list is navigable. UI gates affordances, while API/scoping remains authoritative.
+`setup.ts` declares both features in `defaultRoleFeatures` for the administrator and superadministrator roles and none for employee; the ACL sync command materializes them. `manufacturing.bom.manage` does not implicitly grant view, so both administrator roles receive both explicitly. List page metadata requires view; create page requires manage; editor page requires view and hides manage-only affordances when absent. Create/editor routes are `navHidden`, and only the BOM list is navigable. UI gates affordances, while API/scoping remains authoritative.
 
 ## UI/UX
 

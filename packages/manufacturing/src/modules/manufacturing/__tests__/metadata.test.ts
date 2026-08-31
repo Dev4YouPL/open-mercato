@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { metadata } from '../index'
+import { setup } from '../setup'
 
 const moduleRoot = path.resolve(__dirname, '..')
 const packageSrcRoot = path.resolve(moduleRoot, '..', '..')
@@ -38,6 +39,13 @@ describe('manufacturing module metadata', () => {
     for (const moduleId of OPTIONAL_PEER_MODULE_IDS) {
       expect(metadata.requires ?? []).not.toContain(moduleId)
     }
+  })
+
+  it('grants BOM access to default administrator roles', () => {
+    const bomFeatures = ['manufacturing.bom.view', 'manufacturing.bom.manage']
+
+    expect(setup.defaultRoleFeatures?.admin).toEqual(bomFeatures)
+    expect(setup.defaultRoleFeatures?.superadmin).toEqual(bomFeatures)
   })
 })
 
