@@ -50,10 +50,10 @@ PR: #3 (link: https://github.com/Dev4YouPL/open-mercato/pull/3)
 
 - [x] 1.1 Record the implementation-readiness corrections in the Work Centres spec. — cd91f433a
 - [x] 1.2 Re-review the amended spec independently and record the conditional verdict. — cd91f433a
-- [x] 1.3 Re-verify and apply the PR #6 implementation-base audit corrections while preserving design-only scope. — PENDING_COMMIT
+- [x] 1.3 Re-verify and apply the PR #6 implementation-base audit corrections while preserving design-only scope. — 93bbf7918
 
 ### Phase 2: Publication
 
 - [x] 2.1 Validate the documentation diff and commit it with this execution record. — cd91f433a
 - [x] 2.2 Push the branch and open a ready-for-review documentation PR with the required labels and review summary. — c729ff2cb
-- [x] 2.3 Validate, commit, and push the PR #6 audit-correction pass. — PENDING_COMMIT
+- [x] 2.3 Validate, commit, and push the PR #6 audit-correction pass. — 93bbf7918
