@@ -116,11 +116,12 @@ stable boundary for later routing and planning.
 
 The following decisions are normative for this specification:
 
-- P1.6 implementation starts only from an implementation base where P1.0a is
-  merged or rebased into the branch, generated, and accepted. A P1.0a commit
-  that exists elsewhere in repository history does not satisfy this gate. P1.6
-  must use that package/module boundary; it must not re-scaffold, fork, or work
-  around it.
+- P1.6 implementation starts only from an implementation base where P1.0a and
+  P1.4a are merged or rebased into the branch, generated, and accepted. The
+  open prerequisite is PR #6, `feat/manufacturing-p1-0a-bootstrap-p1-4a-bom-authoring`
+  → `develop`; a commit that exists only elsewhere in repository history does
+  not satisfy this gate. P1.6 must use that package/module boundary; it must
+  not re-scaffold, fork, or work around it.
 - A Work Centre has zero to 100 optional resource members.
 - Work Centre owns identity, lifecycle, and scope. P1.5 owns routing
   applicability.
@@ -156,9 +157,8 @@ The following decisions are normative for this specification:
 2. `catalog` remains the only hard **runtime-module** dependency in
    `ModuleInfo.requires`. `resources`, `planner`, WMS, assets, tools, and
    workforce providers are optional peers or later inputs. This is distinct
-   from npm package dependencies: before P1.6 module code is added,
-   `packages/manufacturing/package.json` must add workspace runtime
-   dependencies on `@open-mercato/core` and `@open-mercato/ui`, and peer
+   from npm package dependencies: P1.6 uses the existing workspace runtime
+   dependency on `@open-mercato/ui` and peer
    dependencies compatible with `@mikro-orm/postgresql`, `@open-mercato/shared`,
    `react`, and `react-dom`, following the standalone-module pattern used by
    `@open-mercato/checkout`. These npm dependencies do not add module metadata
@@ -194,7 +194,7 @@ exclusive ownership.
 P1.6 exposes an active, scoped Work Centre option-read contract for later
 consumption. That contract is the conventional Work Centre GET with
 `isActive=true`; it is not a second endpoint or service. It requires
-`manufacturing.work_centers.view`, applies the caller's tenant/organization
+`manufacturing.work_center.view`, applies the caller's tenant/organization
 scope, excludes soft-deleted records, and answers an unknown or foreign `ids`
 value with the standard empty, non-disclosing collection result. P1.5 must use
 this predicate for its selector and may not infer activity from a response that
@@ -373,10 +373,12 @@ entity IDs are produced by the generator and are never edited manually.
 The current branch and the accepted prerequisite base contain the following
 relevant surfaces:
 
-- An accepted P1.0a implementation defines `packages/manufacturing` and the
-  single runtime module `manufacturing`, but it is not an ancestor of the
-  current authoring branch. The current worktree therefore contains no
-  Manufacturing package or generated Manufacturing entity IDs.
+- PR #6 (`feat/manufacturing-p1-0a-bootstrap-p1-4a-bom-authoring` →
+  `develop`) is the open implementation prerequisite. Its branch defines
+  `packages/manufacturing`, the single runtime module `manufacturing`, shipped
+  BOM ACL IDs, and generated Manufacturing entity IDs; it is not an ancestor
+  of this design branch. This worktree consequently contains none of those
+  implementation artifacts.
 - `resources` defines `ResourcesResource` with scoped identity, name,
   configurable resource type, base capacity, capacity units, active state,
   optional planner rule-set ID, timestamps, and soft delete.
@@ -541,8 +543,8 @@ requested with one ID in the `ids` query parameter; no parallel
 `/work-centers/:id` route is added.
 
 The route exports the standard `metadata` and `openApi` values. `GET` requires
-`manufacturing.work_centers.view`; `POST`, `PUT`, and `DELETE` require
-`manufacturing.work_centers.manage`. The route passes writes to the exact
+`manufacturing.work_center.view`; `POST`, `PUT`, and `DELETE` require
+`manufacturing.work_center.manage`. The route passes writes to the exact
 command IDs listed below and does not contain domain persistence logic.
 
 ### GET
@@ -555,8 +557,16 @@ Supported query fields:
   parameter;
 - `search` for bounded matching over code and name;
 - `isActive`;
-- `sortField`: code, name, createdAt, updatedAt;
+- `sortField`: `z.string().optional()`, resolved through `sortFieldMap`, never
+  a closed zod enum. The map covers every sortable DataTable accessor key:
+  `code`, `name`, `createdAt`, `isActive`, and `updatedAt`; `resourceCount` is rendered as a
+  non-sortable accessor until a supported aggregate sort is designed;
 - `sortDir`: asc or desc.
+
+The list uses `defaultSort: { field: 'code', dir: 'asc' }` and
+`tiebreakSortField: 'id'`. This stable ordering is required because Work Centre
+primary keys are random UUIDs; explicit sortable fields still use the same ID
+tiebreaker across pages.
 
 Every query is constrained by authenticated tenant/org. A collection GET with
 an unknown or foreign `ids` value returns the standard empty, non-disclosing
@@ -570,7 +580,7 @@ The downstream option-read contract is strictly
 `GET /api/manufacturing/work-centers?isActive=true` with the same scoped
 collection response. P1.5 must use that request (and may combine it with its
 own bounded search or IDs filter); it receives no inactive Work Centre through
-this contract. It requires `manufacturing.work_centers.view` and uses the empty
+this contract. It requires `manufacturing.work_center.view` and uses the empty
 non-disclosing result for an unknown or foreign ID rather than a distinct
 consumer endpoint or error code.
 
@@ -638,12 +648,11 @@ type WorkCenterResponse = {
   resourceCount: number
   createdAt: string
   updatedAt: string
-  deletedAt: string | null
 }
 ```
 
-The public response is camelCase, including `updatedAt`, `isActive`, and
-`deletedAt`. The implementation may select snake_case database columns in the
+The public response is camelCase, including `updatedAt` and `isActive`. The
+implementation may select snake_case database columns in the
 CRUD projection, but its `transformItem`/response mapping must expose the
 camelCase contract in both list and detail responses and must never drop
 `updatedAt`. Resource names, capacity, availability, and current resource
@@ -651,11 +660,18 @@ state are not part of this response; the UI resolves display data separately
 only when the authorized resources provider is available.
 
 `resourceIds` contains at most 100 deterministically sorted IDs. Because
-membership is stored in a separate table, list and detail responses
-batch-load all membership rows for the returned parent IDs in one scoped query,
-sort each `resourceIds` array deterministically, and derive `resourceCount`
-from that set. The implementation must not issue one membership query per row
-or expose the junction as a standalone endpoint.
+membership is stored in a separate table, the route uses one supported
+mechanism: a hand-written `GET` wrapper around the configured `makeCrudRoute`
+handler. It first obtains the factory's scoped, paginated parent payload, then
+uses the returned IDs for one tenant/org-scoped membership query, groups and
+sorts the IDs by parent, derives `resourceCount`, and serializes the amended
+payload. The wrapper applies to both list and `ids` detail reads and preserves
+the factory's filters, sorting, paging, OpenAPI envelope, and non-disclosure
+behavior. `transformItem` is deliberately not used for this load because it is
+synchronous and invoked once per item; response enrichers are also rejected
+because their additive fields must be namespaced. The implementation must not
+issue one membership query per row or expose the junction as a standalone
+endpoint.
 
 `openApi` is built with the canonical CRUD OpenAPI factory. It declares
 `workCenterResponseSchema` for the response above,
@@ -684,8 +700,8 @@ is the `code` value documented by the OpenAPI error envelope.
 | `resource_membership_limit_exceeded` | 422 | The normalized membership contains more than 100 resource IDs. |
 | `resource_lookup_forbidden` | 403 | Caller lacks `resources.view`; Manufacturing does not grant it. |
 | `optional_provider_unavailable` | 503 | Required optional resources provider is unavailable or its scoped query fails; neither case mutates membership. |
-| `work_center_undo_forbidden` | 403 | The caller lacks current `manufacturing.work_centers.manage` during undo. |
-| `work_center_redo_forbidden` | 403 | The caller lacks current `manufacturing.work_centers.manage` during redo. |
+| `work_center_undo_forbidden` | 403 | The caller lacks current `manufacturing.work_center.manage` during undo. |
+| `work_center_redo_forbidden` | 403 | The caller lacks current `manufacturing.work_center.manage` during redo. |
 | `optimistic_lock_conflict` | 409 | Parent changed since it was read. |
 
 No P1.6 endpoint creates a WMS posting, reserves stock/capacity, releases a
@@ -705,8 +721,9 @@ After the module is activated:
 - create: `/backend/manufacturing/work-centers/create`;
 - detail/edit: `/backend/manufacturing/work-centers/<id>`.
 
-The menu label is **Gniazda robocze** and is visible only with
-`manufacturing.work_centers.view`.
+The menu uses `manufacturing.workCenters.menu.label` (Polish value:
+`Gniazda robocze` in `i18n/pl.json`) and is visible only with
+`manufacturing.work_center.view`.
 
 ### List
 
@@ -722,14 +739,15 @@ dashboard are out of scope.
 
 The list registers the stable DataTable host in module-root
 `extension-points.ts` as `workCentersTable`, using
-`dataTableExtensionHost({ tableId: 'manufacturing.work_centers.list', source:
-'backend/work-centers/components/WorkCentersTableClient.tsx' })`. The client
+`dataTableExtensionHost({ tableId: 'manufacturing.work_center', baseSpotId:
+'data-table:manufacturing.work_center', source:
+'components/WorkCentersTableClient.tsx' })`. The client
 passes that exact `extensionTableId` to `DataTable`, exposing the standard
-`data-table:manufacturing.work_centers.list:{columns,row-actions,filters,
+`data-table:manufacturing.work_center:{columns,row-actions,filters,
 search-trailing,toolbar}` spots. The table context remains the normal scoped
 Work Centre API result; it never enriches resource names or state. Built-in
 `RowActions` use stable IDs `open`, `edit`, and `delete`. The list page metadata
-requires `manufacturing.work_centers.view`; create metadata requires `manage`;
+requires `manufacturing.work_center.view`; create metadata requires `manage`;
 the detail page requires `view` and hides mutation affordances without `manage`.
 
 ### Form
@@ -768,17 +786,22 @@ time, run time, instructions, and operation order.
 
 | Route | Server root | Client island | Data owner |
 |---|---|---|---|
-| `/backend/manufacturing/work-centers` | `backend/work-centers/page.tsx` | `backend/work-centers/components/WorkCentersTableClient.tsx` | Work Centre API |
-| `/backend/manufacturing/work-centers/create` | `backend/work-centers/create/page.tsx` | `backend/work-centers/components/WorkCenterFormClient.tsx` | Work Centre API + optional resources API |
-| `/backend/manufacturing/work-centers/<id>` | `backend/work-centers/[id]/page.tsx` | `backend/work-centers/components/WorkCenterFormClient.tsx` | Work Centre API + optional resources API |
+| `/backend/manufacturing/work-centers` | `backend/manufacturing/work-centers/page.tsx` | `components/WorkCentersTableClient.tsx` | Work Centre API |
+| `/backend/manufacturing/work-centers/create` | `backend/manufacturing/work-centers/create/page.tsx` | `components/WorkCenterFormClient.tsx` | Work Centre API + optional resources API |
+| `/backend/manufacturing/work-centers/<id>` | `backend/manufacturing/work-centers/[id]/page.tsx` | `components/WorkCenterFormClient.tsx` | Work Centre API + optional resources API |
 
 All page roots stay server components and resolve translations, declarative
 feature metadata, and the route shell without loading an optional provider.
 
 | Client file | Exact browser-only reason | Imported by | Heavy deps | Cleanup / hydration risk | Rejected alternative |
 |---|---|---|---|---|---|
-| `backend/work-centers/components/WorkCentersTableClient.tsx` | DataTable state and row-delete conflict recovery | `backend/work-centers/page.tsx` | Shared DataTable only | No subscription; clear mutation state on unmount | A server-only table cannot provide DataTable selection/actions. |
-| `backend/work-centers/components/WorkCenterFormClient.tsx` | CrudForm state and resource lookup through `apiCall` | Create and detail server roots above | Shared CrudForm only | Abort or ignore an unmounted resource lookup; retain no provider state globally | A server form cannot use CrudForm validation, optimistic-lock retry, or asynchronous lookup. |
+| `components/WorkCentersTableClient.tsx` | DataTable state and row-delete conflict recovery | `backend/manufacturing/work-centers/page.tsx` | Shared DataTable only | No subscription; clear mutation state on unmount | A server-only table cannot provide DataTable selection/actions. |
+| `components/WorkCenterFormClient.tsx` | CrudForm state and resource lookup through `apiCall` | Create and detail server roots above | Shared CrudForm only | Abort or ignore an unmounted resource lookup; retain no provider state globally | A server form cannot use CrudForm validation, optimistic-lock retry, or asynchronous lookup. |
+
+Each server route has both page and metadata files at these exact paths:
+`backend/manufacturing/work-centers/{page.tsx,page.meta.ts}`,
+`backend/manufacturing/work-centers/create/{page.tsx,page.meta.ts}`, and
+`backend/manufacturing/work-centers/[id]/{page.tsx,page.meta.ts}`.
 
 No global provider or bootstrap registry changes; both islands remain route-local.
 
@@ -793,8 +816,10 @@ route errors.
 
 ## Edge Cases & Failure Scenarios
 
-- A duplicate code is rejected by validation and the database unique index;
-  concurrent contenders receive the same translated conflict contract.
+- A duplicate code is pre-checked inside the scoped write transaction and the
+  partial-index unique-violation race is mapped to `work_center_code_conflict`;
+  concurrent contenders receive the same translated conflict contract. The
+  command must never use `ON CONFLICT ON CONSTRAINT` for this partial index.
 - A resource ID is missing, foreign, deleted, inactive, forbidden, or
   unavailable from its optional provider. The command fails before any parent
   or membership write, using the stable error that applies to that condition.
@@ -833,19 +858,23 @@ introduces no worker, queue, scheduler, or new metrics contract.
 
 The CRUD route delegates to:
 
-- `manufacturing.work_centers.create`;
-- `manufacturing.work_centers.update`;
-- `manufacturing.work_centers.delete`.
+- `manufacturing.work_center.create`;
+- `manufacturing.work_center.update`;
+- `manufacturing.work_center.delete`.
 
 Commands must:
 
 - parse zod input and derive tenant/org from authenticated context;
 - validate every new or changed optional-provider reference before mutation;
 - update parent and membership atomically;
-- for every update and delete, take a tenant/org-scoped parent row lock inside
-  the write transaction, re-read `updatedAt` after the lock, and run the same
-  header-based optimistic-lock comparison against that locked value before any
-  write; a missing header remains the canonical additive no-op;
+- for every update, delete, undo, and redo, call the Manufacturing lock helper
+  modeled on `acquireBomGraphLock`: a tenant/org-scoped
+  `pg_advisory_xact_lock` inside the write transaction. It is the selected lock
+  primitive (not an unspecified row lock); re-read `updatedAt` after it and run
+  `enforceCommandOptimisticLock` against that locked value before any write;
+  use `enforceRecordGoneIsConflict` when an opted-in record is absent, and
+  register/use `createCommandOptimisticLockGuardService` for the canonical
+  command guard seam. A missing header remains the canonical additive no-op;
 - use `withAtomicFlush(..., { transaction: true })` for parent and membership
   synchronization; any `runCrudCommandWrite` wrapper must preserve that same
   transaction and command side-effect contract;
@@ -879,10 +908,10 @@ Undo and redo use the existing audit-log endpoints, not new Manufacturing
 `audit_logs.undo_self`/`audit_logs.redo_self` for the actor's own actions and
 `audit_logs.undo_tenant`/`audit_logs.redo_tenant` for the tenant-wide exception.
 Before any Work Centre handler changes state, it must additionally re-check
-the caller's current `manufacturing.work_centers.manage` grant in the target
+the caller's current `manufacturing.work_center.manage` grant in the target
 tenant/org. Audit-log access never bypasses the Work Centre mutation feature.
 The UI shows undo/redo only when both the applicable audit-log feature and
-`manufacturing.work_centers.manage` are effective.
+`manufacturing.work_center.manage` are effective.
 
 Before an undo or redo changes the membership set, it compares the current and
 target sets. A difference requires an available resources provider and current
@@ -947,17 +976,17 @@ response.
 
 P1.6 adds:
 
-- `manufacturing.work_centers.view`;
-- `manufacturing.work_centers.manage`.
+- `manufacturing.work_center.view`;
+- `manufacturing.work_center.manage`.
 
 `view` covers list/detail and read-only routing options. `manage` depends on
 `view` and covers create, update, soft-delete and membership. `execute` and
 `reverse` are not P1.6 permissions; they belong to later production-order
 flows.
 
-The module setup grants `manufacturing.work_centers.view` and
-`manufacturing.work_centers.manage` to `admin`, and
-`manufacturing.work_centers.view` to `employee`; no P1.6 feature is granted to
+The module setup grants `manufacturing.work_center.view` and
+`manufacturing.work_center.manage` to `admin`, and
+`manufacturing.work_center.view` to `employee`; no P1.6 feature is granted to
 other roles by default. Administrator access is expressed through the feature
 system rather than mutable role-name checks. List/detail pages require `view`,
 the create page and all write methods require `manage`, and the edit page may
@@ -1096,6 +1125,18 @@ of those data into Work Centre.
 Integration tests must create their own scoped fixtures and clean them up. They
 must not rely on seeded/demo Work Centres or resources.
 
+### Module-enablement integration matrix
+
+| Harness configuration | Suites | Required proof |
+|---|---|---|
+| Manufacturing, resources, and planner enabled | Membership create/update/remove, resource lookup, selector, and P1.5 option-read contract suites | Resources provider resolves and validates scoped active IDs. |
+| Manufacturing and planner enabled; resources absent | Unassigned create, scalar-only update, list/detail, and unavailable-provider UI/API suites | Unassigned/scalar CRUD remains operable; every changed membership request returns `optional_provider_unavailable`. |
+| Manufacturing enabled; planner absent | The same resources-absent suites | The harness disables `resources` as unavailable because `resources/index.ts` declares `requires: ['planner']`; it must not load a partial resources provider. |
+
+The integration harness switches module enablement through its normal
+module-activation fixture/configuration before app boot, never by mocking a
+provider after boot. Each matrix row creates and cleans its own scoped data.
+
 ### UI tests
 
 - list, create, edit, soft-delete, active/inactive and provider-unavailable
@@ -1143,8 +1184,13 @@ permission.
 Required database constraints:
 
 - scope index on `manufacturing_work_centers(tenant_id, organization_id)`;
-- case-insensitive unique index on
-  `(tenant_id, organization_id, lower(code)) WHERE deleted_at IS NULL`;
+- case-insensitive partial unique index on
+  `(tenant_id, organization_id, lower(code)) WHERE deleted_at IS NULL`. Commands
+  pre-check inside their scoped locked transaction and map a race-time unique
+  violation to `work_center_code_conflict`; never target this index with a
+  named-constraint `ON CONFLICT`. Add a SQL-shape regression test proving the
+  generated write does not contain `ON CONFLICT ON CONSTRAINT` and preserves
+  the partial-index predicate;
 - scope/index support for membership reads;
 - unique `(tenant_id, organization_id, work_center_id, resource_id)`;
 - a parent FK from membership to the Manufacturing Work Centre, compatible
@@ -1173,11 +1219,13 @@ Each step must leave the application buildable and have corresponding tests.
 1. Rebase or start from a branch that contains the accepted P1.0a implementation
    base as an ancestor. Confirm the opt-in `packages/manufacturing` package and
    `manufacturing` module, source/dist discovery, generated registries, and
-   disabled-by-default behavior; a P1.0a commit reachable only from another
-   branch is not sufficient. P1.6 does not implement bootstrap work itself.
-2. Add the P1.6 npm dependencies to `packages/manufacturing/package.json` as
-   specified above, without adding `resources` or `planner` to
-   `ModuleInfo.requires`; validate standalone package build and peer resolution.
+   disabled-by-default behavior; PR #6 reachable only from another branch is
+   not sufficient. P1.6 does not implement bootstrap work itself.
+2. Confirm the existing `@open-mercato/ui` runtime dependency and peer
+   dependency set; do not add `@open-mercato/core`, `resources`, or `planner`
+   without a concrete P1.6 runtime import. Keep `resources` and `planner` out
+   of `ModuleInfo.requires`; validate standalone package build and peer
+   resolution.
 3. Record the generated resources entity ID, its published view feature, and
    the exact `queryEngine.query()` field/filter projection. Prove the local
    resolver maps absent peer, forbidden caller, missing scoped record, and
@@ -1201,7 +1249,9 @@ Each step must leave the application buildable and have corresponding tests.
    scope guards, stable errors, audit, undo and redo.
 3. Add `makeCrudRoute`, OpenAPI, entity indexer, list/detail projection and
    typed CRUD events, including the declared list, success, and stable-error
-   OpenAPI envelopes.
+   OpenAPI envelopes. Add the hand-written `GET` wrapper described in API
+   Contracts and prove it makes one scoped membership batch query for the
+   factory-returned page, never a per-row query.
 4. Add ACL features, exact setup grants, module-root `translations.ts` for
    `name` and `description`, locale resources, and optimistic-lock conflict
    handling; synchronize grants for existing tenants with the repository's
@@ -1238,7 +1288,7 @@ Each step must leave the application buildable and have corresponding tests.
 
 P1.6 is ready for implementation only when:
 
-- P1.0a provides the opt-in package/module boundary;
+- PR #6 provides the accepted P1.0a/P1.4a opt-in package/module boundary;
 - the `resources` vs Manufacturing ownership split is accepted;
 - resource cardinality is fixed at 0..100 with no priority semantics;
 - Work Centre identity, code uniqueness, and its active scoped read contract
@@ -1248,9 +1298,12 @@ P1.6 is ready for implementation only when:
 - API, UI, ACL, optimistic-lock, scope and stable-error contracts are written;
 - all excluded scheduling and execution behavior is named;
 - current-state audit findings, including `resources -> planner`, are recorded;
-- generated entity IDs are confirmed after discovery and P1.0a is merged into
-  the implementation base;
+- generated entity IDs are confirmed after discovery and PR #6 is merged or
+  rebased into the implementation base;
 - integration coverage is mapped to every affected API and UI path;
+- PR #6 is merged or rebased into the implementation branch, then its generated
+  package/module facts and shipped `manufacturing.bom.*` conventions are
+  re-verified;
 - the specification passes project specification and compatibility review.
 
 P1.6 does not authorize finite scheduling, stock-affecting execution, or a
@@ -1339,7 +1392,7 @@ useful for real routing authoring without creating a false promise of APS/MES.
 | Frontend architecture | Pass | Server/client route map, file-exact ledger, 300-LOC/no-heavy-dependency budgets, no global provider, `yarn check:client-boundaries`, build evidence, and hydration tests are explicit. |
 | Migration and compatibility | Pass | Additive tables, APIs, events, ACL, generated IDs, and no existing contract changes are enumerated. |
 | Testability | Pass | Unit, API, two-contender lock, provider-absence, bounded-membership, self-contained integration, and UI flows are mapped. |
-| Implementation-base prerequisite | Conditional | P1.0a must be merged, generated, and accepted before implementation starts; the current branch does not satisfy this condition. |
+| Implementation-base prerequisite | Conditional | PR #6 must be merged or rebased, generated, and accepted before implementation starts; the current design branch does not satisfy this condition. |
 
 ### Consistency checks
 
@@ -1372,13 +1425,24 @@ useful for real routing authoring without creating a false promise of APS/MES.
 base.** The design is consistent with the roadmap and repository boundaries:
 Work Centre is a Manufacturing-owned place/group with zero-to-100 scalar
 resource references, not a second resource master or a machine scheduler. The
-implementation starts only once P1.0a is an ancestor of the implementation
+implementation starts only once PR #6's P1.0a/P1.4a base is an ancestor of the implementation
 branch, uses the documented generated-ID/query-engine resolver, and re-checks
 Work Centre manage access during audit-log undo/redo. It must not change the
 existing resources-to-planner module contract;
 planner-independent resources remain a separate future decision.
 
 ## Changelog
+
+- 2026-09-01: Re-verified against the open P1.0a/P1.4a prerequisite branch in
+  PR #6 and corrected frozen singular Work Centre ACL and DataTable IDs, the
+  explicit base spot, page and module-root client-component paths, and the
+  locale-backed menu label. Replaced the impossible asynchronous
+  `transformItem` membership load with a factory-wrapping batch GET, named the
+  advisory-lock and command optimistic-lock helpers, made `sortField` an open
+  string with stable UUID pagination, defined partial-index conflict handling
+  and its SQL-shape test, removed the unjustified core dependency, omitted the
+  permanently-null public `deletedAt`, and added the resources/planner
+  enablement test matrix requirement.
 
 - 2026-08-30: Closed independent implementation-readiness findings: separated
   `ModuleInfo.requires` from the required npm dependency contract, made
@@ -1409,7 +1473,7 @@ planner-independent resources remain a separate future decision.
 - 2026-08-29: Corrected the Query Engine resolver contract to use the required
   nested `page: { page: 1, pageSize: 100 }` shape. Clarified that a missing
   planner preserves only unassigned/scalar-only Work Centre CRUD when it makes
-  the resources provider unavailable, and that P1.0a must be an ancestor of the
+  the resources provider unavailable, and that PR #6's P1.0a/P1.4a base must be an ancestor of the
   implementation branch rather than merely an available commit.
 - 2026-08-29: Closed follow-up review findings: bounded membership at 100 IDs,
   one bounded resource lookup, file-exact frontend client ledger, and a
