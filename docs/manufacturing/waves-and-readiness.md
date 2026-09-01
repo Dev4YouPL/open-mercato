@@ -2,7 +2,7 @@
 
 > A business-readable map of Manufacturing capabilities and a navigation dashboard for Wave 0 specification readiness.
 
-**Last verified:** 2026-08-29
+**Last verified:** 2026-08-30
 **Status:** Operational documentation dashboard. It is not a release schedule, implementation approval, delivery promise, or licensing commitment.
 
 ## How to read this document
@@ -65,9 +65,9 @@ These external entries are contract references, not Manufacturing work items or 
 | **P1.4f** | BOM revision comparison and where-used | [Spec task #5411](https://github.com/open-mercato/open-mercato/issues/5411) | Post-Wave 0 decision accepted | Deterministic diff and reverse-dependency read capability | **No — specification missing** | Define draft/released/execution visibility and performance bounds after P1.4b |
 | **P1.4g** | BOM copy | [Spec task #5412](https://github.com/open-mercato/open-mercato/issues/5412) | Post-Wave 0 decision accepted | One command-driven copy capability with full revalidation; no import/export | **No — specification missing** | Define source/target policy after P1.4a and the Catalog public quantity/UoM contract |
 | **P1.4h** | BOM extensibility and document control | [Spec task #5413](https://github.com/open-mercato/open-mercato/issues/5413) | Post-Wave 0 decision accepted | Custom fields, optional tags and controlled attachment/link references | **No — specification missing** | Select provider/entity ownership/retention; released semantics consume P1.7 without gating it |
-| **P1.5** | Draft routing and operation authoring | [Spec task #5395](https://github.com/open-mercato/open-mercato/issues/5395) | Bounded scope proposed | Optional single-sequence direction is coherent | **No** | Author CRUD/API/UI/data-model spec for sequential operations, setup/run time, instructions and Work Center references after P1.6 |
-| **P1.6** | Minimal Work Center/resource boundary | [Spec task #5394](https://github.com/open-mercato/open-mercato/issues/5394) | Ownership proposed | No duplicate resource/calendar master; calendars are non-blocking | **No** | Author the Work Center identity, applicability, snapshot, API and disabled-calendar behavior specification |
-| **P1.7** | Released definitions and immutable definition snapshots | [Spec task #5396](https://github.com/open-mercato/open-mercato/issues/5396) | Lifecycle and child selection proposed | Definition-only boundary is cohesive; order release moved to P1.10 | **No** | Author release transaction, revision state, attachment reference, immutable definition snapshot, error and concurrency contracts after the external WMS Site contract, the Catalog public quantity/UoM contract, P1.4a, P1.5 and P1.6; P1.4b is not a release prerequisite |
+| **P1.5** | Draft routing and operation authoring | [P1.5a families](../../.ai/specs/2026-08-30-manufacturing-routing-drafts.md), [P1.5b operations](../../.ai/specs/2026-08-30-manufacturing-routing-operations.md), [P1.5c reorder](../../.ai/specs/2026-08-30-manufacturing-routing-operation-reordering.md); [Spec task #5395](https://github.com/open-mercato/open-mercato/issues/5395) | Design complete in three independently deployable slices | Stable family/draft foundation, permissive append authoring, then bounded reorder; no scheduling or release semantics | **No — P1.5a awaits P1.0a/shared UI support; P1.5b additionally awaits P1.6; P1.5c awaits P1.5b** | Implement P1.5a independently, then P1.5b after Work Centres, then optional P1.5c reorder |
+| **P1.6** | Minimal Work Center/resource boundary | [Full specification](../../.ai/specs/2026-08-19-manufacturing-work-centres.md); [Spec task #5394](https://github.com/open-mercato/open-mercato/issues/5394) | Design complete | No duplicate resource/calendar master; calendars are non-blocking | **No — P1.0a implementation evidence pending** | Implement the Work Center identity, applicability, snapshot input, API and planner-absent behavior |
+| **P1.7** | Released definitions and immutable definition snapshots | [Spec task #5396](https://github.com/open-mercato/open-mercato/issues/5396) | Lifecycle and child selection proposed | Definition-only boundary is cohesive; order release moved to P1.10 | **No** | Author release transaction, revision state, attachment reference, immutable definition snapshot, error and concurrency contracts after the external WMS Site contract, the Catalog public quantity/UoM contract, P1.4a, P1.5a, P1.5b and P1.6; P1.4b preview and P1.5c reorder are not release prerequisites |
 | **P1.8b** | Manufacturing inventory posting adapter | [Spec task #5398](https://github.com/open-mercato/open-mercato/issues/5398) | Direction proposed | Manufacturing owns semantic derivation; WMS remains unaware of Manufacturing vocabulary | **No** | Author the adapter after an external provider-neutral WMS posting contract, P1.9 and P1.10 are ready |
 | **P1.9** | Minimum Manufacturing fact ledger | [Spec task #5399](https://github.com/open-mercato/open-mercato/issues/5399) | Minimum fact model proposed | Append-only model-neutral fact boundary is cohesive; discrete confirmation orchestration moved to P1.10 | **No** | Author fact schema, acceptance/correction/idempotency primitives, timestamps and opaque evidence references after P1.0a |
 | **P1.10** | First discrete production-order lifecycle, execution snapshot and basic confirmations | [Spec task #5400](https://github.com/open-mercato/open-mercato/issues/5400) | Lifecycle proposed | `draft → released → in_progress → completed/cancelled`, `complete_short`, snapshot and stock-free confirmation rules are coherent | **No** | Author aggregate/API/UI/ACL/state-transition/confirmation spec after the external WMS Site contract, the Catalog public quantity/UoM contract, P1.7 and P1.9 evidence |
@@ -80,9 +80,9 @@ These external entries are contract references, not Manufacturing work items or 
 | Group | Current result |
 |---|---|
 | Architecture baseline | **Accepted for staged Wave 0 delivery — 2026-08-20** |
-| Dedicated Manufacturing specs with completed design | **P1.4a and P1.4b** |
+| Dedicated Manufacturing specs with completed design | **P1.4a, P1.4b, P1.5a, P1.5b, P1.5c and P1.6** |
 | Dedicated specs fully ready for implementation | **P1.0a — package/module bootstrap; other readiness reviews remain pending** |
-| Architecture direction proposed but dedicated full spec missing | **P1.4c–P1.4h and P1.5–P1.11; all have trackers** |
+| Architecture direction proposed but dedicated full spec missing | **P1.4c–P1.4h and P1.7–P1.11; all have trackers** |
 | Evidence maintained per epic | **P1.12** |
 | Deliberately deferred, non-blocking capability | **P1.13** |
 | Post-Wave 0 BOM decision queue | **P1.4c–P1.4h; no Wave 0 gate** |

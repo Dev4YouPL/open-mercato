@@ -196,9 +196,15 @@ consumption. That contract is the conventional Work Centre GET with
 `isActive=true`; it is not a second endpoint or service. It requires
 `manufacturing.work_center.view`, applies the caller's tenant/organization
 scope, excludes soft-deleted records, and answers an unknown or foreign `ids`
-value with the standard empty, non-disclosing collection result. P1.5 must use
-this predicate for its selector and may not infer activity from a response that
-omits it.
+value with the standard empty, non-disclosing collection result. P1.5 uses this
+predicate for its selector and may not infer activity from a response that
+omits it. P1.5's deliberately permissive draft authoring still requires every
+new non-null `workCenterId` to resolve to a live Work Centre in the caller's
+tenant/organization and protects the stored reference with a scoped composite
+FK. Inactive-but-live Work Centres remain assignable to drafts; the public
+active read contract is a picker, not the authoritative write validator. P1.7
+owns release-time activity/readiness validation before capturing immutable
+Work Centre evidence.
 P1.5 owns the routing contract: one routing operation may reference at most one
 Work Centre, along with operation order, setup/run time, instructions, and any
 future direct operation-level constraints. P1.6 does not select a concrete
@@ -222,8 +228,9 @@ The Work Centre response exposes the stored scalar IDs and count, while an
 authorized UI may resolve current display data through the resources API.
 Missing or unavailable display data is shown as unresolved; Manufacturing does
 not copy a resource state or silently remove the relation or choose a
-replacement. New routing or release validation rejects an inactive or deleted
-resource.
+replacement. A routing's scoped Work Centre FK remains valid when membership
+resources later change; P1.7 decides whether the resulting Work Centre/resource
+evidence is eligible for release.
 
 Manufacturing must not import `ResourcesResource` as a cross-module ORM
 relation or copy name, capacity, type, availability, or active state into its
@@ -469,7 +476,7 @@ the corresponding snake_case names, including `tenant_id`, `organization_id`,
 | `code` | text | Required, trimmed, 1–100 characters, case-insensitively unique per tenant/org among rows with `deletedAt IS NULL`. |
 | `name` | text | Required, trimmed, 1–200 characters. |
 | `description` | text nullable | Optional purpose/instructions, maximum 8000 characters. |
-| `isActive` | boolean | Defaults to `true`. Inactive records cannot be newly referenced by routing or release. |
+| `isActive` | boolean | Defaults to `true`. P1.5 may newly reference an inactive-but-live same-scope Work Centre after authorization; a later soft delete preserves the existing FK for history, while P1.7 decides release eligibility. |
 | `createdAt` | timestamp | Standard creation timestamp. |
 | `updatedAt` | timestamp | Required optimistic-lock version; changes on every parent or membership mutation. |
 | `deletedAt` | timestamp nullable | Soft-delete marker. |
@@ -834,8 +841,9 @@ route errors.
   gets the standard optimistic-lock 409 and the membership set is never
   partially applied. Headerless clients retain the platform's additive behavior.
 - A resource becomes inactive or deleted after membership assignment. The
-  membership remains for history, but new routing/release consumers reject it;
-  no replacement is selected implicitly.
+  membership and any same-scope routing-to-Work-Centre FK remain for history;
+  P1.7 release validation decides whether the resulting evidence is eligible,
+  and no replacement is selected implicitly.
 - Undo or redo encounters a changed parent, a code collision, or a missing
   provider for resource IDs it introduces. It fails closed and never restores
   data in another module.
@@ -1191,6 +1199,8 @@ Required database constraints:
   named-constraint `ON CONFLICT`. Add a SQL-shape regression test proving the
   generated write does not contain `ON CONFLICT ON CONSTRAINT` and preserves
   the partial-index predicate;
+- unique parent key on `manufacturing_work_centers(id, tenant_id, organization_id)`
+  for P1.5's scoped routing-operation FK;
 - scope/index support for membership reads;
 - unique `(tenant_id, organization_id, work_center_id, resource_id)`;
 - a parent FK from membership to the Manufacturing Work Centre, compatible

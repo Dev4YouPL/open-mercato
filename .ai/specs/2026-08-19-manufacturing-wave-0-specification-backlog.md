@@ -60,8 +60,10 @@ It will not define the entities, APIs, UI, events, migrations, or implementation
 | Post-W0 4 | P1.4f BOM revision comparison and where-used | New specification | Decision queue accepted; tracker [#5411](https://github.com/open-mercato/open-mercato/issues/5411) open |
 | Post-W0 5 | P1.4g BOM copy | New specification | Decision queue accepted; tracker [#5412](https://github.com/open-mercato/open-mercato/issues/5412) open |
 | Post-W0 6 | P1.4h BOM extensibility and document control | New specification | Decision queue accepted; tracker [#5413](https://github.com/open-mercato/open-mercato/issues/5413) open |
-| 5 | P1.6 Work Center boundary | New specification | Missing |
-| 6 | P1.5 routing and operation drafts | New specification | Missing; finalization depends on P1.6 |
+| 5a | P1.5a routing family and initial draft | New specification | Complete; implementation depends on P1.0a and shared mutation-resource support |
+| 5b | P1.6 Work Center boundary | New specification | Complete; implementation depends on P1.0a |
+| 6a | P1.5b routing operation authoring | New specification | Complete; implementation depends on P1.5a and P1.6 |
+| 6b | P1.5c routing operation reordering | New specification | Complete; implementation depends on P1.5b |
 | 7 | P1.7 released definitions and immutable definition snapshots | New specification | Missing |
 | 8 | P1.8b Manufacturing inventory posting adapter | New `manufacturing` specification | Missing; consumes an external WMS posting contract |
 | 9 | P1.9 minimum Manufacturing fact ledger | New `manufacturing` specification | Missing |
@@ -140,10 +142,12 @@ P1.4a --> P1.4c list workspace, P1.4d business identity, P1.4e history/comments,
 P1.4a + P1.4b --> P1.4f revision comparison/where-used
 P1.4a --> P1.4h extensibility/document control
 P1.7/P1.10 add released/execution semantics to P1.4e, P1.4f and P1.4h; none of P1.4c-h gates Wave 0.
-P1.0a --> P1.6 Work Centers --> P1.5 routing drafts
+P1.0a + shared CrudForm mutation-resource support --> P1.5a routing family/initial draft
+P1.0a --> P1.6 Work Centers
+P1.5a + P1.6 --> P1.5b append operation authoring --> P1.5c reorder
 P1.0a --> P1.9 fact ledger
 
-External WMS Site contract + Catalog public quantity/UoM contract for quantity-bearing release data + P1.4a + P1.5 + P1.6 --> P1.7 definition release
+External WMS Site contract + Catalog public quantity/UoM contract for quantity-bearing release data + P1.4a + P1.5a + P1.5b + P1.6 --> P1.7 definition release; P1.5c reorder is optional
 External WMS Site contract + Catalog public quantity/UoM contract for quantity-bearing order data + P1.7 + P1.9 --> P1.10 order lifecycle + execution snapshot + basic confirmations
 External WMS posting contract + P1.9 + P1.10 --> P1.8b Manufacturing adapter
 External WMS quantity/evidence/posting contracts + P1.8b + P1.10 --> P1.11 stock execution
@@ -168,9 +172,11 @@ The lanes describe contract-finalization order, not a ban on earlier skeletons o
 | P1.4f | `manufacturing-bom-revision-comparison-and-where-used.md` | `manufacturing` | Post-Wave 0 decision/specification work after P1.4b | Diff/reverse-use scope and released/execution visibility resolved |
 | P1.4g | `manufacturing-bom-copy.md` | `manufacturing` | Post-Wave 0 decision/specification work after P1.4a and the Catalog public quantity/UoM contract | Eligible source/target and revalidation behavior resolved |
 | P1.4h | `manufacturing-bom-extensibility-and-document-control.md` | `manufacturing` | Post-Wave 0 decision/specification work after P1.4a | Field/reference ownership, provider, retention and release behavior resolved |
-| P1.6 | `2026-08-19-manufacturing-work-centres.md` | `manufacturing` with optional `resources` input | Skeleton/code audit now | Ownership, resource cardinality, snapshot and planner-absent behavior resolved |
-| P1.5 | `2026-08-19-manufacturing-routing-drafts.md` | `manufacturing` | Skeleton after P1.6 questions are known | P1.6 Work Center contract ready |
-| P1.7 | `2026-08-19-manufacturing-released-definitions.md` | `manufacturing` | Skeleton after P1.4a/P1.5 release inputs and P1.6 ownership shapes are known | External WMS Site contract, Catalog public quantity/UoM contract, P1.4a, P1.5 and P1.6 ready; scope stops before order release; P1.4b is not a release prerequisite |
+| P1.6 | `2026-08-19-manufacturing-work-centres.md` | `manufacturing` with optional `resources` input | Full specification complete; implementation after P1.0a is merged | Ownership, resource cardinality, snapshot and planner-absent behavior resolved |
+| P1.5a | `2026-08-30-manufacturing-routing-drafts.md` | `manufacturing` | Specification complete; implementation after P1.0a and shared mutation-resource support are merged | Routing family, initial draft identity, aggregate locking, and P1.7 compatibility seam |
+| P1.5b | `2026-08-30-manufacturing-routing-operations.md` | `manufacturing` | Specification complete; implementation after P1.5a and P1.6 are merged | Permissive append-ordered operations, optional Work Centre picker, and bounded reads |
+| P1.5c | `2026-08-30-manufacturing-routing-operation-reordering.md` | `manufacturing` | Specification complete; implementation after P1.5b | Atomic bounded reorder and collision-safe renumbering |
+| P1.7 | `2026-08-19-manufacturing-released-definitions.md` | `manufacturing` | Skeleton after P1.4a/P1.5 release inputs and P1.6 ownership shapes are known | External WMS Site contract, Catalog public quantity/UoM contract, P1.4a, P1.5a, P1.5b and P1.6 ready; P1.5c reorder and P1.4b preview are not release prerequisites; scope stops before order release |
 | P1.8b | `2026-08-19-manufacturing-inventory-posting-adapter.md` | `manufacturing` | Semantic-command research now | External WMS posting contract, P1.9 fact-writer contract and P1.10 execution-snapshot/confirmation contract ready |
 | P1.9 | `2026-08-19-manufacturing-fact-ledger.md` | `manufacturing` | Skeleton/research now | P1.0a ready; neutral fact, correction, idempotency and opaque evidence-reference contracts resolved without WMS vocabulary |
 | P1.10 | `2026-08-19-manufacturing-orders-and-confirmations.md` | `manufacturing` | Use-case preparation after P1.7/P1.9 skeletons | External WMS Site contract, Catalog public quantity/UoM contract, P1.7 and P1.9 ready |
@@ -264,7 +270,7 @@ Every capability specification and implementation epic must record the applicabl
 |---|---|---|
 | 0. Backlog approval | Owners accept this decomposition and the documented parent-document alignment | This document is approved; P1.0 remains subject to PR #5256 |
 | 1. Foundations | First authoring batch produces bootstrap/base skeletons and prerequisite readiness evidence | P1.0a, P1.4a-b, P1.6 and P1.9 have the evidence required for their next state |
-| 2. Gate A specifications | Draft-definition capabilities become implementation-ready | P1.4a, P1.4b, P1.5 and P1.6 pass their individual compliance reviews; Catalog quantity/UoM is consumed as an external public contract |
+| 2. Gate A specifications | Draft-definition capabilities become implementation-ready | P1.4a, P1.4b, P1.5a, P1.5b, P1.5c and P1.6 pass their individual compliance reviews; each slice still observes its own prerequisites, and Catalog quantity/UoM is consumed as an external public contract |
 | 3. Gate B specifications | Released definitions, fact ledger, order lifecycle and basic stock-free confirmations become implementation-ready | P1.7, P1.9 and P1.10 pass their individual compliance reviews |
 | 4. Gate C specifications | Manufacturing adapter and stock-affecting execution become implementation-ready | External WMS quantity, evidence and posting contracts, P1.8b and P1.11 pass their respective readiness and validation gates |
 | 5. Implementation planning | Approved specs are decomposed into concrete implementation Issues/tasks | Each task links one implementation-ready specification and its required P1.12 evidence |
@@ -410,6 +416,7 @@ Every child records its work-item ID, owner, planned artifact, upstream dependen
 - 2026-08-19: Completed both split specifications, fresh-context reviews (**PASS**), P1.12 mappings and final compliance gates; implementation remains blocked by their named P1.0/P1.0a/Catalog-contract/P1.4a prerequisites.
 - 2026-08-28: Removed Catalog and WMS delivery work from the Manufacturing backlog. Manufacturing consumes public contracts and does not own, track or wait on those tasks as module dependencies.
 - 2026-08-29: Clarified that the Catalog/UoM contract gates only quantity-bearing Manufacturing paths; bootstrap, Work Center/routing, and neutral fact-ledger work are independent.
+- 2026-08-30: Replaced the aggregate P1.5 dependency with P1.5a/P1.5b/P1.5c delivery gates: the family/initial-draft foundation may proceed independently of P1.6, Work Centres gate operation authoring, and manual reorder remains optional for P1.7.
 - 2026-08-28: Removed WMS Site and warehouse-role assignments from the Manufacturing tracker set; their readiness remains WMS-owned and is recorded only as an external contract for later release and order flows.
 - 2026-08-19: Re-ran the P1.4a pre-implementation audit, remediated framework/data/API/UI/export findings, and recorded that reusable BOMs exclude customer/order/due-date context owned by P1.10.
 - 2026-08-19: Added deferred future consideration for collaborative BOM drafting. P1.4a remains aligned with the standard Sales/platform optimistic-lock pattern; presence, ownership, comparison, merge, and recovery stay outside Wave 0 pending real collaboration evidence.
