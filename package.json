@@ -261,7 +261,8 @@
     "ws@npm:^8.17.1": "8.21.0",
     "ws@npm:^8.18.0": "8.21.0",
     "ws@npm:~8.18.3": "8.21.0",
-    "sharp": "0.35.3"
+    "sharp": "0.35.3",
+    "browserslist": "4.28.8"
   },
   "dependenciesMeta": {
     "@datadog/pprof": {

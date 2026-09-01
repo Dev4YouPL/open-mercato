@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Page, PageBody, PageHeader } from "@open-mercato/ui/backend/Page"
+import { PageHeader } from "@open-mercato/ui/backend/Page"
 import { LoadingMessage, ErrorMessage, RecordNotFoundState } from "@open-mercato/ui/backend/detail"
 import { StatusBadge } from "@open-mercato/ui/primitives/status-badge"
 import { Button } from "@open-mercato/ui/primitives/button"
@@ -108,7 +108,7 @@ export function BomEditorClient({ bomId }: { bomId: string }) {
   const revisionSuffix = detail.activeDraft.revisionLabel ? ` — ${detail.activeDraft.revisionLabel}` : ""
 
   return (
-    <Page>
+    <>
       <PageHeader
         title={targetTitle}
         description={t("manufacturing.boms.editor.baseOutput", "Base output: {value} {unit} ({normalized} {baseUnit})", {
@@ -133,7 +133,7 @@ export function BomEditorClient({ bomId }: { bomId: string }) {
           </>
         )}
       />
-      <PageBody>
+      <div className="space-y-4">
         <BomHeaderFormClient initial={initial} onSaved={reload} />
         <BomLinesEditor
           bomId={detail.id}
@@ -141,8 +141,8 @@ export function BomEditorClient({ bomId }: { bomId: string }) {
           revisionUpdatedAt={detail.activeDraft.updatedAt}
           onAggregateChange={reload}
         />
-      </PageBody>
-    </Page>
+      </div>
+    </>
   )
 }
 

@@ -3,7 +3,6 @@
 import * as React from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { Page, PageBody } from "@open-mercato/ui/backend/Page"
 import { DataTable } from "@open-mercato/ui/backend/DataTable"
 import type { FilterDef, FilterValues } from "@open-mercato/ui/backend/FilterOverlay"
 import type { LegacyColumnDef as ColumnDef } from "@tanstack/react-table/legacy"
@@ -260,74 +259,72 @@ export function BomListClient({ extensionTableId }: { extensionTableId: string }
   ], [t])
 
   return (
-    <Page>
-      <PageBody>
-        {error ? (
-          <ErrorMessage
-            label={error}
-            action={<Button type="button" variant="outline" size="sm" onClick={handleRefresh}>{t("ui.actions.retry", "Retry")}</Button>}
+    <>
+      {error ? (
+        <ErrorMessage
+          label={error}
+          action={<Button type="button" variant="outline" size="sm" onClick={handleRefresh}>{t("ui.actions.retry", "Retry")}</Button>}
+        />
+      ) : (
+        <>
+          <DataTable<BomListRow>
+            extensionTableId={extensionTableId}
+            perspective={{ tableId: extensionTableId }}
+            columnChooser={{ auto: true }}
+            title={t("manufacturing.boms.list.title", "BOM drafts")}
+            refreshButton={{ label: t("manufacturing.boms.list.actions.refresh", "Refresh"), onRefresh: handleRefresh }}
+            actions={canManage ? (
+              <Button asChild>
+                <Link href="/backend/manufacturing/boms/create">{t("manufacturing.boms.list.actions.new", "New BOM")}</Link>
+              </Button>
+            ) : undefined}
+            columns={columns}
+            data={rows}
+            isLoading={isLoading}
+            filters={filters}
+            filterValues={filterValues}
+            onFiltersApply={applyFilters}
+            onFiltersClear={handleClearFilters}
+            onRowClick={(row) => router.push(`/backend/manufacturing/boms/${row.id}`)}
+            rowActions={(row) => (
+              <RowActions
+                items={[
+                  { id: "open", label: t("manufacturing.boms.list.actions.open", "Open"), onSelect: () => router.push(`/backend/manufacturing/boms/${row.id}`) },
+                  ...(canManage
+                    ? [{ id: "delete", label: t("manufacturing.boms.list.actions.delete", "Delete"), destructive: true, onSelect: () => handleDelete(row) }]
+                    : []),
+                ]}
+              />
+            )}
+            filterAwareEmptyState={{
+              active: hasFilters,
+              entityNamePlural: t("manufacturing.boms.entityPlural", "BOM drafts"),
+              entityNamePluralGenitive: t("manufacturing.boms.entityPluralGenitive", "BOM drafts"),
+              canRemoveLast: Boolean(filterVariantId),
+              onClearAll: handleClearFilters,
+              onRemoveLast: () => applyFilters({ ...filterValues, variantId: undefined }),
+            }}
+            emptyState={(
+              <ListEmptyState
+                entityName={t("manufacturing.boms.entityPlural", "BOM drafts")}
+                entityNameGenitive={t("manufacturing.boms.entityPluralGenitive", "BOM drafts")}
+                createHref={canManage ? "/backend/manufacturing/boms/create" : undefined}
+                createLabel={t("manufacturing.boms.list.actions.new", "New BOM")}
+              />
+            )}
           />
-        ) : (
-          <>
-            <DataTable<BomListRow>
-              extensionTableId={extensionTableId}
-              perspective={{ tableId: extensionTableId }}
-              columnChooser={{ auto: true }}
-              title={t("manufacturing.boms.list.title", "BOM drafts")}
-              refreshButton={{ label: t("manufacturing.boms.list.actions.refresh", "Refresh"), onRefresh: handleRefresh }}
-              actions={canManage ? (
-                <Button asChild>
-                  <Link href="/backend/manufacturing/boms/create">{t("manufacturing.boms.list.actions.new", "New BOM")}</Link>
-                </Button>
-              ) : undefined}
-              columns={columns}
-              data={rows}
-              isLoading={isLoading}
-              filters={filters}
-              filterValues={filterValues}
-              onFiltersApply={applyFilters}
-              onFiltersClear={handleClearFilters}
-              onRowClick={(row) => router.push(`/backend/manufacturing/boms/${row.id}`)}
-              rowActions={(row) => (
-                <RowActions
-                  items={[
-                    { id: "open", label: t("manufacturing.boms.list.actions.open", "Open"), onSelect: () => router.push(`/backend/manufacturing/boms/${row.id}`) },
-                    ...(canManage
-                      ? [{ id: "delete", label: t("manufacturing.boms.list.actions.delete", "Delete"), destructive: true, onSelect: () => handleDelete(row) }]
-                      : []),
-                  ]}
-                />
-              )}
-              filterAwareEmptyState={{
-                active: hasFilters,
-                entityNamePlural: t("manufacturing.boms.entityPlural", "BOM drafts"),
-                entityNamePluralGenitive: t("manufacturing.boms.entityPluralGenitive", "BOM drafts"),
-                canRemoveLast: Boolean(filterVariantId),
-                onClearAll: handleClearFilters,
-                onRemoveLast: () => applyFilters({ ...filterValues, variantId: undefined }),
-              }}
-              emptyState={(
-                <ListEmptyState
-                  entityName={t("manufacturing.boms.entityPlural", "BOM drafts")}
-                  entityNameGenitive={t("manufacturing.boms.entityPluralGenitive", "BOM drafts")}
-                  createHref={canManage ? "/backend/manufacturing/boms/create" : undefined}
-                  createLabel={t("manufacturing.boms.list.actions.new", "New BOM")}
-                />
-              )}
-            />
-            <BomKeysetPager
-              page={cursorIndex + 1}
-              hasPrevious={cursorIndex > 0}
-              hasNext={hasMore}
-              isLoading={isLoading}
-              onPrevious={handlePrevious}
-              onNext={handleNext}
-            />
-          </>
-        )}
-        {ConfirmDialogElement}
-      </PageBody>
-    </Page>
+          <BomKeysetPager
+            page={cursorIndex + 1}
+            hasPrevious={cursorIndex > 0}
+            hasNext={hasMore}
+            isLoading={isLoading}
+            onPrevious={handlePrevious}
+            onNext={handleNext}
+          />
+        </>
+      )}
+      {ConfirmDialogElement}
+    </>
   )
 }
 
