@@ -66,7 +66,7 @@ behaviour the PR already shipped and already had QA'd, so the Manufacturing impl
 
 ### Phase 2: Turn the red required checks green
 
-- [ ] 2.1 Declare the `react-is` peer on `@open-mercato/manufacturing` so the published-package gate passes
-- [ ] 2.2 Hoist the `Page`/`PageBody` shell into the two BOM `page.tsx` route files
-- [ ] 2.3 Pin `browserslist` above the advisory range through the root `resolutions` block
+- [x] 2.1 Declare the `react-is` peer on `@open-mercato/manufacturing` so the published-package gate passes — 44e3fc230
+- [x] 2.2 Hoist the `Page`/`PageBody` shell into the two BOM `page.tsx` route files — 44e3fc230
+- [x] 2.3 Pin `browserslist` above the advisory range through the root `resolutions` block — 44e3fc230
 - [ ] 2.4 Run the validation gate on the changed surface and push
