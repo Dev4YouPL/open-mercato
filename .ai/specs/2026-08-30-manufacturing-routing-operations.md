@@ -30,7 +30,14 @@ Operations are child records inside the P1.5a routing-revision aggregate. They d
 
 The routing detail remains summary-only. Operations are read from a separate bounded cursor collection whose cursor is bound to the revision version. A revision change invalidates the cursor and causes an explicit reload.
 
-Work Centre is a same-module P1.6 reference. A changed non-null reference requires current `manufacturing.work_centers.view` before a scoped repository lookup. Missing, deleted, or foreign values share a non-disclosing not-found response. Omission preserves the value; `null` clears it. Picker failure never prevents saving an operation without a Work Centre or preserving/clearing an existing reference.
+Work Centre is a same-module P1.6 reference. The picker consumes P1.6's
+conventional scoped collection GET with `isActive=true` and current
+`manufacturing.work_center.view`; it is not a separate route. A changed
+non-null reference requires the same feature before a scoped live-record
+lookup. Missing, deleted, or foreign values share a non-disclosing not-found
+response. Omission preserves the value; `null` clears it. Picker failure never
+prevents saving an operation without a Work Centre or preserving/clearing an
+existing reference.
 
 ## Data Model
 
