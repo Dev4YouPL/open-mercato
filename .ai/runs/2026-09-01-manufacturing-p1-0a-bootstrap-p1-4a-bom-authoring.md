@@ -112,3 +112,38 @@ requester and asks for `^3.0.1`, which 3.1.6 satisfies without forcing a major.
 
 - [x] 4.1 Move the root `fast-uri` resolution from 3.1.5 to 3.1.6 and refresh the lockfile
 - [x] 4.2 Re-run `check:resolutions`, `audit-ci --severity high`, `install --immutable`, `check:dep-versions` and the peer-dependency guard
+
+### Phase 5: Address the REQUEST_CHANGES review (2026-09-03 resume)
+
+A review against base `a0154ac41` raised 27 findings. Each was re-verified against the head before being
+accepted; three were rejected with evidence and are answered in a PR comment rather than "fixed".
+
+| Finding | Verdict | Evidence | Step |
+|---|---|---|---|
+| #1 mutation guards drop `modifiedPayload` and run `afterSuccess` before the command | Accepted | `runBomMutationGuards` ignores the runner's `modifiedPayload` and loops `afterSuccessCallbacks` inside itself, before `commandBus.execute`; `input.resourceId` is `null` on create so the callback never fires there. `packages/core/src/modules/staff/api/guards.ts` splits the two halves, and the spec's "Custom routes" paragraph requires the same | 5.3 |
+| #2 delete-undo always no-ops on an empty scope | **Rejected** | `command-bus.ts` `persistLog` resolves `metadata.tenantId ?? ctx.auth?.tenantId` before writing, so the `null`s never reach storage | — |
+| #3 undo is not semantic | Accepted | Only `reorder` compares the recorded after-state; the other six restore or delete unconditionally | 5.4 |
+| #4 undo does not revalidate the graph | Partly accepted | The graph advisory lock *is* taken (`withBomTransaction` → `acquireBomGraphLock`), but no restore path re-runs cycle validation | 5.4 |
+| #5 custom fields are not atomic with the aggregate | **Rejected** | The 2026-08-31 spec changelog adopts the out-of-transaction data-engine write deliberately. The undo *ordering* was still wrong and is corrected under 5.4 | 5.4 (partial) |
+| #6 one bad product breaks the whole product page | Accepted | `resolveMany` is `Promise.all` over a `resolve` that throws `uom.conversion_not_found`; the outer catch then drops offers/categories/tags/pricing for every row | 5.1 |
+| #7 `/api/catalog/prices` can now 500 | Accepted | `QuantityNormalizationError` is not a `CrudHttpError` and no caller catches it; the pre-change code returned the raw quantity on all five failure paths | 5.1 |
+| #8 unrelated edits recompute a historical Sales snapshot | **Rejected** | `normalizeLineUom` recomputed on every upsert before this branch too; only the rounding *source* changed | — |
+| #9 public UoM errors moved 400 → 422 | Accepted | `uom.conversion_not_found` / `uom.invalid_factor` were `CrudHttpError(400)` | 5.2 |
+| #10 declared events are never emitted | Accepted | `emitManufacturingEvent` has exactly one occurrence in the repo — its own definition | 5.5 |
+| #11 `unresolvedProduceCount` counts resolved children | Accepted | Both call sites count `supply_mode='produce'` without consulting target resolution | 5.6 |
+| #12 a bad BOM-list cursor returns an empty 200 | Accepted | `listActiveDrafts` returns an empty page where `listLines` in the same file returns `staleCursor` | 5.6 |
+| #13 listing is N+1 | Accepted | Two counts per row, and a target resolution per line including `stock` lines | 5.6 |
+| #14 OpenAPI carries no schemas | Accepted | `OpenApiRouteDoc` supports `requestBody`/`schema`; the BOM routes use neither | 5.7 |
+| #15–#22, #24 missing tests | Accepted at unit/route level | The spec's own changelog already records the gap | 5.8 |
+| #23 exact-decimal matrix | Accepted (narrow) | 4 cases for 9 exported functions | 5.8 |
+| #25–#27 PR size and unrelated commits | Acknowledged, not acted on | Splitting 33 landed commits would rewrite the reviewed history four stacked PRs depend on | — |
+
+- [x] 5.1 Restore per-product and per-request tolerance in the two Catalog normalization callers — 8aa11eb79
+- [x] 5.2 Keep the pre-existing 400 status for the two public Sales UoM error codes — 8aa11eb79
+- [x] 5.3 Apply guard `modifiedPayload` and move `afterSuccess` after commit across all seven BOM routes — be6d58e38
+- [x] 5.4 Make every BOM undo semantic: compare recorded state, revalidate the graph, order custom fields last — be6d58e38
+- [x] 5.5 Emit the seven declared Manufacturing events after commit, undo and redo — be6d58e38
+- [x] 5.6 Count only unresolved produce lines, reject stale BOM-list cursors, batch the list queries — be6d58e38
+- [x] 5.7 Document request and response schemas on the BOM routes — be6d58e38
+- [x] 5.8 Add the executable coverage for everything above — 0b5df69b7
+- [ ] 5.9 Run the validation gate and push
