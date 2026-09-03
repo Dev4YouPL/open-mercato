@@ -539,6 +539,12 @@ jobs:
   # merge-coverage and docker-build both wait for this job to complete.
   test:
     runs-on: ubuntu-latest
+    # The job died silently at ~49 min on a cache-miss run (PR #6): every step from
+    # "Checking types" on reported no conclusion and GitHub stored no log for the job
+    # at all, which is what a runner looks like when the host kills it rather than a
+    # step failing. Cap the wall time so the next occurrence fails fast and visibly
+    # instead of holding the required check for the 6 h default.
+    timeout-minutes: 90
     needs: [prepare, audit-scope, audit, lint]
     if: |
       always() &&
@@ -646,11 +652,16 @@ jobs:
       - name: Checking types
         # On PRs: scope to packages/app that changed since the base branch.
         # On pushes to protected branches: full typecheck, no filter.
+        #
+        # --concurrency=2 overrides turbo.json's repo-wide 32. A PR that touches a base
+        # package selects every workspace (31 typecheck tasks here), and each tsc may
+        # claim the 5 GB heap this job grants — 32 of those at once do not fit a 4-vCPU
+        # /16 GB runner. Two peak at ~10 GB, which does.
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            yarn turbo run typecheck --filter=[origin/${{ github.base_ref }}]...
+            yarn turbo run typecheck --concurrency=2 --filter=[origin/${{ github.base_ref }}]...
           else
-            yarn typecheck
+            yarn turbo run typecheck --concurrency=2
           fi
         env:
           TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
@@ -658,9 +669,16 @@ jobs:
 
       - name: Test
         # Same scoping as typecheck — affected packages only on PRs.
+        #
+        # The root `test` script is `NODE_OPTIONS=--max-old-space-size=1024 turbo run test
+        # --concurrency=2` for a reason. Calling turbo directly on the PR path skipped both
+        # guards and inherited this job's 5 GB heap at turbo.json's concurrency of 32, so
+        # the two paths ran under wildly different memory budgets. Mirror the script.
+        env:
+          NODE_OPTIONS: --max-old-space-size=1024
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            yarn turbo run test --filter=[origin/${{ github.base_ref }}]...
+            yarn turbo run test --concurrency=2 --filter=[origin/${{ github.base_ref }}]...
           else
             yarn test
           fi
