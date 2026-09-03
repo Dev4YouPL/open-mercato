@@ -190,7 +190,7 @@ The user supplied four visual references and an explicit UI refinement brief. Th
 as visual examples only; the requested outcomes below define the scope. Existing API and persistence
 contracts remain unchanged, including the internal `revisionLabel` field name.
 
-- [ ] 6.1 Add the standard BOM search control, keep Filters and Perspectives on the right, and integrate visible pagination into the list card
-- [ ] 6.2 Recompose the create/edit form as a framed workspace with one basic-data section and optional custom fields on the right
-- [ ] 6.3 Rename the user-facing revision-label copy to Notes across all locales and enlarge the BOM-line dialog
+- [x] 6.1 Add the standard BOM search control, keep Filters and Perspectives on the right, and integrate visible pagination into the list card — e6883ce52
+- [x] 6.2 Recompose the create/edit form as a framed workspace with one basic-data section and optional custom fields on the right — e6883ce52
+- [x] 6.3 Rename the user-facing revision-label copy to Notes across all locales and enlarge the BOM-line dialog — e6883ce52
 - [ ] 6.4 Add regression coverage, run the validation gate, complete the DS review, and push
