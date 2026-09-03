@@ -19,7 +19,7 @@ import { flash } from "@open-mercato/ui/backend/FlashMessages"
 import { useT } from "@open-mercato/shared/lib/i18n/context"
 import { formatCatalogTarget, parseCatalogLabel, type CatalogLabel } from "./catalogLabels"
 import { loadProductOptions, loadVariantFilterOptions } from "./catalogLookups"
-import { matchesBomSearch } from "./bomListSearch"
+import { inferBomPagination, matchesBomSearch } from "./bomListSearch"
 import { useBomPermissions } from "./useBomPermissions"
 
 const PAGE_SIZE = 25
@@ -166,14 +166,13 @@ export function BomListClient({ extensionTableId }: { extensionTableId: string }
   }, [cursorIndex, nextCursor])
 
   const handlePageChange = React.useCallback((page: number) => {
-    if (search.trim()) return
     const targetIndex = page - 1
     if (targetIndex >= 0 && targetIndex < cursorStack.length) {
       setCursorIndex(targetIndex)
       return
     }
     if (targetIndex === cursorIndex + 1) handleNext()
-  }, [cursorIndex, cursorStack.length, handleNext, search])
+  }, [cursorIndex, cursorStack.length, handleNext])
 
   const handleDelete = React.useCallback(async (row: BomListRow) => {
     const confirmed = await confirm({
@@ -271,11 +270,7 @@ export function BomListClient({ extensionTableId }: { extensionTableId: string }
     () => rows.filter((row) => matchesBomSearch(row, search)),
     [rows, search],
   )
-  const isSearching = Boolean(search.trim())
-  const inferredTotal = isSearching
-    ? visibleRows.length
-    : cursorIndex * PAGE_SIZE + rows.length + (hasMore ? 1 : 0)
-  const inferredTotalPages = isSearching ? 1 : cursorIndex + 1 + (hasMore ? 1 : 0)
+  const pagination = inferBomPagination(cursorIndex, rows.length, PAGE_SIZE, hasMore)
 
   return (
     <>
@@ -312,11 +307,11 @@ export function BomListClient({ extensionTableId }: { extensionTableId: string }
             onFiltersClear={handleClearFilters}
             onRowClick={(row) => router.push(`/backend/manufacturing/boms/${row.id}`)}
             pagination={{
-              page: isSearching ? 1 : cursorIndex + 1,
+              page: cursorIndex + 1,
               pageSize: PAGE_SIZE,
-              total: inferredTotal,
-              totalPages: inferredTotalPages,
-              totalIsCapped: !isSearching && hasMore,
+              total: pagination.total,
+              totalPages: pagination.totalPages,
+              totalIsCapped: pagination.totalIsCapped,
               onPageChange: handlePageChange,
             }}
             showQueryTime={false}

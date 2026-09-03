@@ -9,6 +9,12 @@ export type BomSearchableRow = {
   revisionLabel: string | null
 }
 
+export type BomPaginationState = {
+  total: number
+  totalPages: number
+  totalIsCapped: boolean
+}
+
 export function matchesBomSearch(row: BomSearchableRow, search: string): boolean {
   const query = search.trim().toLocaleLowerCase()
   if (!query) return true
@@ -19,4 +25,17 @@ export function matchesBomSearch(row: BomSearchableRow, search: string): boolean
     row.productId,
     row.variantId,
   ].some((value) => value?.toLocaleLowerCase().includes(query))
+}
+
+export function inferBomPagination(
+  cursorIndex: number,
+  rowCount: number,
+  pageSize: number,
+  hasMore: boolean,
+): BomPaginationState {
+  return {
+    total: cursorIndex * pageSize + rowCount + (hasMore ? 1 : 0),
+    totalPages: cursorIndex + 1 + (hasMore ? 1 : 0),
+    totalIsCapped: hasMore,
+  }
 }

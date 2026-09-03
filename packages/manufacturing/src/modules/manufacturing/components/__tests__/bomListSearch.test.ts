@@ -1,4 +1,4 @@
-import { matchesBomSearch, type BomSearchableRow } from "../bomListSearch"
+import { inferBomPagination, matchesBomSearch, type BomSearchableRow } from "../bomListSearch"
 
 const row: BomSearchableRow = {
   productId: "product-123",
@@ -24,5 +24,23 @@ describe("matchesBomSearch", () => {
 
   it("rejects unrelated text", () => {
     expect(matchesBomSearch(row, "packaging")).toBe(false)
+  })
+})
+
+describe("inferBomPagination", () => {
+  it("keeps the next keyset page reachable when more rows exist", () => {
+    expect(inferBomPagination(0, 25, 25, true)).toEqual({
+      total: 26,
+      totalPages: 2,
+      totalIsCapped: true,
+    })
+  })
+
+  it("reports the last partially filled page without a phantom next page", () => {
+    expect(inferBomPagination(2, 7, 25, false)).toEqual({
+      total: 57,
+      totalPages: 3,
+      totalIsCapped: false,
+    })
   })
 })

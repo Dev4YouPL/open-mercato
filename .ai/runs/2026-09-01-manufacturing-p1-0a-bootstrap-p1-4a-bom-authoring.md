@@ -198,10 +198,11 @@ contracts remain unchanged, including the internal `revisionLabel` field name.
 Phase 6 gate (local runner, Windows host): `build:packages` ✅ 28/28 on both configured passes,
 `generate` ✅, `i18n:check-sync` ✅, `i18n:check-usage` ✅ (advisory-only, 3830 unused keys),
 `typecheck` ✅ 28/28, `build:app` ✅, `lint:ds` ✅ with 0 errors (227 pre-existing warnings), and
-`ds:tokens:check` ✅. The Manufacturing suite passed 19/19 suites and 124/124 tests, including the new
-eight-case BOM-search regression suite. The root `yarn test` command reached Manufacturing and then failed
+`ds:tokens:check` ✅. After the review autofix, the Manufacturing suite passed 19/19 suites and 126/126 tests,
+including 10/10 focused BOM-list cases. The root `yarn test` command reached Manufacturing and then failed
 because its Jest `testMatch` is rendered with mixed separators inside this Windows linked worktree, reporting
 zero matches; rerunning the same package with explicit portable `testMatch` patterns passed the complete suite.
-The scoped code/DS review found no new blocker or major in the Phase 6 diff. The PR-wide review still carries
+The scoped code/DS review found and fixed one pagination reachability issue: search no longer collapses the
+keyset pager to a single page. The PR-wide review still carries
 the previously reported integration-level asks for live PostgreSQL concurrency/atomicity coverage, Playwright
 authoring coverage, and the graph benchmark; Phase 6 does not claim those older PR-wide gaps are closed.
