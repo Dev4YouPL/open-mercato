@@ -21,7 +21,10 @@ import {
   defaultOkResponseSchema,
 } from "../openapi";
 import { toUnitLookupKey } from "../../lib/unitCodes";
-import type { CatalogQuantityNormalizationService } from '../../services/quantityNormalizationService'
+import {
+  QuantityNormalizationError,
+  type CatalogQuantityNormalizationService,
+} from '../../services/quantityNormalizationService'
 import { findOneWithDecryption } from "@open-mercato/shared/lib/encryption/find";
 import { createLogger } from '@open-mercato/shared/lib/logger'
 
@@ -99,14 +102,29 @@ async function resolveNormalizedQuantityForFilter(params: {
     }
   }
   if (!targetProductId) return quantity;
-  const snapshot = await params.normalizationService.resolve({
-    tenantId: params.tenantId,
-    organizationId: params.organizationId,
-    productId: targetProductId,
-    productVariantId: params.variantId ?? null,
-    enteredQuantity: String(quantity),
-    enteredUnitCode: params.quantityUnit ?? null,
-  });
+  let snapshot;
+  try {
+    snapshot = await params.normalizationService.resolve({
+      tenantId: params.tenantId,
+      organizationId: params.organizationId,
+      productId: targetProductId,
+      productVariantId: params.variantId ?? null,
+      enteredQuantity: String(quantity),
+      enteredUnitCode: params.quantityUnit ?? null,
+    });
+  } catch (err) {
+    // A quantity filter is a convenience, not a contract: a product without a
+    // default unit or without a conversion for the requested one has always
+    // fallen back to the entered quantity here. Only normalization-domain
+    // failures degrade; an infrastructure failure still propagates.
+    if (!(err instanceof QuantityNormalizationError)) throw err;
+    logger.debug('catalog.prices quantity normalization skipped', {
+      productId: targetProductId,
+      unit: params.quantityUnit ?? null,
+      code: err.code,
+    });
+    return quantity;
+  }
   const normalized = Number(snapshot.normalizedQuantity);
   return Number.isFinite(normalized) && normalized > 0 ? normalized : quantity;
 }

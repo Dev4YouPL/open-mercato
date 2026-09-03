@@ -35,9 +35,20 @@ export type QuantityNormalizationSnapshotV1 = {
   source: { conversionId: string | null; resolvedAt: string }
 }
 
+/**
+ * Per-request outcome of a batch that tolerates normalization failures.
+ * A product with no conversion for the requested unit is an ordinary catalog
+ * state, not a request failure, so read paths degrade that single entry
+ * instead of losing the whole page.
+ */
+export type QuantityNormalizationOutcome =
+  | { ok: true; snapshot: QuantityNormalizationSnapshotV1 }
+  | { ok: false; productId: string; code: string }
+
 export type CatalogQuantityNormalizationService = {
   resolve(request: QuantityNormalizationRequest): Promise<QuantityNormalizationSnapshotV1>
   resolveMany(requests: QuantityNormalizationRequest[]): Promise<QuantityNormalizationSnapshotV1[]>
+  resolveManySettled(requests: QuantityNormalizationRequest[]): Promise<QuantityNormalizationOutcome[]>
 }
 
 export class QuantityNormalizationError extends Error {
@@ -203,6 +214,18 @@ export function createCatalogQuantityNormalizationService({ em }: { em: EntityMa
     resolve,
     async resolveMany(requests) {
       return Promise.all(requests.map((request) => resolve(request)))
+    },
+    async resolveManySettled(requests) {
+      return Promise.all(
+        requests.map(async (request): Promise<QuantityNormalizationOutcome> => {
+          try {
+            return { ok: true, snapshot: await resolve(request) }
+          } catch (error) {
+            if (!(error instanceof QuantityNormalizationError)) throw error
+            return { ok: false, productId: request.productId, code: error.code }
+          }
+        }),
+      )
     },
   }
 }

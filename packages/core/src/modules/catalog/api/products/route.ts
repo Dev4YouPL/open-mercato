@@ -631,7 +631,7 @@ async function decorateProductsAfterList(
     );
     const normalizedQuantityByProduct = new Map<string, number>();
     if (requestQuantityUnitKey && conversionOrganizationId && conversionTenantId) {
-      const snapshots = await normalizationService.resolveMany(
+      const outcomes = await normalizationService.resolveManySettled(
         productIds.map((productId) => ({
           tenantId: conversionTenantId,
           organizationId: conversionOrganizationId,
@@ -640,10 +640,18 @@ async function decorateProductsAfterList(
           enteredUnitCode: String(ctx.query.quantityUnit),
         })),
       );
-      for (const snapshot of snapshots) {
-        const normalizedQuantity = Number(snapshot.normalizedQuantity);
+      for (const outcome of outcomes) {
+        if (!outcome.ok) {
+          logger.debug('catalog.products quantity normalization skipped', {
+            productId: outcome.productId,
+            unit: requestQuantityUnitKey,
+            code: outcome.code,
+          });
+          continue;
+        }
+        const normalizedQuantity = Number(outcome.snapshot.normalizedQuantity);
         if (Number.isFinite(normalizedQuantity) && normalizedQuantity > 0) {
-          normalizedQuantityByProduct.set(snapshot.productId, normalizedQuantity);
+          normalizedQuantityByProduct.set(outcome.snapshot.productId, normalizedQuantity);
         }
       }
     }

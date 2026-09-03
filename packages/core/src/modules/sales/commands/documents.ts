@@ -2304,6 +2304,27 @@ type UomResolver = {
   productCache: Map<string, ProductUomState | null>;
 };
 
+/**
+ * HTTP status for a normalization failure surfaced on a public Sales route.
+ * Every code that existed before normalization moved into the Catalog service
+ * keeps the status it was published with — clients distinguish validation
+ * classes by status, so a silent 400 to 422 shift is a breaking change.
+ * `uom.variant_product_mismatch` is new with the service and has no prior
+ * contract to preserve.
+ */
+const UOM_ERROR_STATUS: Record<string, number> = {
+  "uom.variant_product_mismatch": 404,
+  "uom.conversion_not_found": 400,
+  "uom.invalid_factor": 400,
+  "uom.unit_not_found": 400,
+  "uom.default_unit_missing": 400,
+  "uom.precision_overflow": 422,
+};
+
+function uomErrorStatus(code: string): number {
+  return UOM_ERROR_STATUS[code] ?? 422;
+}
+
 type NormalizeLineUomInput = {
   em: EntityManager;
   normalizationService?: CatalogQuantityNormalizationService;
@@ -2780,7 +2801,7 @@ async function normalizeLineUom(input: NormalizeLineUomInput): Promise<{
     const code = error && typeof error === "object" && "code" in error
       ? String((error as { code: unknown }).code)
       : "uom.precision_overflow";
-    throw new CrudHttpError(code === "uom.variant_product_mismatch" ? 404 : 422, { error: code });
+    throw new CrudHttpError(uomErrorStatus(code), { error: code });
   }
   const toBaseFactor = toNumeric(resolvedSnapshot.toBaseFactor);
   const normalizedQuantity = toNumeric(resolvedSnapshot.normalizedQuantity);
