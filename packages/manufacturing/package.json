@@ -1,6 +1,6 @@
 {
   "name": "@open-mercato/manufacturing",
-  "version": "0.6.7",
+  "version": "0.7.0",
   "license": "MIT",
   "description": "Manufacturing definitions, execution, and production history",
   "type": "module",
