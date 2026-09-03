@@ -1,6 +1,7 @@
 /** @jest-environment node */
 
 import { asValue, createContainer, InjectionMode } from 'awilix'
+import { createCatalogQuantityNormalizationService } from '../../../catalog/services/quantityNormalizationService'
 import { commandRegistry } from '@open-mercato/shared/lib/commands/registry'
 import type { CommandRuntimeContext } from '@open-mercato/shared/lib/commands/types'
 import { orderCreateSchema, quoteCreateSchema } from '../../data/validators'
@@ -101,6 +102,9 @@ function buildHarness() {
     eventBus: asValue({ emit: async () => undefined, emitEvent: async () => undefined }),
     salesCalculationService: asValue(new DefaultSalesCalculationService(null)),
     salesDocumentNumberGenerator: asValue({ generate: async () => ({ number: 'DOC-1' }) }),
+    catalogQuantityNormalizationService: asValue(
+      createCatalogQuantityNormalizationService({ em: em as never }),
+    ),
   })
 
   const ctx: CommandRuntimeContext = {
