@@ -199,10 +199,11 @@ Phase 6 gate (local runner, Windows host): `build:packages` ✅ 28/28 on both co
 `generate` ✅, `i18n:check-sync` ✅, `i18n:check-usage` ✅ (advisory-only, 3830 unused keys),
 `typecheck` ✅ 28/28, `build:app` ✅, `lint:ds` ✅ with 0 errors (227 pre-existing warnings), and
 `ds:tokens:check` ✅. After the review autofix, the Manufacturing suite passed 19/19 suites and 126/126 tests,
-including 10/10 focused BOM-list cases. The root `yarn test` command reached Manufacturing and then failed
-because its Jest `testMatch` is rendered with mixed separators inside this Windows linked worktree, reporting
-zero matches; rerunning the same package with explicit portable `testMatch` patterns passed the complete suite.
-The scoped code/DS review found and fixed one pagination reachability issue: search no longer collapses the
-keyset pager to a single page. The PR-wide review still carries
+including 10/10 focused BOM-list cases. The PR's Manufacturing Jest pattern was made platform-neutral, so the
+root `yarn test` now discovers and passes the complete Manufacturing suite in this Windows linked worktree. The
+root command still exits non-zero on the pre-existing Windows path-separator assertion in
+`open-mercato-docs#test` (`record_locks` and `security` enterprise grouping); 33 of 35 tasks completed before
+that failure, including Manufacturing. The scoped code/DS review found and fixed one pagination reachability
+issue: search no longer collapses the keyset pager to a single page. The PR-wide review still carries
 the previously reported integration-level asks for live PostgreSQL concurrency/atomicity coverage, Playwright
 authoring coverage, and the graph benchmark; Phase 6 does not claim those older PR-wide gaps are closed.
