@@ -190,7 +190,7 @@ export function BomLineDialog({
 
   return (
     <Dialog open onOpenChange={(next) => { if (!next) onClose() }}>
-      <DialogContent className="sm:max-w-2xl" ref={dialogContentRef} onKeyDown={handleKeyDown}>
+      <DialogContent className="sm:max-w-4xl" ref={dialogContentRef} onKeyDown={handleKeyDown}>
         <DialogHeader>
           <DialogTitle>
             {isEdit ? t("manufacturing.boms.lines.editTitle", "Edit component occurrence") : t("manufacturing.boms.lines.addTitle", "Add component occurrence")}

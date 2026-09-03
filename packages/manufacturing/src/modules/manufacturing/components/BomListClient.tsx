@@ -19,8 +19,10 @@ import { flash } from "@open-mercato/ui/backend/FlashMessages"
 import { useT } from "@open-mercato/shared/lib/i18n/context"
 import { formatCatalogTarget, parseCatalogLabel, type CatalogLabel } from "./catalogLabels"
 import { loadProductOptions, loadVariantFilterOptions } from "./catalogLookups"
-import { BomKeysetPager } from "./BomKeysetPager"
+import { matchesBomSearch } from "./bomListSearch"
 import { useBomPermissions } from "./useBomPermissions"
+
+const PAGE_SIZE = 25
 
 type BomListRow = {
   id: string
@@ -80,6 +82,7 @@ export function BomListClient({ extensionTableId }: { extensionTableId: string }
   const [hasMore, setHasMore] = React.useState(false)
   const [reloadToken, setReloadToken] = React.useState(0)
   const [filterValues, setFilterValues] = React.useState<FilterValues>({})
+  const [search, setSearch] = React.useState("")
 
   const filterProductId = readFilterId(filterValues, "productId")
   const filterVariantId = readFilterId(filterValues, "variantId")
@@ -114,7 +117,7 @@ export function BomListClient({ extensionTableId }: { extensionTableId: string }
       setIsLoading(true)
       setError(null)
       const cursor = cursorStack[cursorIndex]
-      const params = new URLSearchParams({ limit: "25" })
+      const params = new URLSearchParams({ limit: String(PAGE_SIZE) })
       if (cursor) params.set("cursor", cursor)
       if (filterProductId) params.set("productId", filterProductId)
       if (filterVariantId) params.set("variantId", filterVariantId)
@@ -162,9 +165,15 @@ export function BomListClient({ extensionTableId }: { extensionTableId: string }
     setCursorIndex((i) => i + 1)
   }, [cursorIndex, nextCursor])
 
-  const handlePrevious = React.useCallback(() => {
-    setCursorIndex((i) => Math.max(0, i - 1))
-  }, [])
+  const handlePageChange = React.useCallback((page: number) => {
+    if (search.trim()) return
+    const targetIndex = page - 1
+    if (targetIndex >= 0 && targetIndex < cursorStack.length) {
+      setCursorIndex(targetIndex)
+      return
+    }
+    if (targetIndex === cursorIndex + 1) handleNext()
+  }, [cursorIndex, cursorStack.length, handleNext, search])
 
   const handleDelete = React.useCallback(async (row: BomListRow) => {
     const confirmed = await confirm({
@@ -258,6 +267,16 @@ export function BomListClient({ extensionTableId }: { extensionTableId: string }
     },
   ], [t])
 
+  const visibleRows = React.useMemo(
+    () => rows.filter((row) => matchesBomSearch(row, search)),
+    [rows, search],
+  )
+  const isSearching = Boolean(search.trim())
+  const inferredTotal = isSearching
+    ? visibleRows.length
+    : cursorIndex * PAGE_SIZE + rows.length + (hasMore ? 1 : 0)
+  const inferredTotalPages = isSearching ? 1 : cursorIndex + 1 + (hasMore ? 1 : 0)
+
   return (
     <>
       {error ? (
@@ -279,13 +298,28 @@ export function BomListClient({ extensionTableId }: { extensionTableId: string }
               </Button>
             ) : undefined}
             columns={columns}
-            data={rows}
+            data={visibleRows}
             isLoading={isLoading}
+            searchValue={search}
+            onSearchChange={(value) => {
+              setSearch(value)
+              setCursorIndex(0)
+            }}
+            searchPlaceholder={t("manufacturing.boms.list.searchPlaceholder", "Search BOM drafts...")}
             filters={filters}
             filterValues={filterValues}
             onFiltersApply={applyFilters}
             onFiltersClear={handleClearFilters}
             onRowClick={(row) => router.push(`/backend/manufacturing/boms/${row.id}`)}
+            pagination={{
+              page: isSearching ? 1 : cursorIndex + 1,
+              pageSize: PAGE_SIZE,
+              total: inferredTotal,
+              totalPages: inferredTotalPages,
+              totalIsCapped: !isSearching && hasMore,
+              onPageChange: handlePageChange,
+            }}
+            showQueryTime={false}
             rowActions={(row) => (
               <RowActions
                 items={[
@@ -312,14 +346,6 @@ export function BomListClient({ extensionTableId }: { extensionTableId: string }
                 createLabel={t("manufacturing.boms.list.actions.new", "New BOM")}
               />
             )}
-          />
-          <BomKeysetPager
-            page={cursorIndex + 1}
-            hasPrevious={cursorIndex > 0}
-            hasNext={hasMore}
-            isLoading={isLoading}
-            onPrevious={handlePrevious}
-            onNext={handleNext}
           />
         </>
       )}

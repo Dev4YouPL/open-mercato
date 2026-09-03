@@ -64,7 +64,7 @@ export function BomHeaderFormClient({ initial, onSaved }: { initial?: BomHeaderF
       label: t("manufacturing.boms.form.product", "Product"),
       type: "custom",
       required: true,
-      layout: "full",
+      layout: "half",
       description: t("manufacturing.boms.form.productHint", "The manufactured output this BOM defines."),
       component: ({ value, setValue, setFormValue }: CrudCustomFieldRenderProps) => (
         <ProductPicker
@@ -81,7 +81,7 @@ export function BomHeaderFormClient({ initial, onSaved }: { initial?: BomHeaderF
       id: "variantId",
       label: t("manufacturing.boms.form.variant", "Variant"),
       type: "custom",
-      layout: "full",
+      layout: "half",
       component: ({ value, setValue, values }: CrudCustomFieldRenderProps) => (
         <VariantPicker
           value={value}
@@ -93,27 +93,24 @@ export function BomHeaderFormClient({ initial, onSaved }: { initial?: BomHeaderF
     },
     {
       id: "revisionLabel",
-      label: t("manufacturing.boms.form.revisionLabel", "Revision label"),
+      label: t("manufacturing.boms.form.revisionLabel", "Notes"),
       type: "text",
       layout: "full",
-      description: t("manufacturing.boms.form.revisionLabelHint", "Optional — the system revision number is assigned automatically."),
+      description: t("manufacturing.boms.form.revisionLabelHint", "Optional internal note for this draft."),
     },
     {
       id: "baseOutputValue",
       label: t("manufacturing.boms.form.baseOutputValue", "Base output quantity"),
       type: "text",
       required: true,
-      // Stacked, not side by side: this group sits in the narrow second column,
-      // where two half-width fields wrap their labels unevenly and clip the
-      // unit picker.
-      layout: "full",
+      layout: "half",
       defaultValue: "1",
     },
     {
       id: "baseOutputUnitCode",
       label: t("manufacturing.boms.form.baseOutputUnit", "Base unit"),
       type: "custom",
-      layout: "full",
+      layout: "half",
       description: t("manufacturing.boms.form.baseOutputUnitHint", "Only units configured in Catalog."),
       component: ({ value, setValue, values }: CrudCustomFieldRenderProps) => (
         <UnitPicker
@@ -127,17 +124,11 @@ export function BomHeaderFormClient({ initial, onSaved }: { initial?: BomHeaderF
 
   const groups = React.useMemo<CrudFormGroup[]>(() => [
     {
-      id: "target",
-      title: t("manufacturing.boms.form.group.target", "Output target"),
+      id: "basic",
+      title: t("manufacturing.boms.form.group.basic", "Basic BOM data"),
       column: 1,
-      fields: ["productId", "variantId", "revisionLabel"],
-    },
-    {
-      id: "output",
-      title: t("manufacturing.boms.form.group.output", "Base output"),
-      column: 2,
       description: t("manufacturing.boms.form.group.outputDescription", "The quantity this BOM produces in one run. Component quantities are entered against it."),
-      fields: ["baseOutputValue", "baseOutputUnitCode"],
+      fields: ["productId", "variantId", "revisionLabel", "baseOutputValue", "baseOutputUnitCode"],
     },
     {
       id: "custom",
@@ -165,7 +156,8 @@ export function BomHeaderFormClient({ initial, onSaved }: { initial?: BomHeaderF
   }, [initial])
 
   return (
-    <CrudForm<BomHeaderFormValues>
+    <div className="rounded-xl border bg-card p-4 sm:p-6">
+      <CrudForm<BomHeaderFormValues>
       // Custom fields are stored against the platform entity id, while the
       // widget spot and replacement handle stay on the published
       // `crud-form:manufacturing.bom` contract.
@@ -217,7 +209,8 @@ export function BomHeaderFormClient({ initial, onSaved }: { initial?: BomHeaderF
           })
         }
       }}
-    />
+      />
+    </div>
   )
 }
 
