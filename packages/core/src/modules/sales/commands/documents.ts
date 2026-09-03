@@ -61,6 +61,11 @@ import {
   CatalogProduct,
   CatalogProductUnitConversion,
 } from "../../catalog/data/entities";
+import {
+  createCatalogQuantityNormalizationService,
+  QuantityNormalizationError,
+  type CatalogQuantityNormalizationService,
+} from "../../catalog/services/quantityNormalizationService";
 import { Dictionary, DictionaryEntry } from "../../dictionaries/data/entities";
 import { CustomFieldValue } from "@open-mercato/core/modules/entities/data/entities";
 import {
@@ -2303,8 +2308,30 @@ type UomResolver = {
   productCache: Map<string, ProductUomState | null>;
 };
 
+/**
+ * HTTP status for a normalization failure surfaced on a public Sales route.
+ * Every code that existed before normalization moved into the Catalog service
+ * keeps the status it was published with — clients distinguish validation
+ * classes by status, so a silent 400 to 422 shift is a breaking change.
+ * `uom.variant_product_mismatch` is new with the service and has no prior
+ * contract to preserve.
+ */
+const UOM_ERROR_STATUS: Record<string, number> = {
+  "uom.variant_product_mismatch": 404,
+  "uom.conversion_not_found": 400,
+  "uom.invalid_factor": 400,
+  "uom.unit_not_found": 400,
+  "uom.default_unit_missing": 400,
+  "uom.precision_overflow": 422,
+};
+
+export function uomErrorStatus(code: string): number {
+  return UOM_ERROR_STATUS[code] ?? 422;
+}
+
 type NormalizeLineUomInput = {
   em: EntityManager;
+  normalizationService?: CatalogQuantityNormalizationService;
   resolver: UomResolver;
   organizationId: string;
   tenantId: string;
@@ -2764,22 +2791,26 @@ async function normalizeLineUom(input: NormalizeLineUomInput): Promise<{
   }
 
   const resolvedEnteredUnit = enteredUnitCode ?? baseUnitCode;
-  const enteredKey = unitLookupKey(resolvedEnteredUnit);
-  const baseKey = unitLookupKey(baseUnitCode);
-  let toBaseFactor = 1;
-  let conversionId: string | null = null;
-  if (enteredKey && baseKey && enteredKey !== baseKey) {
-    const conversion = productState.conversionsByUnitKey.get(enteredKey);
-    if (!conversion) {
-      throw new CrudHttpError(400, { error: "uom.conversion_not_found" });
-    }
-    toBaseFactor = toNumeric(conversion.toBaseFactor);
-    conversionId = conversion.id;
+  let resolvedSnapshot;
+  try {
+    resolvedSnapshot = await (input.normalizationService ?? createCatalogQuantityNormalizationService({ em })).resolve({
+      tenantId: input.tenantId,
+      organizationId: input.organizationId,
+      productId,
+      productVariantId: variantId,
+      enteredQuantity: toNumericString(quantity) ?? "0",
+      enteredUnitCode: resolvedEnteredUnit,
+    });
+  } catch (error) {
+    // Only a normalization-domain failure is a client-facing UoM error. Anything
+    // else — a dropped connection, a driver fault — carries its own `code` (a
+    // SQLSTATE, for instance) and must not be relabelled as a 4xx the caller can
+    // "fix" by editing the quantity.
+    if (!(error instanceof QuantityNormalizationError)) throw error;
+    throw new CrudHttpError(uomErrorStatus(error.code), { error: error.code });
   }
-  if (!Number.isFinite(toBaseFactor) || toBaseFactor <= 0) {
-    throw new CrudHttpError(400, { error: "uom.invalid_factor" });
-  }
-  const normalizedQuantity = roundNormalizedQuantity(quantity * toBaseFactor);
+  const toBaseFactor = toNumeric(resolvedSnapshot.toBaseFactor);
+  const normalizedQuantity = toNumeric(resolvedSnapshot.normalizedQuantity);
   assertNormalizedPrecision(normalizedQuantity);
   const unitPriceReference = buildUnitPriceReferenceSnapshot({
     product: productState,
@@ -2788,30 +2819,15 @@ async function normalizeLineUom(input: NormalizeLineUomInput): Promise<{
     unitPriceGross: toOptionalNumber(input.line.unitPriceGross),
   });
   const snapshot: SalesLineUomSnapshot = {
-    version: 1,
-    productId,
-    productVariantId: variantId,
-    baseUnitCode,
-    enteredUnitCode: resolvedEnteredUnit,
-    enteredQuantity: toNumericString(quantity) ?? "0",
-    toBaseFactor: toNumericString(toBaseFactor) ?? "1",
-    normalizedQuantity: toNumericString(normalizedQuantity) ?? "0",
-    rounding: {
-      mode: "half_up",
-      scale: UOM_NORMALIZED_SCALE,
-    },
-    source: {
-      conversionId,
-      resolvedAt: new Date().toISOString(),
-    },
+    ...resolvedSnapshot,
     ...(unitPriceReference ? { unitPriceReference } : {}),
   };
 
   return {
     quantity,
-    quantityUnit: resolvedEnteredUnit,
+    quantityUnit: resolvedSnapshot.enteredUnitCode,
     normalizedQuantity,
-    normalizedUnit: baseUnitCode,
+    normalizedUnit: resolvedSnapshot.baseUnitCode,
     uomSnapshot: snapshot,
   };
 }
@@ -4910,6 +4926,7 @@ const createQuoteCommand: CommandHandler<
       lineInputs.map(async (line) => {
         const normalized = await normalizeLineUom({
           em,
+          normalizationService: ctx.container.resolve("catalogQuantityNormalizationService") as CatalogQuantityNormalizationService,
           resolver: uomResolver,
           organizationId: parsed.organizationId,
           tenantId: parsed.tenantId,
@@ -5939,6 +5956,7 @@ const createOrderCommand: CommandHandler<
       lineInputs.map(async (line) => {
         const normalized = await normalizeLineUom({
           em,
+          normalizationService: ctx.container.resolve("catalogQuantityNormalizationService") as CatalogQuantityNormalizationService,
           resolver: uomResolver,
           organizationId: parsed.organizationId,
           tenantId: parsed.tenantId,
@@ -7206,6 +7224,7 @@ const orderLineUpsertCommand: CommandHandler<
     const uomResolver = createUomResolver();
     let normalizedUom = await normalizeLineUom({
       em,
+      normalizationService: ctx.container.resolve("catalogQuantityNormalizationService") as CatalogQuantityNormalizationService,
       resolver: uomResolver,
       organizationId: order.organizationId,
       tenantId: order.tenantId,
@@ -7227,6 +7246,7 @@ const orderLineUpsertCommand: CommandHandler<
       unitPriceGross = convertedPrices.unitPriceGross;
       normalizedUom = await normalizeLineUom({
         em,
+        normalizationService: ctx.container.resolve("catalogQuantityNormalizationService") as CatalogQuantityNormalizationService,
         resolver: uomResolver,
         organizationId: order.organizationId,
         tenantId: order.tenantId,
@@ -7700,6 +7720,7 @@ const quoteLineUpsertCommand: CommandHandler<
     const uomResolver = createUomResolver();
     let normalizedUom = await normalizeLineUom({
       em,
+      normalizationService: ctx.container.resolve("catalogQuantityNormalizationService") as CatalogQuantityNormalizationService,
       resolver: uomResolver,
       organizationId: quote.organizationId,
       tenantId: quote.tenantId,
@@ -7721,6 +7742,7 @@ const quoteLineUpsertCommand: CommandHandler<
       unitPriceGross = convertedPrices.unitPriceGross;
       normalizedUom = await normalizeLineUom({
         em,
+        normalizationService: ctx.container.resolve("catalogQuantityNormalizationService") as CatalogQuantityNormalizationService,
         resolver: uomResolver,
         organizationId: quote.organizationId,
         tenantId: quote.tenantId,
