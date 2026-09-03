@@ -158,3 +158,28 @@ The nine remaining failures are the Windows-only set already recorded under Phas
 this run: `attachments/localDriver` (4), `warranty_claims/quantity` (2), `likeFilterWarning` (1),
 `queue/local.strategy` (1-2, flaky EPERM), plus the `create-mercato-app` and `open-mercato-docs` cases. None
 of them imports a file this phase changed.
+
+### Phase 5 addendum: self-review of the resume diff
+
+A code review of `7959aa8bb..HEAD` — the resume own output, not the PR as a whole — raised five issues,
+all fixed in `668a09e6b`:
+
+| Finding | Why it mattered |
+|---|---|
+| Sales normalisation `catch` relabelled any thrown value | A dropped connection reached the client as a 422 UoM validation error carrying a Postgres SQLSTATE as its `error` |
+| Create-undo skipped its state guard when the draft was missing | A soft-deleted draft disabled the comparison, so the family was soft-deleted unguarded in exactly the drift case the guard exists for |
+| `loadDirectLineSummaries` hydrated every produce occurrence | Traded an N+1 for a large managed-entity load on the path the O(V+E) benchmark targets, and polluted the identity map before `em.map` |
+| The list route documented one of two 400 bodies | A generated client parsing `validation_error` would fail on the cursor rejection |
+| `emptyDirectLineSummary` was an exported mutable singleton | A caller mutating the fallback would corrupt every later lookup in the process |
+
+A sixth suspicion — that the grouped-count Kysely form deviated from the repo idiom and might not compile —
+was checked against a real query compiler and disproved, so nothing was changed for it. `repository.sql.test.ts`
+now compiles both read queries through Kysely `DummyDriver` and asserts the emitted SQL and bound
+parameters, closing the gap where a malformed query would pass every mocked suite.
+
+- [x] 5.10 Review the resume diff and fix what the review found — 668a09e6b
+
+Gate re-run on `668a09e6b`: `build:packages` ✅ 28/28, `typecheck` ✅, `test` ✅ (`@open-mercato/manufacturing`
+18 suites / 116 tests, `@open-mercato/core` 11854 passed with the same six Windows-only failures),
+`build:app` ✅. `generate` and the two i18n checks were not re-run: the review fixes touched no module
+discovery surface, no route file set and no locale file.
