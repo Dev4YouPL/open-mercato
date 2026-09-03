@@ -99,3 +99,16 @@ kind. None of them can fail on the Linux runner.
 - [x] 3.4 Scope the timesheet totals assertion to the totals cells — 032d398d8
 - [x] 3.5 Bound the `test` job's turbo concurrency and heap, and cap its wall time — 935f9c0fb
 - [x] 3.6 Run the validation gate on the changed surface and push
+
+### Phase 4: Re-pin `fast-uri` above its new advisory range
+
+The run on `b280f78d6` turned `audit` red on four `fast-uri` advisories (`GHSA-5jgf-p345-68v8`,
+`GHSA-f65p-4m7j-42xc`, `GHSA-fph4-wmhf-6fwf`, `GHSA-jqff-g426-hqxp`), all fixed in 3.1.6. This is
+advisory drift, not a regression: the root `resolutions` block already pinned `fast-uri` to **3.1.5**,
+and the advisories that cover it were published after the previous run's `audit` passed on the same pin.
+`3.1.7` is unusable — `.yarnrc.yml` sets `npmMinimalAgeGate: 5d` and it was published one day ago — so
+3.1.6 is both the fixed version and the newest one the supply-chain gate admits. `ajv@8.18.0` is the only
+requester and asks for `^3.0.1`, which 3.1.6 satisfies without forcing a major.
+
+- [x] 4.1 Move the root `fast-uri` resolution from 3.1.5 to 3.1.6 and refresh the lockfile
+- [x] 4.2 Re-run `check:resolutions`, `audit-ci --severity high`, `install --immutable`, `check:dep-versions` and the peer-dependency guard
