@@ -60,7 +60,7 @@ jobs:
   # matrix when nothing is in scope, which skips the mutate job entirely rather
   # than reporting a synthetic score.
   scope:
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.scope.outputs.matrix }}
       has_work: ${{ steps.scope.outputs.has_work }}
@@ -117,7 +117,7 @@ jobs:
   mutate:
     needs: scope
     if: needs.scope.outputs.has_work == 'true'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     # Advisory: a low score annotates the PR, it does not fail the check. Flipping
     # MUTATION_ENFORCE to 'true' is what turns this into a real gate.
@@ -246,7 +246,7 @@ jobs:
       always() &&
       needs.scope.outputs.has_work == 'true' &&
       github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     # Convenience surface only: the job summary is primary and needs no token. See
     # the per-job note at the top of this file.
     continue-on-error: true
