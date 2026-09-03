@@ -9,13 +9,20 @@ export type SearchEmptyResultsProps = {
   query: string
   /** Plural entity label (e.g. "companies"); falls back to a generic word. */
   entityNamePlural?: string
+  /**
+   * The same label in the form the description needs after its negation word
+   * ("couldn't find any {entity}" → Polish "żadnych wyników"). Case inflecting
+   * languages need a different word there; the rest translate this key to the
+   * same string as `entityNamePlural`. Falls back to `entityNamePlural`.
+   */
+  entityNamePluralGenitive?: string
   /** Clears the active search. */
   onClearSearch: () => void
 }
 
-export function SearchEmptyResults({ query, entityNamePlural, onClearSearch }: SearchEmptyResultsProps) {
+export function SearchEmptyResults({ query, entityNamePlural, entityNamePluralGenitive, onClearSearch }: SearchEmptyResultsProps) {
   const t = useT()
-  const entity = entityNamePlural ?? t('ui.dataTable.search.empty.genericEntity', 'results')
+  const entity = entityNamePluralGenitive ?? entityNamePlural ?? t('ui.dataTable.search.empty.genericEntity', 'results')
   return (
     <div className="flex w-full max-w-md flex-col items-center gap-4 py-10 text-center" data-testid="search-empty-results">
       <div className="flex size-16 items-center justify-center rounded-full bg-muted">

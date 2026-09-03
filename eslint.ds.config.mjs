@@ -68,6 +68,7 @@ export default [
     files: [
       'packages/core/src/modules/**/backend/**/*.{ts,tsx}',
       'packages/enterprise/src/modules/**/backend/**/*.{ts,tsx}',
+      'packages/manufacturing/src/modules/**/backend/**/*.{ts,tsx}',
       'packages/ui/src/backend/**/*.{ts,tsx}',
     ],
     ignores: ['**/__tests__/**', '**/*.generated.*'],
@@ -104,4 +105,26 @@ export default [
   //   files: ['packages/core/src/modules/audit_logs/backend/**/*.{ts,tsx}'],
   //   rules: { 'om-ds/require-empty-state': 'error', 'om-ds/require-status-badge': 'error' },
   // },
+  //
+  // `manufacturing` is exempt from the two-consecutive-zero-runs procedure above: the
+  // package was bootstrapped with no backend UI at all (see
+  // .ai/specs/2026-08-19-manufacturing-package-module-bootstrap.md), so every counter is
+  // zero by construction rather than by paying down rollout debt. Starting it at `error`
+  // is what keeps its first UI compliant instead of adding to the warn backlog.
+  {
+    files: ['packages/manufacturing/src/modules/**/backend/**/*.{ts,tsx}'],
+    ignores: ['**/__tests__/**', '**/*.generated.*'],
+    linterOptions,
+    languageOptions,
+    plugins,
+    rules: {
+      'om-ds/require-empty-state': 'error',
+      'om-ds/require-page-wrapper': 'error',
+      'om-ds/no-raw-table': 'error',
+      'om-ds/require-loading-state': 'error',
+      'om-ds/require-status-badge': 'error',
+      'om-ds/no-hardcoded-status-colors': 'error',
+      'om-ds/no-legacy-alert-variant': 'error',
+    },
+  },
 ]

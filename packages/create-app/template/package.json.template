@@ -65,6 +65,7 @@
     "@open-mercato/core": "{{PACKAGE_VERSION}}",
     "@open-mercato/documents": "{{PACKAGE_VERSION}}",
     "@open-mercato/events": "{{PACKAGE_VERSION}}",
+    "@open-mercato/manufacturing": "{{PACKAGE_VERSION}}",
     "@open-mercato/onboarding": "{{PACKAGE_VERSION}}",
     "@open-mercato/queue": "{{PACKAGE_VERSION}}",
     "@open-mercato/scheduler": "{{PACKAGE_VERSION}}",

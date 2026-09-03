@@ -117,7 +117,7 @@
   "dependencies": {
     "@ai-sdk/amazon-bedrock": "^5.0.2",
     "@ai-sdk/cohere": "^4.0.14",
-    "@ai-sdk/google": "^4.0.2",
+    "@ai-sdk/google": "^4.0.57",
     "@ai-sdk/mistral": "^4.0.16",
     "@ai-sdk/openai": "^4.0.2",
     "ai": "^7.0.4",
