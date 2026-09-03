@@ -2321,7 +2321,7 @@ const UOM_ERROR_STATUS: Record<string, number> = {
   "uom.precision_overflow": 422,
 };
 
-function uomErrorStatus(code: string): number {
+export function uomErrorStatus(code: string): number {
   return UOM_ERROR_STATUS[code] ?? 422;
 }
 

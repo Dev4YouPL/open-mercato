@@ -108,6 +108,51 @@ function readGenerated(tmpDir: string, filename: string): string {
   return fs.readFileSync(path.join(tmpDir, 'output', 'generated', filename), 'utf8')
 }
 
+/**
+ * The ten BOM endpoints a standalone app must be able to serve. Asserting the
+ * exact set — rather than "at least one API entry exists" — is what makes this
+ * test fail when a route stops being emitted into `dist` or its file is
+ * renamed, which is exactly the packaging regression the fixture exists for.
+ */
+const EXPECTED_API_ROUTES = [
+  '/manufacturing/boms',
+  '/manufacturing/boms/[bomId]',
+  '/manufacturing/boms/[bomId]/lines',
+  '/manufacturing/boms/[bomId]/lines/[lineId]',
+  '/manufacturing/boms/[bomId]/lines/[lineId]/reorder',
+]
+
+const EXPECTED_BACKEND_ROUTES = [
+  '/backend/manufacturing/boms',
+  '/backend/manufacturing/boms/create',
+  '/backend/manufacturing/boms/[id]',
+]
+
+function extractApiPaths(output: string): string[] {
+  const found = new Set<string>()
+  for (const match of output.matchAll(/metadata\?\.path \?\? "([^"]+)"/g)) found.add(match[1])
+  return [...found].sort()
+}
+
+function extractBackendPatterns(output: string): string[] {
+  const found = new Set<string>()
+  for (const match of output.matchAll(/pattern: "([^"]+)"/g)) found.add(match[1])
+  return [...found].sort()
+}
+
+/**
+ * Copies the package's real build output into the fixture, so discovery runs
+ * against everything a published tarball would carry rather than a single
+ * hand-picked entrypoint file.
+ */
+function stagePublishedDist(tmpDir: string): string {
+  buildManufacturingPackage()
+  const distModuleRoot = path.join(manufacturingPackageRoot, 'dist', 'modules', MODULE_ID)
+  const pkgBase = path.join(tmpDir, 'node_modules', '@open-mercato', 'manufacturing', 'dist', 'modules', MODULE_ID)
+  fs.cpSync(distModuleRoot, pkgBase, { recursive: true })
+  return pkgBase
+}
+
 describe('manufacturing module discovery after explicit activation', () => {
   let tmpDir: string
 
@@ -139,18 +184,7 @@ describe('manufacturing module discovery after explicit activation', () => {
   })
 
   it('resolves the module entrypoint from built standalone package output', async () => {
-    const builtEntry = buildManufacturingPackage()
-    const pkgBase = path.join(
-      tmpDir,
-      'node_modules',
-      '@open-mercato',
-      'manufacturing',
-      'dist',
-      'modules',
-      MODULE_ID,
-    )
-    fs.mkdirSync(pkgBase, { recursive: true })
-    fs.copyFileSync(builtEntry, path.join(pkgBase, 'index.js'))
+    const pkgBase = stagePublishedDist(tmpDir)
     const resolver = createResolver(tmpDir, pkgBase, { isMonorepo: false })
 
     const result = await generateModuleRegistry({ resolver, quiet: true })
@@ -159,6 +193,28 @@ describe('manufacturing module discovery after explicit activation', () => {
     const output = readGenerated(tmpDir, 'modules.generated.ts')
     expect(output).toContain(`from "${IMPORT_BASE}/index"`)
     expect(output).toMatch(/info: I\d+_manufacturing\.metadata/)
+  })
+
+  it('serves every BOM route from the published dist, not just the entrypoint', async () => {
+    const pkgBase = stagePublishedDist(tmpDir)
+    const resolver = createResolver(tmpDir, pkgBase, { isMonorepo: false })
+
+    const result = await generateModuleRegistry({ resolver, quiet: true })
+
+    expect(result.errors).toEqual([])
+    const output = readGenerated(tmpDir, 'modules.generated.ts')
+    expect(extractApiPaths(output)).toEqual([...EXPECTED_API_ROUTES].sort())
+    expect(extractBackendPatterns(output)).toEqual([...EXPECTED_BACKEND_ROUTES].sort())
+  })
+
+  it('carries the non-route dist artifacts a standalone app boots from', async () => {
+    const pkgBase = stagePublishedDist(tmpDir)
+
+    for (const artifact of ['acl.js', 'ce.js', 'events.js', 'setup.js', 'extension-points.js']) {
+      expect(fs.existsSync(path.join(pkgBase, artifact))).toBe(true)
+    }
+    expect(fs.readdirSync(path.join(pkgBase, 'migrations')).some((name) => name.endsWith('.js'))).toBe(true)
+    expect(fs.readdirSync(path.join(pkgBase, 'i18n')).length).toBeGreaterThan(0)
   })
 
   it('discovers the P1.4a backend and api surface through auto-discovery', async () => {
@@ -170,8 +226,8 @@ describe('manufacturing module discovery after explicit activation', () => {
     const output = readGenerated(tmpDir, 'modules.generated.ts')
     expect(output).toContain(`${IMPORT_BASE}/backend/`)
     expect(output).toContain(`${IMPORT_BASE}/api/`)
-    expect(output).toContain('/backend/manufacturing/boms')
-    expect(output).toMatch(/apis: \[\s*\{ path: /)
+    expect(extractApiPaths(output)).toEqual([...EXPECTED_API_ROUTES].sort())
+    expect(extractBackendPatterns(output)).toEqual([...EXPECTED_BACKEND_ROUTES].sort())
   })
 
   it('adds no storefront surface — P1.4a authoring is backend-only', async () => {
