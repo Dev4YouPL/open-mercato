@@ -1,6 +1,7 @@
 import type { EntityManager } from '@mikro-orm/postgresql'
 import { ManufacturingBom, ManufacturingBomLine, ManufacturingBomRevision } from '../../data/entities'
 import { decodeBomCursor, decodeLineCursor, encodeBomCursor, encodeLineCursor, filterDigest } from './cursor'
+import { componentTargetKey, resolveComponentTargets } from './target-resolution'
 
 export type ScopedParams = { tenantId: string; organizationId: string }
 
@@ -37,10 +38,80 @@ export async function loadActiveDraft(
   return { bom, revision }
 }
 
+export type DirectLineSummary = { count: number; unresolvedProduceCount: number }
+
+export const emptyDirectLineSummary: DirectLineSummary = { count: 0, unresolvedProduceCount: 0 }
+
+/**
+ * Direct-line counts for a set of draft revisions in a constant number of
+ * queries: one grouped count, one read of the `produce` occurrences, and one
+ * batched child-family resolution.
+ *
+ * `unresolvedProduceCount` is a warning counter, so it counts only the
+ * `produce` occurrences whose component resolves to no live child family —
+ * a correctly resolved dependency is not a warning.
+ */
+export async function loadDirectLineSummaries(
+  em: EntityManager,
+  params: ScopedParams & { revisionIds: string[] },
+): Promise<Map<string, DirectLineSummary>> {
+  const summaries = new Map<string, DirectLineSummary>()
+  if (!params.revisionIds.length) return summaries
+  for (const revisionId of params.revisionIds) summaries.set(revisionId, { count: 0, unresolvedProduceCount: 0 })
+
+  const db = em.getKysely<any>()
+  const counts = (await db
+    .selectFrom('manufacturing_bom_lines')
+    .select((eb: any) => ['revision_id', eb.fn.countAll().as('count')])
+    .where('tenant_id', '=', params.tenantId)
+    .where('organization_id', '=', params.organizationId)
+    .where('revision_id', 'in', params.revisionIds)
+    .where('deleted_at', 'is', null)
+    .groupBy('revision_id')
+    .execute()) as Array<{ revision_id: string; count: string | number }>
+  for (const row of counts) {
+    const summary = summaries.get(row.revision_id)
+    if (summary) summary.count = Number(row.count ?? 0)
+  }
+
+  const produceLines = await em.find(ManufacturingBomLine, {
+    revision: { $in: params.revisionIds },
+    tenantId: params.tenantId,
+    organizationId: params.organizationId,
+    supplyMode: 'produce',
+    deletedAt: null,
+  })
+  if (!produceLines.length) return summaries
+
+  const resolutions = await resolveComponentTargets(em, {
+    tenantId: params.tenantId,
+    organizationId: params.organizationId,
+    targets: produceLines.map((line) => ({
+      componentProductId: line.componentProductId,
+      componentVariantId: line.componentVariantId ?? null,
+    })),
+  })
+  for (const line of produceLines) {
+    const resolution = resolutions.get(
+      componentTargetKey({ componentProductId: line.componentProductId, componentVariantId: line.componentVariantId ?? null }),
+    )
+    if (resolution && resolution.state !== 'unresolved') continue
+    const summary = summaries.get(line.revision.id)
+    if (summary) summary.unresolvedProduceCount += 1
+  }
+  return summaries
+}
+
 export type BomListPage = {
   items: Array<{ bom: ManufacturingBom; revision: ManufacturingBomRevision; lineCount: number; unresolvedProduceCount: number }>
   nextCursor: string | null
   hasMore: boolean
+  /**
+   * A cursor that does not decode, or that was minted for another scope, page
+   * size or filter set. The spec requires an explicit rejection: an empty page
+   * would be indistinguishable from the end of the results.
+   */
+  staleCursor: boolean
 }
 
 export async function listActiveDrafts(
@@ -57,7 +128,7 @@ export async function listActiveDrafts(
       cursor.pageSize !== params.limit ||
       cursor.filterDigest !== digest)
   ) {
-    return { items: [], nextCursor: null, hasMore: false }
+    return { items: [], nextCursor: null, hasMore: false, staleCursor: true }
   }
 
   const db = em.getKysely<any>()
@@ -105,59 +176,49 @@ export async function listActiveDrafts(
   const hasMore = rows.length > params.limit
   const page = hasMore ? rows.slice(0, params.limit) : rows
 
-  const items = await Promise.all(
-    page.map(async (row: any) => {
-      const [lineCount, unresolvedProduceCount] = (await Promise.all([
-        db
-          .selectFrom('manufacturing_bom_lines')
-          .select((eb: any) => eb.fn.countAll().as('count'))
-          .where('revision_id', '=', row.revision_id)
-          .where('deleted_at', 'is', null)
-          .executeTakeFirst(),
-        db
-          .selectFrom('manufacturing_bom_lines')
-          .select((eb: any) => eb.fn.countAll().as('count'))
-          .where('revision_id', '=', row.revision_id)
-          .where('deleted_at', 'is', null)
-          .where('supply_mode', '=', 'produce')
-          .executeTakeFirst(),
-      ])) as Array<{ count: string | number } | undefined>
-      const bom = em.map(ManufacturingBom, {
-        id: row.bom_id,
-        organizationId: row.organization_id,
-        tenantId: row.tenant_id,
-        productId: row.product_id,
-        variantId: row.variant_id,
-        nextRevisionNumber: row.next_revision_number,
-        createdAt: toEntityDate(row.created_at),
-        updatedAt: toEntityDate(row.updated_at),
-        deletedAt: null,
-      })
-      const revision = em.map(ManufacturingBomRevision, {
-        id: row.revision_id,
-        bom: row.bom_id,
-        organizationId: row.organization_id,
-        tenantId: row.tenant_id,
-        revisionNumber: row.revision_number,
-        revisionLabel: row.revision_label,
-        status: 'draft',
-        baseOutputEnteredQuantity: row.base_output_entered_quantity,
-        baseOutputEnteredUnitCode: row.base_output_entered_unit_code,
-        baseOutputNormalizedQuantity: row.base_output_normalized_quantity,
-        baseOutputNormalizedUnitCode: row.base_output_normalized_unit_code,
-        baseOutputUomSnapshot: row.base_output_uom_snapshot,
-        createdAt: toEntityDate(row.created_at),
-        updatedAt: toEntityDate(row.revision_updated_at),
-        deletedAt: null,
-      })
-      return {
-        bom,
-        revision,
-        lineCount: Number(lineCount?.count ?? 0),
-        unresolvedProduceCount: Number(unresolvedProduceCount?.count ?? 0),
-      }
-    }),
-  )
+  const summaries = await loadDirectLineSummaries(em, {
+    tenantId: params.tenantId,
+    organizationId: params.organizationId,
+    revisionIds: page.map((row: any) => row.revision_id),
+  })
+
+  const items = page.map((row: any) => {
+    const summary = summaries.get(row.revision_id) ?? emptyDirectLineSummary
+    const bom = em.map(ManufacturingBom, {
+      id: row.bom_id,
+      organizationId: row.organization_id,
+      tenantId: row.tenant_id,
+      productId: row.product_id,
+      variantId: row.variant_id,
+      nextRevisionNumber: row.next_revision_number,
+      createdAt: toEntityDate(row.created_at),
+      updatedAt: toEntityDate(row.updated_at),
+      deletedAt: null,
+    })
+    const revision = em.map(ManufacturingBomRevision, {
+      id: row.revision_id,
+      bom: row.bom_id,
+      organizationId: row.organization_id,
+      tenantId: row.tenant_id,
+      revisionNumber: row.revision_number,
+      revisionLabel: row.revision_label,
+      status: 'draft',
+      baseOutputEnteredQuantity: row.base_output_entered_quantity,
+      baseOutputEnteredUnitCode: row.base_output_entered_unit_code,
+      baseOutputNormalizedQuantity: row.base_output_normalized_quantity,
+      baseOutputNormalizedUnitCode: row.base_output_normalized_unit_code,
+      baseOutputUomSnapshot: row.base_output_uom_snapshot,
+      createdAt: toEntityDate(row.created_at),
+      updatedAt: toEntityDate(row.revision_updated_at),
+      deletedAt: null,
+    })
+    return {
+      bom,
+      revision,
+      lineCount: summary.count,
+      unresolvedProduceCount: summary.unresolvedProduceCount,
+    }
+  })
 
   const last = page[page.length - 1]
   const nextCursor =
@@ -172,7 +233,7 @@ export async function listActiveDrafts(
         })
       : null
 
-  return { items, nextCursor, hasMore }
+  return { items, nextCursor, hasMore, staleCursor: false }
 }
 
 export type LineListPage = {

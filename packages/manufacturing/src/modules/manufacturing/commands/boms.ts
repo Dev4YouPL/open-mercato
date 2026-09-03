@@ -7,6 +7,7 @@ import { ManufacturingBom, ManufacturingBomLine, ManufacturingBomRevision } from
 import { requireBomScope, withBomTransaction } from '../lib/bom/command-context'
 import { resolveBomQuantity, type BomQuantityNormalizationSnapshot } from '../lib/bom/quantity'
 import { assertNoCandidateCycle } from '../lib/bom/graph-service'
+import { emitBomEvent } from '../lib/bom/emit'
 import { nextMonotonicTimestamp } from '../lib/bom/version'
 import { BomDomainError, assertAggregateVersion } from '../lib/bom/errors'
 import {
@@ -69,6 +70,46 @@ function snapshotOf(
     baseOutputNormalizedUnitCode: revision.baseOutputNormalizedUnitCode,
     baseOutputUomSnapshot: revision.baseOutputUomSnapshot,
   }
+}
+
+/**
+ * Semantic undo guard (spec "Commands, Events, Undo, and Redo": undo
+ * "verifies recorded current state ... never overwrites later edits").
+ *
+ * Custom fields are deliberately excluded: they live outside the aggregate
+ * tables and outside the graph lock, so they are compared and reverted by
+ * their own snapshot helper rather than gating the domain revert.
+ */
+function assertRecordedBomState(
+  bom: ManufacturingBom,
+  revision: ManufacturingBomRevision,
+  expected: BomSnapshot,
+): void {
+  const current = snapshotOf(bom, revision)
+  const changed =
+    current.productId !== expected.productId ||
+    current.variantId !== expected.variantId ||
+    current.revisionId !== expected.revisionId ||
+    current.revisionNumber !== expected.revisionNumber ||
+    current.revisionLabel !== expected.revisionLabel ||
+    current.baseOutputEnteredQuantity !== expected.baseOutputEnteredQuantity ||
+    current.baseOutputEnteredUnitCode !== expected.baseOutputEnteredUnitCode ||
+    current.baseOutputNormalizedQuantity !== expected.baseOutputNormalizedQuantity ||
+    current.baseOutputNormalizedUnitCode !== expected.baseOutputNormalizedUnitCode
+  if (changed) throw new BomDomainError('bom.version_conflict', { reason: 'undo_state_changed' })
+}
+
+/**
+ * Re-validates the whole live produce graph after a restore. A revert that
+ * re-targets a family or brings a soft-deleted one back can close a cycle that
+ * did not exist when the action was recorded, so every restore path pays for
+ * one full check under the graph lock it already holds.
+ */
+async function assertRestoredGraphAcyclic(
+  em: EntityManager,
+  scope: { tenantId: string; organizationId: string },
+): Promise<void> {
+  await assertNoCandidateCycle(em, { ...scope, candidateEdges: [] })
 }
 
 // ---------------------------------------------------------------------------
@@ -142,6 +183,12 @@ const createBomCommand: CommandHandler<CreateBomCommandInput, CreateBomResult> =
       return { bom, revision }
     })
     await writeBomCustomFields(ctx, scope, created.bom.id, input.customFields)
+    await emitBomEvent('manufacturing.bom.created', {
+      ...scope,
+      bomId: created.bom.id,
+      revisionId: created.revision.id,
+      revisionUpdatedAt: created.revision.updatedAt.toISOString(),
+    })
     return created
   },
   buildLog: ({ input, result, ctx }) => {
@@ -158,13 +205,15 @@ const createBomCommand: CommandHandler<CreateBomCommandInput, CreateBomResult> =
   },
   undo: async ({ logEntry, ctx }) => {
     const payload = extractUndoPayload<{ after: BomSnapshot }>(logEntry)
-    const bomId = logEntry?.resourceId ?? payload?.after?.bomId ?? null
+    const after = payload?.after
+    const bomId = logEntry?.resourceId ?? after?.bomId ?? null
     if (!bomId || !logEntry?.tenantId || !logEntry?.organizationId) return
     const scope = { tenantId: logEntry.tenantId, organizationId: logEntry.organizationId }
-    await withBomTransaction(ctx, scope, async (em) => {
+    const removed = await withBomTransaction(ctx, scope, async (em) => {
       const bom = await em.findOne(ManufacturingBom, { id: bomId, ...scope, deletedAt: null })
-      if (!bom) return
+      if (!bom) return null
       const revision = await em.findOne(ManufacturingBomRevision, { bom: bom.id, ...scope, status: 'draft', deletedAt: null })
+      if (after && revision) assertRecordedBomState(bom, revision, after)
       const now = nextMonotonicTimestamp(bom.updatedAt)
       bom.deletedAt = now
       bom.updatedAt = now
@@ -173,14 +222,16 @@ const createBomCommand: CommandHandler<CreateBomCommandInput, CreateBomResult> =
         revision.updatedAt = now
       }
       await em.flush()
+      return revision ? { revisionId: revision.id, revisionUpdatedAt: now.toISOString() } : null
     })
+    if (removed) await emitBomEvent('manufacturing.bom.deleted', { ...scope, bomId, ...removed })
   },
   redo: async ({ logEntry, ctx }) => {
     const payload = extractUndoPayload<{ after: BomSnapshot }>(logEntry)
     const snapshot = payload?.after
     if (!snapshot || !logEntry?.tenantId || !logEntry?.organizationId) throw new BomDomainError('bom.target_conflict')
     const scope = { tenantId: logEntry.tenantId, organizationId: logEntry.organizationId }
-    return withBomTransaction(ctx, scope, async (em) => {
+    const restored = await withBomTransaction(ctx, scope, async (em) => {
       const bom = await em.findOne(ManufacturingBom, { id: snapshot.bomId, ...scope })
       const revision = bom ? await em.findOne(ManufacturingBomRevision, { id: snapshot.revisionId, ...scope }) : null
       if (!bom || !revision) throw new BomDomainError('bom.target_conflict')
@@ -191,8 +242,16 @@ const createBomCommand: CommandHandler<CreateBomCommandInput, CreateBomResult> =
       revision.deletedAt = null
       revision.updatedAt = now
       await em.flush()
+      await assertRestoredGraphAcyclic(em, scope)
       return { bom, revision }
     })
+    await emitBomEvent('manufacturing.bom.created', {
+      ...scope,
+      bomId: restored.bom.id,
+      revisionId: restored.revision.id,
+      revisionUpdatedAt: restored.revision.updatedAt.toISOString(),
+    })
+    return restored
   },
 }
 
@@ -280,6 +339,12 @@ const updateBomCommand: CommandHandler<UpdateBomCommandInput, CreateBomResult> =
     await writeBomCustomFields(ctx, scope, updated.bom.id, input.customFields)
     const withBefore = updated as CreateBomResult & { before?: BomSnapshot }
     if (customFieldsBefore && withBefore.before) withBefore.before.customFields = customFieldsBefore
+    await emitBomEvent('manufacturing.bom.updated', {
+      ...scope,
+      bomId: updated.bom.id,
+      revisionId: updated.revision.id,
+      revisionUpdatedAt: updated.revision.updatedAt.toISOString(),
+    })
     return updated
   },
   buildLog: ({ input, result, ctx }) => {
@@ -303,15 +368,27 @@ const updateBomCommand: CommandHandler<UpdateBomCommandInput, CreateBomResult> =
   undo: async ({ logEntry, ctx }) => {
     const payload = extractUndoPayload<{ before: BomSnapshot | null; after: BomSnapshot | null }>(logEntry)
     const before = payload?.before
-    if (!before || !logEntry?.tenantId || !logEntry?.organizationId) return
+    const after = payload?.after
+    if (!before || !after || !logEntry?.tenantId || !logEntry?.organizationId) return
     const scope = { tenantId: logEntry.tenantId, organizationId: logEntry.organizationId }
-    await restoreBomCustomFields(ctx, scope, before.bomId, before.customFields, payload?.after?.customFields)
+    // The domain revert runs first because it is the half that can legitimately
+    // refuse — state changed since, or the revert would close a cycle. Reverting
+    // the out-of-aggregate custom fields ahead of it would leave them rolled
+    // back against a draft that was never reverted.
+    let revertedAt: string | null = null
     await withBomTransaction(ctx, scope, async (em) => {
       const bom = await em.findOne(ManufacturingBom, { id: before.bomId, ...scope, deletedAt: null })
       const revision = bom ? await em.findOne(ManufacturingBomRevision, { id: before.revisionId, ...scope, deletedAt: null }) : null
       if (!bom || !revision) return
-      if (before.productId !== bom.productId || before.variantId !== (bom.variantId ?? null)) {
+      assertRecordedBomState(bom, revision, after)
+      const targetChanged = before.productId !== bom.productId || before.variantId !== (bom.variantId ?? null)
+      if (targetChanged) {
         await assertTargetAvailable(em, { ...scope, productId: before.productId, variantId: before.variantId, excludeBomId: bom.id })
+        await assertNoCandidateCycle(em, {
+          ...scope,
+          candidateEdges: [],
+          targetOverrides: new Map([[bom.id, { productId: before.productId, variantId: before.variantId }]]),
+        })
       }
       bom.productId = before.productId
       bom.variantId = before.variantId
@@ -324,8 +401,18 @@ const updateBomCommand: CommandHandler<UpdateBomCommandInput, CreateBomResult> =
       const now = nextMonotonicTimestamp(revision.updatedAt)
       revision.updatedAt = now
       bom.updatedAt = now
+      revertedAt = now.toISOString()
       await em.flush()
     })
+    if (revertedAt) {
+      await restoreBomCustomFields(ctx, scope, before.bomId, before.customFields, after.customFields)
+      await emitBomEvent('manufacturing.bom.updated', {
+        ...scope,
+        bomId: before.bomId,
+        revisionId: before.revisionId,
+        revisionUpdatedAt: revertedAt,
+      })
+    }
   },
 }
 
@@ -340,14 +427,20 @@ export type DeleteBomCommandInput = {
   expectedUpdatedAt?: string | null
 }
 
-type DeleteBomResult = { bomId: string; revisionId: string; deletedAt: Date }
+type DeleteBomResult = {
+  bomId: string
+  revisionId: string
+  deletedAt: Date
+  tenantId: string
+  organizationId: string
+}
 
 const deleteBomCommand: CommandHandler<DeleteBomCommandInput, DeleteBomResult> = {
   id: 'manufacturing.bom.delete',
   isUndoable: true,
   execute: async (input, ctx) => {
     const scope = requireBomScope(ctx, input)
-    return withBomTransaction(ctx, scope, async (em) => {
+    const deleted = await withBomTransaction(ctx, scope, async (em) => {
       const bom = await em.findOne(ManufacturingBom, { id: input.bomId, ...scope, deletedAt: null })
       if (!bom) throw new BomDomainError('bom.target_conflict', { reason: 'not_found' })
       const revision = await em.findOne(ManufacturingBomRevision, { bom: bom.id, ...scope, status: 'draft', deletedAt: null })
@@ -361,14 +454,21 @@ const deleteBomCommand: CommandHandler<DeleteBomCommandInput, DeleteBomResult> =
       revision.updatedAt = now
       for (const line of lines) line.deletedAt = now
       await em.flush()
-      return { bomId: bom.id, revisionId: revision.id, deletedAt: now }
+      return { bomId: bom.id, revisionId: revision.id, deletedAt: now, ...scope }
     })
+    await emitBomEvent('manufacturing.bom.deleted', {
+      ...scope,
+      bomId: deleted.bomId,
+      revisionId: deleted.revisionId,
+      revisionUpdatedAt: deleted.deletedAt.toISOString(),
+    })
+    return deleted
   },
   buildLog: ({ result, ctx }) => ({
     resourceKind: 'manufacturing.bom',
     resourceId: result.bomId,
-    tenantId: null,
-    organizationId: null,
+    tenantId: result.tenantId,
+    organizationId: result.organizationId,
     actorUserId: ctx.auth?.userId ?? null,
     snapshotAfter: result,
     payload: { undo: { after: result } },
@@ -379,11 +479,11 @@ const deleteBomCommand: CommandHandler<DeleteBomCommandInput, DeleteBomResult> =
     if (!bomId || !logEntry?.tenantId || !logEntry?.organizationId) return
     const scope = { tenantId: logEntry.tenantId, organizationId: logEntry.organizationId }
     const markedAt = payload?.after?.deletedAt
-    await withBomTransaction(ctx, scope, async (em) => {
+    const restored = await withBomTransaction(ctx, scope, async (em) => {
       const bom = await em.findOne(ManufacturingBom, { id: bomId, ...scope })
-      if (!bom || !bom.deletedAt) return
+      if (!bom || !bom.deletedAt) return null
       const markedTime = markedAt ? new Date(markedAt).getTime() : null
-      if (markedTime !== null && bom.deletedAt.getTime() !== markedTime) return
+      if (markedTime !== null && bom.deletedAt.getTime() !== markedTime) return null
       await assertTargetAvailable(em, { ...scope, productId: bom.productId, variantId: bom.variantId ?? null, excludeBomId: bom.id })
       const revision = await em.findOne(ManufacturingBomRevision, { bom: bom.id, ...scope })
       const lines = revision ? await em.find(ManufacturingBomLine, { revision: revision.id, ...scope }) : []
@@ -398,7 +498,10 @@ const deleteBomCommand: CommandHandler<DeleteBomCommandInput, DeleteBomResult> =
         if (line.deletedAt && markedTime !== null && line.deletedAt.getTime() === markedTime) line.deletedAt = null
       }
       await em.flush()
+      await assertRestoredGraphAcyclic(em, scope)
+      return revision ? { revisionId: revision.id, revisionUpdatedAt: now.toISOString() } : null
     })
+    if (restored) await emitBomEvent('manufacturing.bom.created', { ...scope, bomId, ...restored })
   },
 }
 

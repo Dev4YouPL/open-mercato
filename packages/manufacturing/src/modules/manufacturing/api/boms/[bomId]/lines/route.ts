@@ -4,10 +4,26 @@ import type { CommandBus } from '@open-mercato/shared/lib/commands'
 import { readJsonSafe } from '@open-mercato/shared/lib/http/readJsonSafe'
 import { z } from 'zod'
 import { listBomLinesQuerySchema, bomLineInputSchema } from '../../../../data/validators'
+import {
+  bomLineListResponseSchema,
+  bomLineMutationResultSchema,
+  bomDomainErrorSchema,
+  optimisticLockConflictSchema,
+  expectedVersionHeaderSchema,
+  validationErrorSchema,
+} from '../../../openapi'
 import { loadActiveDraft, listLines } from '../../../../lib/bom/repository'
-import { resolveComponentTarget } from '../../../../lib/bom/target-resolution'
+import { componentTargetKey, resolveComponentTarget, resolveComponentTargets } from '../../../../lib/bom/target-resolution'
 import type { CreateLineCommandInput } from '../../../../commands/bomLines'
-import { resolveBomRequestContext, runBomMutationGuards, readExpectedUpdatedAt, operationHeaders, toErrorResponse } from '../../../../lib/bom/route-context'
+import {
+  resolveBomRequestContext,
+  runBomMutationGuards,
+  runBomMutationGuardCallbacks,
+  reparseGuardPayload,
+  readExpectedUpdatedAt,
+  operationHeaders,
+  toErrorResponse,
+} from '../../../../lib/bom/route-context'
 import { toBomLineDto, toBomLineMutationResultDto } from '../../../../lib/bom/dto'
 import { loadCatalogLabels } from '../../../../lib/bom/catalog-enrichment'
 import type { ManufacturingBomLine, ManufacturingBomRevision } from '../../../../data/entities'
@@ -59,17 +75,23 @@ export async function GET(req: Request, routeContext: RouteContext): Promise<Res
     { tenantId, organizationId },
     page.items.map((line) => ({ productId: line.componentProductId, variantId: line.componentVariantId ?? null })),
   )
-  const items = await Promise.all(
-    page.items.map(async (line) => {
-      const resolution = await resolveComponentTarget(em, {
-        tenantId,
-        organizationId,
-        componentProductId: line.componentProductId,
-        componentVariantId: line.componentVariantId,
-      })
-      return toBomLineDto(line, line.supplyMode === 'stock' ? { state: 'stock_leaf' } : resolution, labels)
-    }),
-  )
+  const produceLines = page.items.filter((line) => line.supplyMode !== 'stock')
+  const resolutions = await resolveComponentTargets(em, {
+    tenantId,
+    organizationId,
+    targets: produceLines.map((line) => ({
+      componentProductId: line.componentProductId,
+      componentVariantId: line.componentVariantId ?? null,
+    })),
+  })
+  const items = page.items.map((line) => {
+    if (line.supplyMode === 'stock') return toBomLineDto(line, { state: 'stock_leaf' }, labels)
+    const key = componentTargetKey({
+      componentProductId: line.componentProductId,
+      componentVariantId: line.componentVariantId ?? null,
+    })
+    return toBomLineDto(line, resolutions.get(key) ?? { state: 'unresolved' }, labels)
+  })
 
   return Response.json({ items, nextCursor: page.nextCursor, hasMore: page.hasMore, snapshotUpdatedAt: active.revision.updatedAt.toISOString() })
 }
@@ -85,18 +107,19 @@ export async function POST(req: Request, routeContext: RouteContext): Promise<Re
   const parsed = bomLineInputSchema.safeParse(body)
   if (!parsed.success) return Response.json({ error: 'validation_error', issues: parsed.error.issues }, { status: 400 })
 
-  const guardResponse = await runBomMutationGuards(ctx, {
+  const guardInput = {
     tenantId,
     organizationId,
     userId,
-    resourceKind: 'manufacturing.bom_line',
-    resourceId: null,
-    operation: 'create',
+    resourceKind: 'manufacturing.bom_line' as const,
+    operation: 'create' as const,
     requestMethod: req.method,
     requestHeaders: req.headers,
-    mutationPayload: parsed.data as unknown as Record<string, unknown>,
-  })
-  if (guardResponse) return guardResponse
+  }
+  const guard = await runBomMutationGuards(ctx, { ...guardInput, resourceId: null, mutationPayload: parsed.data as unknown as Record<string, unknown> })
+  if (guard.blocked) return guard.blocked
+  const effective = reparseGuardPayload(bomLineInputSchema, parsed.data, guard.modifiedPayload)
+  if (!effective.ok) return effective.response
 
   try {
     const commandBus = ctx.container.resolve<CommandBus>('commandBus')
@@ -105,20 +128,24 @@ export async function POST(req: Request, routeContext: RouteContext): Promise<Re
       organizationId,
       bomId: params.data.bomId,
       expectedUpdatedAt: readExpectedUpdatedAt(req),
-      line: parsed.data,
+      line: effective.data,
     }
     const { result, logEntry } = await commandBus.execute<CreateLineCommandInput, { line: ManufacturingBomLine; revision: ManufacturingBomRevision }>(
       'manufacturing.bom_line.create',
       { input, ctx },
     )
-    const resolution = await resolveComponentTarget(ctx.container.resolve<EntityManager>('em'), {
-      tenantId,
-      organizationId,
-      componentProductId: result.line.componentProductId,
-      componentVariantId: result.line.componentVariantId,
-    })
+    await runBomMutationGuardCallbacks(guard.callbacks, { ...guardInput, resourceId: result.line.id })
+    const resolution =
+      result.line.supplyMode === 'stock'
+        ? ({ state: 'stock_leaf' } as const)
+        : await resolveComponentTarget(ctx.container.resolve<EntityManager>('em'), {
+            tenantId,
+            organizationId,
+            componentProductId: result.line.componentProductId,
+            componentVariantId: result.line.componentVariantId,
+          })
     return Response.json(
-      toBomLineMutationResultDto(result.line, result.line.supplyMode === 'stock' ? { state: 'stock_leaf' } : resolution, result.revision.updatedAt),
+      toBomLineMutationResultDto(result.line, resolution, result.revision.updatedAt),
       { status: 201, headers: operationHeaders(logEntry) },
     )
   } catch (error) {
@@ -133,17 +160,23 @@ export const openApi: OpenApiRouteDoc = {
     GET: {
       operationId: 'manufacturingListBomLines',
       summary: 'List direct component occurrences of the active draft (keyset pagination bound to the revision token).',
-      responses: [{ status: 200, description: 'Paged line list.', mediaType: 'application/json' }],
+      pathParams: idParamSchema,
+      query: listBomLinesQuerySchema,
+      responses: [{ status: 200, description: 'Paged line list.', mediaType: 'application/json', schema: bomLineListResponseSchema }],
       errors: [
+        { status: 400, description: 'Malformed query or path parameter.', schema: validationErrorSchema },
         { status: 401, description: 'Unauthenticated caller.' },
         { status: 404, description: 'BOM not found.' },
-        { status: 409, description: 'Stale line cursor after an aggregate mutation.' },
+        { status: 409, description: 'Stale line cursor after an aggregate mutation.', schema: bomDomainErrorSchema },
       ],
     },
     POST: {
+      pathParams: idParamSchema,
+      headers: expectedVersionHeaderSchema,
+      requestBody: { schema: bomLineInputSchema, contentType: 'application/json' },
       operationId: 'manufacturingCreateBomLine',
       summary: 'Append one direct component occurrence to the active draft.',
-      responses: [{ status: 201, description: 'Created line.', mediaType: 'application/json' }],
+      responses: [{ status: 201, description: 'Created line.', mediaType: 'application/json', schema: bomLineMutationResultSchema }],
       errors: [
         { status: 401, description: 'Unauthenticated caller.' },
         { status: 403, description: 'Caller lacks manufacturing.bom.manage.' },

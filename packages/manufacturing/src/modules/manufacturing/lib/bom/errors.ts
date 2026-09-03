@@ -12,6 +12,7 @@ export type BomDomainErrorCode =
   | 'bom.quantity_invalid'
   | 'bom.uom_invalid'
   | 'bom.position_exhausted'
+  | 'bom.cursor_invalid'
 
 const STATUS_BY_CODE: Record<BomDomainErrorCode, number> = {
   'bom.target_conflict': 409,
@@ -22,6 +23,7 @@ const STATUS_BY_CODE: Record<BomDomainErrorCode, number> = {
   'bom.quantity_invalid': 422,
   'bom.uom_invalid': 422,
   'bom.position_exhausted': 409,
+  'bom.cursor_invalid': 400,
 }
 
 export class BomDomainError extends Error {
