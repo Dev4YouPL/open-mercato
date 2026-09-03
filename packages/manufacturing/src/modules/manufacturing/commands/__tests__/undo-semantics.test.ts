@@ -17,7 +17,7 @@ jest.mock('../../lib/bom/custom-fields', () => ({
 }))
 
 import { createLineCommand, updateLineCommand, deleteLineCommand, reorderLineCommand } from '../bomLines'
-import { updateBomCommand, deleteBomCommand } from '../boms'
+import { createBomCommand, updateBomCommand, deleteBomCommand } from '../boms'
 
 /**
  * Semantic undo (spec "Commands, Events, Undo, and Redo": undo "verifies
@@ -185,6 +185,18 @@ describe('manufacturing.bom_line.create undo', () => {
     await createLineCommand.undo!({ input: {} as never, ctx, logEntry: logEntryFor({ after: snapshotFrom(line) }) as never })
 
     expect(line.deletedAt).toBeInstanceOf(Date)
+  })
+
+  it('refuses when the draft the family was created with is gone', async () => {
+    const bom = bomRow()
+    const after = bomSnapshotFrom(bom, revisionRow())
+    const store: Store = { boms: [bom], revisions: [], lines: [] }
+    const { ctx } = makeContext(store)
+
+    await expect(
+      createBomCommand.undo!({ input: {} as never, ctx, logEntry: logEntryFor({ after }) as never }),
+    ).rejects.toMatchObject({ code: 'bom.version_conflict' })
+    expect(bom.deletedAt).toBeNull()
   })
 
   it('refuses when the occurrence was edited after the action was recorded', async () => {

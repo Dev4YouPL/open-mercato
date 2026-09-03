@@ -6,6 +6,7 @@ import {
   bomListResponseSchema,
   bomMutationResultSchema,
   bomDomainErrorSchema,
+  listBadRequestSchema,
   validationErrorSchema,
 } from '../openapi'
 import { listActiveDrafts } from '../../lib/bom/repository'
@@ -124,7 +125,7 @@ export const openApi: OpenApiRouteDoc = {
       ],
       errors: [
         { status: 401, description: 'Unauthenticated caller.' },
-        { status: 400, description: 'Missing organization scope, invalid query, or a rejected cursor (bom.cursor_invalid).', schema: validationErrorSchema },
+        { status: 400, description: 'Missing organization scope, an invalid query, or a rejected cursor. Carries either the validation-error shape or the domain-error shape with code bom.cursor_invalid.', schema: listBadRequestSchema },
       ],
     },
     POST: {

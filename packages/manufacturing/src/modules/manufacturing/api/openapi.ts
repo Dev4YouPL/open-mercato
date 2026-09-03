@@ -172,6 +172,13 @@ export const bomDomainErrorSchema = z.object({
   code: z.string(),
 })
 
+/**
+ * `GET /api/manufacturing/boms` answers 400 with either shape: a zod failure
+ * on the query, or the domain error a rejected cursor raises. Documenting only
+ * one of them would leave a generated client unable to parse the other.
+ */
+export const listBadRequestSchema = z.union([validationErrorSchema, bomDomainErrorSchema])
+
 export const optimisticLockConflictSchema = z.object({
   error: z.literal(OPTIMISTIC_LOCK_CONFLICT_ERROR),
   code: z.literal(OPTIMISTIC_LOCK_CONFLICT_CODE),

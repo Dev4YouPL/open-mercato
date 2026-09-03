@@ -213,7 +213,12 @@ const createBomCommand: CommandHandler<CreateBomCommandInput, CreateBomResult> =
       const bom = await em.findOne(ManufacturingBom, { id: bomId, ...scope, deletedAt: null })
       if (!bom) return null
       const revision = await em.findOne(ManufacturingBomRevision, { bom: bom.id, ...scope, status: 'draft', deletedAt: null })
-      if (after && revision) assertRecordedBomState(bom, revision, after)
+      if (after) {
+        // A draft that is gone is itself a later change, so it refuses like any
+        // other mismatch rather than falling through to an unguarded delete.
+        if (!revision) throw new BomDomainError('bom.version_conflict', { reason: 'undo_state_changed' })
+        assertRecordedBomState(bom, revision, after)
+      }
       const now = nextMonotonicTimestamp(bom.updatedAt)
       bom.deletedAt = now
       bom.updatedAt = now

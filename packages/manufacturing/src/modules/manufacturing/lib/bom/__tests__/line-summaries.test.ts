@@ -1,5 +1,5 @@
 import { ManufacturingBom, ManufacturingBomLine, ManufacturingBomRevision } from '../../../data/entities'
-import { loadDirectLineSummaries, listActiveDrafts } from '../repository'
+import { loadDirectLineSummaries, listActiveDrafts, emptyDirectLineSummary } from '../repository'
 import { resolveComponentTargets, componentTargetKey } from '../target-resolution'
 import { encodeBomCursor } from '../cursor'
 
@@ -32,27 +32,33 @@ function makeEm(options: {
   const kyselyCalls: string[] = []
   const findCalls: string[] = []
 
+  /**
+   * The two reads against `manufacturing_bom_lines` are told apart the way the
+   * database would: only the count query groups.
+   */
   const builder = (table: string): AnyRecord => {
     const self: AnyRecord = {}
-    for (const method of ['innerJoin', 'select', 'where', 'orderBy', 'groupBy', 'limit']) {
+    let grouped = false
+    for (const method of ['innerJoin', 'select', 'where', 'orderBy', 'limit']) {
       self[method] = () => self
     }
-    self.execute = async () => (table === 'counts' ? (options.counts ?? []) : (options.rows ?? []))
+    self.groupBy = () => {
+      grouped = true
+      return self
+    }
+    self.execute = async () => {
+      if (table === 'rows') return options.rows ?? []
+      kyselyCalls.push(grouped ? 'counts' : 'produce-lines')
+      return grouped ? (options.counts ?? []) : (options.lines ?? [])
+    }
     return self
   }
 
   const em: AnyRecord = {
     getKysely: () => ({
-      selectFrom: (from: string) => {
-        kyselyCalls.push(from)
-        return builder(from.includes(' as b') ? 'rows' : 'counts')
-      },
+      selectFrom: (from: string) => builder(from.includes(' as b') ? 'rows' : 'lines'),
     }),
     async find(entity: unknown) {
-      if (entity === ManufacturingBomLine) {
-        findCalls.push('lines')
-        return options.lines ?? []
-      }
       if (entity === ManufacturingBom) {
         findCalls.push('families')
         return options.families ?? []
@@ -70,11 +76,9 @@ function makeEm(options: {
 
 function produceLine(revisionId: string, componentProductId: string, componentVariantId: string | null = null): AnyRecord {
   return {
-    id: `line-${componentProductId}-${revisionId}`,
-    revision: { id: revisionId },
-    componentProductId,
-    componentVariantId,
-    supplyMode: 'produce',
+    revision_id: revisionId,
+    component_product_id: componentProductId,
+    component_variant_id: componentVariantId,
   }
 }
 
@@ -143,13 +147,37 @@ describe('loadDirectLineSummaries', () => {
     expect(summaries.get(REVISION_A)).toEqual({ count: 4, unresolvedProduceCount: 1 })
   })
 
-  it('reports an empty summary for a draft with no lines without querying further', async () => {
-    const { em, findCalls } = makeEm({ counts: [], lines: [] })
+  it('reports an empty summary for a draft with no lines without resolving anything', async () => {
+    const { em, findCalls, kyselyCalls } = makeEm({ counts: [], lines: [] })
 
     const summaries = await loadDirectLineSummaries(em, { ...SCOPE, revisionIds: [REVISION_A] })
 
     expect(summaries.get(REVISION_A)).toEqual({ count: 0, unresolvedProduceCount: 0 })
-    expect(findCalls).toEqual(['lines'])
+    expect(kyselyCalls).toEqual(['counts', 'produce-lines'])
+    expect(findCalls).toEqual([])
+  })
+
+  it('reads the produce occurrences as scalars rather than hydrating entities', async () => {
+    const { em, findCalls } = makeEm({
+      counts: [{ revision_id: REVISION_A, count: 2 }],
+      lines: [produceLine(REVISION_A, ORPHAN_PRODUCT)],
+      families: [],
+      drafts: [],
+    })
+
+    await loadDirectLineSummaries(em, { ...SCOPE, revisionIds: [REVISION_A] })
+
+    expect(findCalls).not.toContain('lines')
+  })
+})
+
+describe('emptyDirectLineSummary', () => {
+  it('is frozen, so a caller cannot corrupt the shared fallback in place', () => {
+    expect(Object.isFrozen(emptyDirectLineSummary)).toBe(true)
+    expect(() => {
+      ;(emptyDirectLineSummary as { count: number }).count = 5
+    }).toThrow()
+    expect(emptyDirectLineSummary.count).toBe(0)
   })
 })
 

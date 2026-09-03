@@ -40,7 +40,15 @@ export async function loadActiveDraft(
 
 export type DirectLineSummary = { count: number; unresolvedProduceCount: number }
 
-export const emptyDirectLineSummary: DirectLineSummary = { count: 0, unresolvedProduceCount: 0 }
+/**
+ * Frozen so the fallback cannot be mutated in place by a caller that treats
+ * what it received as its own accumulator — that would corrupt every later
+ * lookup in the process, not just the one record.
+ */
+export const emptyDirectLineSummary: Readonly<DirectLineSummary> = Object.freeze({
+  count: 0,
+  unresolvedProduceCount: 0,
+})
 
 /**
  * Direct-line counts for a set of draft revisions in a constant number of
@@ -74,29 +82,38 @@ export async function loadDirectLineSummaries(
     if (summary) summary.count = Number(row.count ?? 0)
   }
 
-  const produceLines = await em.find(ManufacturingBomLine, {
-    revision: { $in: params.revisionIds },
-    tenantId: params.tenantId,
-    organizationId: params.organizationId,
-    supplyMode: 'produce',
-    deletedAt: null,
-  })
+  // Only the three columns the warning counter needs, as scalars. Hydrating
+  // every `produce` occurrence on the page as a managed entity would cost a
+  // full identity-map load to compute two integers per family — and would pollute
+  // that map before `listActiveDrafts` projects its own rows through `em.map`.
+  const produceLines = (await db
+    .selectFrom('manufacturing_bom_lines')
+    .select(['revision_id', 'component_product_id', 'component_variant_id'])
+    .where('tenant_id', '=', params.tenantId)
+    .where('organization_id', '=', params.organizationId)
+    .where('revision_id', 'in', params.revisionIds)
+    .where('supply_mode', '=', 'produce')
+    .where('deleted_at', 'is', null)
+    .execute()) as Array<{ revision_id: string; component_product_id: string; component_variant_id: string | null }>
   if (!produceLines.length) return summaries
 
   const resolutions = await resolveComponentTargets(em, {
     tenantId: params.tenantId,
     organizationId: params.organizationId,
     targets: produceLines.map((line) => ({
-      componentProductId: line.componentProductId,
-      componentVariantId: line.componentVariantId ?? null,
+      componentProductId: line.component_product_id,
+      componentVariantId: line.component_variant_id,
     })),
   })
   for (const line of produceLines) {
     const resolution = resolutions.get(
-      componentTargetKey({ componentProductId: line.componentProductId, componentVariantId: line.componentVariantId ?? null }),
+      componentTargetKey({
+        componentProductId: line.component_product_id,
+        componentVariantId: line.component_variant_id,
+      }),
     )
     if (resolution && resolution.state !== 'unresolved') continue
-    const summary = summaries.get(line.revision.id)
+    const summary = summaries.get(line.revision_id)
     if (summary) summary.unresolvedProduceCount += 1
   }
   return summaries

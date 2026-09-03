@@ -61,7 +61,11 @@ import {
   CatalogProduct,
   CatalogProductUnitConversion,
 } from "../../catalog/data/entities";
-import { createCatalogQuantityNormalizationService, type CatalogQuantityNormalizationService } from "../../catalog/services/quantityNormalizationService";
+import {
+  createCatalogQuantityNormalizationService,
+  QuantityNormalizationError,
+  type CatalogQuantityNormalizationService,
+} from "../../catalog/services/quantityNormalizationService";
 import { Dictionary, DictionaryEntry } from "../../dictionaries/data/entities";
 import { CustomFieldValue } from "@open-mercato/core/modules/entities/data/entities";
 import {
@@ -2798,10 +2802,12 @@ async function normalizeLineUom(input: NormalizeLineUomInput): Promise<{
       enteredUnitCode: resolvedEnteredUnit,
     });
   } catch (error) {
-    const code = error && typeof error === "object" && "code" in error
-      ? String((error as { code: unknown }).code)
-      : "uom.precision_overflow";
-    throw new CrudHttpError(uomErrorStatus(code), { error: code });
+    // Only a normalization-domain failure is a client-facing UoM error. Anything
+    // else — a dropped connection, a driver fault — carries its own `code` (a
+    // SQLSTATE, for instance) and must not be relabelled as a 4xx the caller can
+    // "fix" by editing the quantity.
+    if (!(error instanceof QuantityNormalizationError)) throw error;
+    throw new CrudHttpError(uomErrorStatus(error.code), { error: error.code });
   }
   const toBaseFactor = toNumeric(resolvedSnapshot.toBaseFactor);
   const normalizedQuantity = toNumeric(resolvedSnapshot.normalizedQuantity);
