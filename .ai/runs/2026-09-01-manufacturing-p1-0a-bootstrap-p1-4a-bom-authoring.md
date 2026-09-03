@@ -146,4 +146,15 @@ accepted; three were rejected with evidence and are answered in a PR comment rat
 - [x] 5.6 Count only unresolved produce lines, reject stale BOM-list cursors, batch the list queries — be6d58e38
 - [x] 5.7 Document request and response schemas on the BOM routes — be6d58e38
 - [x] 5.8 Add the executable coverage for everything above — 0b5df69b7
-- [ ] 5.9 Run the validation gate and push
+- [x] 5.9 Run the validation gate and push
+
+Gate on `5fe4cd437` (local runner, Windows host): `build:packages` ✅, `generate` ✅, `build:packages` ✅,
+`i18n:check-sync` ✅, `i18n:check-usage` ✅ (advisory-only, 3828 pre-existing unused keys), `typecheck` ✅
+28/28, `test` ✅ for every package this resume touched — `@open-mercato/manufacturing` 17 suites / 110 tests,
+`@open-mercato/core` 11854 passed, `@open-mercato/shared` 2169 passed, `@open-mercato/cli` 1815 passed,
+`@open-mercato/ui` 1942 passed — and `build:app` ✅.
+
+The nine remaining failures are the Windows-only set already recorded under Phase 3, re-confirmed by name on
+this run: `attachments/localDriver` (4), `warranty_claims/quantity` (2), `likeFilterWarning` (1),
+`queue/local.strategy` (1-2, flaky EPERM), plus the `create-mercato-app` and `open-mercato-docs` cases. None
+of them imports a file this phase changed.
