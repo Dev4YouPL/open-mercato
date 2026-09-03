@@ -218,13 +218,17 @@ describe('MyTimesheetsPage — duration entry (#4846)', () => {
   })
 
   it('stops counting a cell in the totals once its pending value becomes invalid', async () => {
+    // Scoped to `td` because the column headings render a bare day-of-month in a `div`, so an
+    // unscoped text query for a small number matches the calendar in every week that contains
+    // that day and the assertion turns date-dependent.
+    const totalsShowing = (value: string) => screen.queryAllByText(value, { selector: 'td' })
     const inputs = await renderGrid()
     typeAndBlur(inputs[0], '2')
-    await waitFor(() => expect(screen.getAllByText('2').length).toBeGreaterThan(0))
+    await waitFor(() => expect(totalsShowing('2').length).toBeGreaterThan(0))
 
     typeAndBlur(inputs[0], 'abc')
     await waitFor(() => expect(inputs[0]).toHaveAttribute('aria-invalid', 'true'))
-    expect(screen.queryAllByText('2')).toHaveLength(0)
+    expect(totalsShowing('2')).toHaveLength(0)
   })
 
   it('names every duration cell after its own project and date', async () => {
