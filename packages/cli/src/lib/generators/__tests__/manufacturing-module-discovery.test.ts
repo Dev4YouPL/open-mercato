@@ -171,7 +171,7 @@ describe('manufacturing module discovery after explicit activation', () => {
     expect(output).toContain(`${IMPORT_BASE}/backend/`)
     expect(output).toContain(`${IMPORT_BASE}/api/`)
     expect(output).toContain('/backend/manufacturing/boms')
-    expect(output).toContain('apis: [{')
+    expect(output).toMatch(/apis: \[\s*\{ path: /)
   })
 
   it('adds no storefront surface — P1.4a authoring is backend-only', async () => {
