@@ -1,6 +1,6 @@
 # Manufacturing BOM Draft Authoring and Integrity
 
-> **MVP alignment (2026-09-05):** P1.4a is the definition-input portion of the proposed [`Manufacturing End-to-End MVP`](2026-09-05-manufacturing-end-to-end-mvp.md), not a standalone Manufacturing MVP. Preserve its specified integrity contract, but prioritize only the direct-level authoring/release input required by the end-to-end flow before starting deferred BOM enhancements.
+> **MVP alignment (2026-09-05):** P1.4a is the definition-input portion of the proposed [`Manufacturing End-to-End MVP`](2026-09-05-manufacturing-end-to-end-mvp.md), not a standalone Manufacturing MVP. Preserve its specified integrity contract, but prioritize only the direct-level authoring/release input required by the end-to-end flow before starting deferred BOM enhancements. For the restricted MVP profile only, canonical same-inventory-unit decimal strings are validated and calculated by Manufacturing under MVP-D's frozen four-decimal envelope; the broader Catalog conversion/rounding resolver remains the gate for general P1.4a behavior.
 
 ## TLDR
 
@@ -10,7 +10,7 @@ Every quantity is a canonical decimal string normalized through the Catalog-owne
 
 This slice includes data, migration, direct-level CRUD/API/UI, commands, undo/redo, ordering, ACL, events, exact quantity/UoM evidence, child-resolution warnings, and direct/indirect/concurrent cycle prevention. Bounded recursive draft preview/explosion is the independently deliverable P1.4b capability specified in [`2026-08-19-manufacturing-bom-draft-preview.md`](2026-08-19-manufacturing-bom-draft-preview.md).
 
-**Specification status:** Full implementation-ready design. The quantity-bearing P1.4a implementation remains gated by acceptance of P1.0, delivery of P1.0a, and an available Catalog exact quantity/UoM contract. No Catalog roadmap task is a Manufacturing runtime dependency or blocker for non-quantity Manufacturing work.
+**Specification status:** Full implementation-ready design. General quantity-bearing P1.4a remains gated by acceptance of P1.0, delivery of P1.0a, and an available Catalog exact quantity/UoM contract. The restricted current-unit MVP profile instead follows MVP-D's exact-decimal predicate and rejects conversion or rounding. No Catalog roadmap task is a Manufacturing runtime dependency or blocker for non-quantity Manufacturing work.
 
 **Tracker:** [Issue #5393](https://github.com/open-mercato/open-mercato/issues/5393), under [Wave 0 tracker #5386](https://github.com/open-mercato/open-mercato/issues/5386).
 
@@ -744,7 +744,7 @@ Expected internal paths include `data/*`, one migration, `lib/structure/graph.ts
 | Work item | Contract |
 |---|---|
 | P1.0a | One package/module, Catalog only hard dependency, no public domain export. |
-| Catalog exact quantity/UoM contract | Decimal/UoM resolver and snapshot; no local fallback arithmetic. |
+| Catalog exact quantity/UoM contract | Decimal/UoM resolver and snapshot for general P1.4a; no local fallback arithmetic outside the explicitly bounded MVP-D current-unit profile. |
 | P1.4b | Read-only recursive draft tree over P1.4a; adds no write/model/lifecycle behavior. |
 | P1.5 | May add optional line-operation reference later; no placeholder here. |
 | P1.6 | No Work Center/resource/calendar dependency or field. |
@@ -879,6 +879,7 @@ Implementation of the quantity-bearing P1.4a write paths remains gated by P1.0 a
 
 ## Changelog
 
+- 2026-09-05: Added the restricted MVP-D same-unit exact-decimal profile without changing the broader Catalog-resolver gate for general P1.4a behavior.
 - 2026-09-05: Reclassified P1.4a as definition input to the end-to-end MVP rather than a standalone Manufacturing MVP.
 
 - 2026-08-19: Created the combined P1.4 skeleton from owner-approved BOM decisions.

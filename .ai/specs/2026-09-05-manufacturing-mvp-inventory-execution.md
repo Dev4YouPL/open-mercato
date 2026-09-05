@@ -31,13 +31,17 @@ WMS owns one additive DI service, provisionally identified as `wmsManufacturingP
 - compensation of one prior movement; and
 - lookup/reconciliation by stable correlation key.
 
-Every input carries the caller-derived tenant and organization scope, stable intent UUID, production discriminator, warehouse/location IDs, Catalog variant ID, quantity, and original movement ID for compensation. Results contain movement ID, accepted quantity, posting timestamp, correlation key, and `idempotentReplay`.
+Every input carries trusted tenant, organization, and actor scope derived from the authenticated runtime context, plus a stable intent UUID, production discriminator, warehouse/location IDs, Catalog variant ID, quantity, and original movement ID for compensation. The caller cannot supply or override `performedBy`; the port maps the trusted actor to the existing WMS command. Results contain movement ID, accepted quantity, posting timestamp, correlation key, and `idempotentReplay`.
+
+The port authorizes each operation with wildcard-aware feature matching equivalent to the existing WMS routes: material issue and compensating adjustment require `wms.adjust_inventory`, finished-output receipt requires `wms.receive_inventory`, and receipt compensation requires `wms.adjust_inventory`. Manufacturing execute/correct features remain additional workflow permissions and never substitute for WMS stock authority.
 
 The final implementation spec must freeze the DI key, import path, schemas, errors, and result shape as additive public contracts. Manufacturing resolves the service softly through DI and never imports WMS handlers or entities.
 
 ## Guard and posting behavior
 
-The WMS implementation validates trusted scope, warehouse/location ownership, inventory profile, unsupported lot/serial control, quantity envelope, and incompatible replay. It runs the canonical WMS mutation-guard registry and post-success callbacks, then delegates to existing `wms.inventory.adjust` or `wms.inventory.receive` commands.
+The WMS implementation validates trusted scope and actor, WMS feature authorization, warehouse/location ownership, inventory profile, unsupported lot/serial control, quantity envelope, and incompatible replay. It runs the canonical WMS mutation-guard registry before delegating to existing `wms.inventory.adjust` or `wms.inventory.receive` commands, then runs requested `afterSuccess` callbacks only after the command commits.
+
+Before posting, WMS serializes on the scoped production correlation identity and compares the persisted movement fingerprint. A partial unique index on existing movement columns `(tenant_id, organization_id, reference_type, reference_id)` for the production discriminator makes one movement per intent UUID race-safe across processes. An identical fingerprint returns the existing movement; a different fingerprint fails without posting. Manufacturing additionally keeps its intent fingerprint and issue-attempt identity, but that orchestration check does not replace the WMS boundary invariant.
 
 Normal production movements use an additive production reference discriminator; they must not be classified as `manual`. The port preserves current WMS balance and movement ownership and adds no WMS table, column, route, arithmetic change, generic posting group, or production workflow.
 
@@ -53,7 +57,7 @@ Compensation derives the inverse target and quantity solely from the original ac
 
 ## Crash-window contract
 
-If WMS commits and the process fails before Manufacturing records the movement ID, the persisted intent remains pending. Retrying the same intent causes WMS to return the original movement. Manufacturing records the missing fact and only then advances order state. A different payload under the same intent UUID fails without posting.
+If WMS commits and the process fails before Manufacturing records the movement ID, the persisted intent remains pending. Retrying the same intent causes WMS to return the original movement. Manufacturing records the missing fact and only then advances order state. A different payload under the same intent UUID fails without posting, including when identical and incompatible requests race.
 
 ## API and UI
 
@@ -63,13 +67,13 @@ Order detail shows per-intent pending/accepted/failed/corrected evidence and blo
 
 ## Testing and readiness
 
-Self-contained integration coverage must prove guarded issue and receipt, inventory-freeze denial, insufficient stock, scope isolation, partial multi-line failure, missing-line retry, exact same-key replay, incompatible replay, WMS-committed/Manufacturing-failed reconciliation, output correction, issue correction, compensation failure, cancellation compensation, disabled WMS behavior, balances, movements, facts, API/OpenAPI, and key UI recovery states.
+Self-contained integration coverage must prove guarded issue and receipt, wildcard and direct WMS feature grants, denial without the matching WMS feature, non-spoofable `performedBy`, inventory-freeze denial, insufficient stock, scope isolation, partial multi-line failure, missing-line retry, exact same-key replay, concurrent identical and incompatible replay, WMS-committed/Manufacturing-failed reconciliation, output correction, issue correction, compensation failure, cancellation compensation after issue and receipt, disabled WMS behavior, balances, movements, facts, API/OpenAPI, and key UI recovery states.
 
 This child becomes implementation-ready only after the order/facts child is accepted, the typed port contract is reviewed as additive, and the WMS and Manufacturing implementation seams are specified precisely. Generic atomic posting groups, WMS evidence migrations, and exact reversal infrastructure remain post-MVP options.
 
 ## Migration and Backward Compatibility
 
-The WMS port, production discriminator, DI key, schemas, and export path are additive contract surfaces. Existing inventory commands and `manual` behavior remain unchanged. No migration is required. Future replacement by a generic posting-group service must keep this port as a bridge for at least one minor release or follow the repository deprecation protocol.
+The WMS port, production discriminator, DI key, schemas, and export path are additive contract surfaces. Existing inventory commands, columns, arithmetic, and `manual` behavior remain unchanged. One additive migration creates the partial unique production-correlation index over existing movement columns; it has no backfill because no production-discriminator rows exist before the port ships. Future replacement by a generic posting-group service must keep this port as a bridge for at least one minor release or follow the repository deprecation protocol.
 
 ## Risks & Impact Review
 
@@ -85,5 +89,6 @@ The proposed port preserves WMS ownership, guard execution, tenant/organization 
 
 ## Changelog
 
+- 2026-09-05: Required trusted actor provenance, WMS feature authorization, post-commit callbacks, and a partial unique correlation index for concurrent incompatible-replay safety.
 - 2026-09-05: Clarified MVP-X as the minimum inventory-safety seam for one manual workflow, without generalized posting or production-policy options.
 - 2026-09-05: Created the proposed guarded WMS execution and compensation child contract for the end-to-end MVP.

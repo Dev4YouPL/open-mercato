@@ -1,6 +1,6 @@
 # WMS Quantity Precision and Profile Alignment
 
-> **Post-MVP priority (2026-09-05):** this P1.3b remediation remains valid roadmap work but does not block the active [`Manufacturing End-to-End MVP`](2026-09-05-manufacturing-end-to-end-mvp.md). The MVP changes no WMS schema or arithmetic and supports only quantities proven compatible with the current envelope.
+> **Post-MVP priority (2026-09-05):** this P1.3b remediation remains valid roadmap work but does not block the active [`Manufacturing End-to-End MVP`](2026-09-05-manufacturing-end-to-end-mvp.md). The MVP changes no WMS quantity column or arithmetic and supports only quantities in the frozen current-unit envelope; MVP-X adds only a partial unique correlation index over existing movement columns for race-safe intent replay.
 
 ## TLDR
 
@@ -201,7 +201,8 @@ Documentation validation uses `git diff --check` and `yarn agents:check-budget`.
 
 ## Changelog
 
-- 2026-09-05: Marked P1.3b as post-MVP; the MVP does not change WMS precision or schema.
+- 2026-09-05: Clarified that MVP-X leaves WMS quantity storage/arithmetic unchanged while adding only its race-safe production-correlation index.
+- 2026-09-05: Marked P1.3b as post-MVP; the MVP does not change WMS quantity precision, columns, or arithmetic.
 
 - 2026-08-13: Created P1.3b from the audited WMS precision/profile portion of the original quantity proposal.
 - 2026-08-19: Clarified that P1.3b remains generic WMS precision work and does not add posting groups, consumer registrations, or production-specific enums; aligned governance with pending parent-roadmap acceptance.

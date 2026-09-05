@@ -4,7 +4,7 @@
 
 The first Open Source Manufacturing release must deliver one narrow but complete production flow: define and inspect a bounded multi-level BOM, release its immutable occurrence tree, create and release a single-step production order, issue that order's direct components through a guarded WMS posting port, receive the finished output, and record compensating corrections for incorrect stock postings.
 
-This MVP becomes the proposed active delivery focus. It does not require changes to Catalog UoM behavior, WMS precision/schema, WMS Site topology, or a new atomic posting-group contract. It does require one additive, typed WMS posting port so Manufacturing does not depend on internal command payloads or bypass WMS mutation guards. The accepted Manufacturing roadmap and P1 splits remain follow-on backlog, but no broader cross-module foundation refactor may block the first release.
+This MVP becomes the proposed active delivery focus. It does not require changes to Catalog UoM behavior, WMS quantity columns/arithmetic, WMS Site topology, or a new atomic posting-group contract. It requires one additive, typed WMS posting port and one partial unique correlation index over existing movement columns so Manufacturing does not depend on internal command payloads, bypass WMS mutation guards, or race incompatible intent replays. The accepted Manufacturing roadmap and P1 splits remain follow-on backlog, but no broader cross-module foundation refactor may block the first release.
 
 ## Overview
 
@@ -148,7 +148,7 @@ An authorized user can:
 | P1.0a | One opt-in `@open-mercato/manufacturing` package and `manufacturing` runtime module. |
 | P1.4a/P1.4b-MVP profile | Direct-level normalized, variant-targeted BOM authoring plus bounded multi-level preview, stable occurrences, child resolution, cycle safety, current Catalog/WMS inventory-unit evidence, optimistic locking, and scope. It supersedes the P1.3a readiness gate for this restricted profile only. |
 | P1.7 | `draft -> released` definition lifecycle and immutable multi-level occurrence snapshot with deterministic child-revision selection; no routing. |
-| P1.8b-MVP profile | Manufacturing adapter resolving an additive typed WMS posting port. WMS owns the guarded physical posting implementation; no WMS schema or arithmetic change. |
+| P1.8b-MVP profile | Manufacturing adapter resolving an additive typed WMS posting port. WMS owns the guarded physical posting implementation; existing quantity columns and arithmetic stay unchanged, with one additive partial unique correlation index for intent safety. |
 | P1.9 | Minimum append-only accepted/corrected fact evidence, persistent idempotency, correlation, timestamps, and WMS posting reference. |
 | P1.10 | Single-step production-order lifecycle, optional explicit parent-order reference, and immutable multi-level execution snapshot; each order executes only its top-level revision's direct occurrences, with no operation entities or partial confirmation model. |
 | P1.11-MVP profile | Explicit material issue through current adjustments, full finished-output receipt, retry of missing lines, and compensating correction. |
@@ -190,7 +190,7 @@ The existing ownership laws remain unchanged, while the MVP prerequisite gates a
 - Manufacturing owns BOM definitions, released snapshots, production-order intent, execution snapshots, semantic commands, and production facts.
 - WMS owns existing warehouses, locations, stock balances, lots/serials, movements, and posting evidence.
 - Cross-module references use scalar IDs plus immutable snapshots where history must survive master-data changes. No cross-module ORM relationship is introduced.
-- Manufacturing resolves the typed WMS posting port through DI and fails stock actions closed when WMS or the port is unavailable. The WMS-owned adapter applies the same mutation guards and post-success callbacks as WMS API writes before it delegates to existing inventory commands. The MVP adds no WMS route, entity, migration, or configuration; its only WMS contract addition is the typed port and production posting discriminator.
+- Manufacturing resolves the typed WMS posting port through DI and fails stock actions closed when WMS or the port is unavailable. The WMS-owned adapter applies the same pre-command mutation guards as WMS API writes, delegates to an existing inventory command, and runs requested `afterSuccess` callbacks only after that command commits. The MVP adds no WMS route, entity, column, arithmetic change, or configuration. Its WMS additions are the typed port, production posting discriminator, and one partial unique correlation index over existing movement columns.
 
 ```text
 Catalog product/UoM
@@ -217,18 +217,19 @@ Manufacturing production order + execution snapshot
 BOM definition: draft -> released
 Production order: draft -> released -> in_progress -> completed
                     \-> cancelled     \-> correction_pending -> in_progress
+                    in_progress/completed -> cancellation_pending -> cancelled
 ```
 
 - A released BOM is immutable. A later change creates a new draft revision through the existing revision contract.
 - Order release freezes the BOM, quantities/UoM evidence, and selected warehouse/location IDs.
-- `in_progress` begins with accepted material issue or an explicit start immediately preceding it in guarded orchestration.
-- `completed` requires accepted full output receipt evidence that has not been compensated.
+- `in_progress` begins with the first accepted material issue. The MVP has no separate start command or start endpoint.
+- `completed` requires a complete accepted, uncompensated direct-material issue set plus accepted full-output receipt evidence that has not been compensated.
 - Cancellation from `draft` or `released` is immediate. Cancellation after any accepted stock effect first enters `cancellation_pending`; the command reaches `cancelled` only after every uncompensated issue and receipt has an accepted compensating movement. A failed compensation leaves the order non-terminal and visibly recoverable.
-- Correcting material issue returns the order to `released` when no uncompensated issue remains, otherwise it stays `in_progress`. Correcting the completed output receipt moves the order through `correction_pending` to `in_progress`; it may be received again with a new intent. Correction never edits history.
+- Receipt is allowed only after every required direct occurrence in the current issue attempt has an accepted, uncompensated issue fact. Correcting material is forbidden while an uncompensated output receipt exists. After output compensation, correcting all material returns the order to `released`; correcting only some material leaves it `in_progress`. Correcting the completed output receipt moves the order through `correction_pending` to `in_progress`; it may be received again with a new intent. Correction never edits history.
 
 ### Commands and evidence
 
-Every mutation uses canonical commands and mutation guards. Before physical posting, Manufacturing persists a stable issue intent per BOM occurrence, one output-receipt intent per order receipt attempt, or one correction intent per original WMS movement. The typed WMS port accepts that UUID as its idempotency/correlation key and records a production-specific reference discriminator; normal production movements must never be classified as `manual`. Manufacturing records progress per intent, retries only missing intents after partial failure, and never marks an issue, receipt, cancellation, or correction complete until all required postings succeeded.
+Every mutation uses canonical commands and mutation guards. Before physical posting, Manufacturing persists a stable issue intent per BOM occurrence and issue-attempt number, one output-receipt intent per order receipt attempt, or one correction intent per original WMS movement. A new full issue after compensation creates a new attempt and new intent UUIDs. The typed WMS port accepts that UUID as its idempotency/correlation key and records a production-specific reference discriminator; normal production movements must never be classified as `manual`. Manufacturing records progress per intent, retries only missing intents after partial failure, and never marks an issue, receipt, cancellation, or correction complete until all required postings succeeded.
 
 The WMS-owned port is an additive public contract with typed issue, receipt, and compensation inputs and a typed result containing the stable movement ID, accepted quantity, posting timestamp, idempotent-replay flag, and correlation key. It validates tenant/organization scope, warehouse/location eligibility, inventory-profile restrictions, mutation guards, and incompatible replay before delegating to current `wms.inventory.adjust` or `wms.inventory.receive` handlers. Manufacturing resolves it softly through DI and does not import WMS business logic. Exact names, schemas, and the production reference discriminator are frozen by the inventory-execution child specification before implementation.
 
@@ -253,7 +254,7 @@ Dedicated implementation specifications must expose the minimum authenticated an
 
 - direct-line BOM create/read/update and line maintenance plus bounded multi-level preview;
 - definition release and released-definition read;
-- production-order create/read/release/start/cancel with existing warehouse/location selection;
+- production-order create/read/release/cancel with existing warehouse/location selection;
 - explicit full material issue;
 - full output receipt and completion;
 - compensating issue or receipt correction; and
@@ -327,13 +328,13 @@ Given eligible WMS stock of `5` units of stocked subassembly S and `20` units of
 9. If one material line fails after earlier lines succeeded, the order remains visibly incomplete and retry posts only missing lines.
 10. Cross-tenant, cross-organization, stale-version, invalid-state, and insufficient-stock attempts fail without disclosing foreign records.
 
-The scenario supports only quantities normalized into the same unit used by the current WMS inventory profile and demonstrably representable by its current storage/arithmetic envelope. Cross-unit execution conversion, unsupported fractional precision or magnitude, and lot/serial-controlled products are explicitly excluded. Release rejects an order outside this envelope instead of rounding or changing Catalog/WMS.
+The scenario supports only canonical decimal strings in the same inventory unit used by the current Catalog variant and WMS profile. Every persisted or posted quantity must be positive where the operation requires it, have at most four fractional digits, and have absolute value at most `999999999999.9999`, matching current WMS `numeric(16,4)`. Manufacturing performs scaling and yield calculations with exact decimal-string operations, never JavaScript `number`; every final occurrence and order quantity must already fit the envelope exactly, with no rounding. The restricted MVP profile owns this current-unit validation and may reuse a shared exact-decimal helper, but it does not call or require the broader Catalog conversion/rounding resolver from P1.3a. Cross-unit conversion, non-terminating results beyond four fractional digits, overflow, and lot/serial-controlled variants are rejected before definition or order release.
 
 ## Testing and Readiness Evidence
 
 - Unit tests cover supported quantity calculation, lifecycle transitions, snapshot immutability, idempotency comparison, and compensation derivation.
 - Integration tests create their own Catalog, warehouse, location, stock, BOM, and order fixtures and clean them up in teardown or `finally`.
-- API tests cover auth, ACL, scope isolation, stale versions, invalid states, insufficient stock, duplicate and incompatible calls, partial failure/retry, cancellation after issue, correction state transitions, and compensation failure.
+- API tests cover auth, wildcard-aware Manufacturing and WMS ACL, trusted actor provenance, scope isolation, stale versions, invalid states, quantity-envelope boundaries, insufficient stock, concurrent duplicate and incompatible calls, partial failure/retry, receipt blocked before complete issue, cancellation after issue and after receipt, mixed correction state transitions, and compensation failure.
 - UI tests cover the happy path plus conflict, posting error, correction confirmation, loading, empty, and permission states.
 - Packaging tests prove the module is opt-in and disabled routes/UI disappear.
 - Integration tests prove the WMS port runs mutation guards and preserves production semantics. A dedicated crash-window test commits a WMS movement, fails Manufacturing result persistence, retries the same intent, and proves one movement plus one reconciled fact. No seeded data is required.
@@ -421,7 +422,7 @@ If evidence is weak or contradictory, the team runs a smaller discovery experime
 - **Scenario**: BOM quantity or conversion is valid for authoring but cannot be represented consistently by current WMS storage/arithmetic.
 - **Severity**: High.
 - **Affected area**: Order release and stock execution.
-- **Mitigation**: Define a measured compatibility envelope, validate it before order release, reject unsupported cross-unit or fractional execution, and snapshot accepted values. Do not silently round.
+- **Mitigation**: Apply the exact current-unit predicate defined in the acceptance scenario at definition and order release, reject cross-unit, over-scale, non-terminating, or overflowing execution quantities, and snapshot accepted decimal strings. Do not silently round.
 - **Residual risk**: Some legitimate manufacturing quantities remain unsupported until P1.3a-c follow-on work.
 
 ### Cross-scope or stale-master interpretation
@@ -445,7 +446,7 @@ If evidence is weak or contradictory, the team runs a smaller discovery experime
 - **Scenario**: A direct command-bus call skips an inventory freeze or another registered WMS mutation guard.
 - **Severity**: Critical.
 - **Affected area**: Physical inventory integrity and policy enforcement.
-- **Mitigation**: Manufacturing may call only the typed WMS posting port; the WMS implementation runs the canonical guard chain and post-success callbacks before delegating to inventory commands.
+- **Mitigation**: Manufacturing may call only the typed WMS posting port; the WMS implementation runs the canonical guard chain before delegating to an inventory command and runs requested post-success callbacks only after the command commits.
 - **Residual risk**: A future WMS write policy must be added to the shared guarded seam rather than only to an HTTP route.
 
 ## Final Compliance Report - 2026-09-05
@@ -506,6 +507,7 @@ Implementation remains split into cohesive specifications for [multi-level BOM/r
 
 ## Changelog
 
+- 2026-09-05: Closed MVP review gaps in direct stocked-`produce` execution, exact current-unit quantities, issue-before-receipt, correction/cancellation states, WMS authorization and actor provenance, callback ordering, and concurrent intent replay.
 - 2026-09-05: Clarified the business-first strategy as extensible CRUD plus one manual stock-affecting happy path, defined the first user profile and product-learning thresholds, and made broader domain-policy validation explicitly post-MVP.
 - 2026-09-05: Created the active end-to-end OSS MVP boundary after product-scope review concluded that BOM-only delivery was not a usable Manufacturing module and full Wave 0 was too broad for the first release.
 - 2026-09-05: Added the business hypothesis, learning goals, expected outcomes, and evidence-based post-MVP decision gate; clarified that the earlier Wave 0 analysis is a long-term option map rather than a committed delivery sequence.

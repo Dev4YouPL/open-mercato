@@ -27,7 +27,7 @@ The first release validates only rules needed to keep the supported happy path u
 - Create a draft order for one released multi-level definition and requested output quantity, with an optional explicit parent-order reference for manually coordinated subassembly production.
 - Select existing material/output warehouse and location IDs without introducing Site.
 - Release an immutable execution snapshot containing the complete selected occurrence tree, selected revision IDs, scaled gross requirements, the top-level direct execution set, output quantity, current inventory-unit evidence, definition identity, and readable warehouse/location snapshots.
-- Track issue intent per BOM occurrence, one receipt intent per order receipt attempt, and one correction intent per original WMS movement.
+- Track issue intent per BOM occurrence and issue-attempt number, one receipt intent per order receipt attempt, and one correction intent per original WMS movement. A fully compensated material set closes its issue attempt; a later issue creates a new attempt and new intent UUIDs rather than replaying corrected movements.
 - Persist append-only accepted, failed, and corrected facts with correlation, idempotency key, recorded/occurred timestamps, WMS movement ID, and original-fact link.
 
 Routing, operations, partial quantities, backflush, scrap, `complete_short`, recursive descendant execution inside one order, automatic child-order creation, MRP, phantom flattening, reservations, costing, and lot/serial execution are excluded.
@@ -39,14 +39,15 @@ draft -> released -> in_progress -> completed
    \       \-> cancelled          \-> correction_pending -> in_progress
     \-> cancelled
 in_progress -> cancellation_pending -> cancelled
+completed -> cancellation_pending -> cancelled
 ```
 
 - `released` requires a valid immutable execution snapshot.
 - The first accepted issue moves the order to `in_progress`.
-- `completed` requires one accepted, uncompensated full-output receipt.
+- Receipt is forbidden until every required direct occurrence in the current issue attempt has an accepted, uncompensated issue fact. `completed` requires that complete material set plus one accepted, uncompensated full-output receipt.
 - Cancellation after any stock effect remains `cancellation_pending` until every uncompensated posting is compensated; failures remain visible and retryable.
 - Correcting the only output receipt moves `completed` through `correction_pending` to `in_progress` and permits a new receipt intent.
-- Correcting all issued material returns the order to `released`; otherwise it remains `in_progress`.
+- Material correction is forbidden while an uncompensated output receipt exists. Once output is absent or compensated, correcting all issued material returns the order to `released`; correcting only part leaves it `in_progress`. A later full issue uses a new issue-attempt number.
 
 Every transition is a command with optimistic locking and an explicit allowed-source-state matrix. Facts are append-only and never rewritten by correction.
 
@@ -54,7 +55,7 @@ Every transition is a command with optimistic locking and an explicit allowed-so
 
 Orders are tenant/organization scoped, user-editable, soft-deletable only while draft, and carry `updated_at`. Facts and intents are append-only scoped rows. Cross-module definition and WMS references use scalar IDs plus snapshots.
 
-Authenticated, feature-guarded APIs cover order list/create/read/update, release, start/issue orchestration entry, receive orchestration entry, cancel, correct, and fact/evidence read. Action routes use zod, `metadata`, `openApi`, mutation guards, optimistic-lock headers, commands, and stable errors.
+Authenticated, feature-guarded APIs cover order list/create/read/update, release, issue orchestration entry, receive orchestration entry, cancel, correct, and fact/evidence read. Issue is the only transition that starts work; the MVP has no separate start endpoint. Action routes use zod, `metadata`, `openApi`, mutation guards, optimistic-lock headers, commands, and stable errors.
 
 Backend page roots remain server components. Client islands are limited to the order `DataTable`, `CrudForm`, action confirmations, and evidence timeline. The implementation spec must provide the concrete `"use client"` ledger, zero heavy page-root dependencies, hydration smoke coverage, and key transition tests.
 
@@ -68,7 +69,7 @@ Each logical action first persists its intent and input fingerprint. Repeating t
 
 ## Testing and readiness
 
-Coverage must prove lifecycle transitions and forbidden transitions, immutable multi-level snapshots, direct-occurrence execution boundaries, optional parent-order scope validation, no implicit child-order creation, stale versions, scope isolation, intent cardinality, same-key replay, incompatible replay, cancellation before and after issue, correction state transitions, append-only evidence, disabled WMS/module behavior, API/OpenAPI, and list/detail/action UI paths.
+Coverage must prove lifecycle transitions and forbidden transitions, immutable multi-level snapshots, direct-occurrence execution boundaries, optional parent-order scope validation, no implicit child-order creation, stale versions, scope isolation, intent cardinality per issue attempt, same-key replay, concurrent identical and incompatible replay, receipt denial before complete issue, re-issue with new intents after full compensation, material-correction denial while output remains, cancellation before stock effects, after issue, and after receipt, mixed correction state transitions, append-only evidence, disabled WMS/module behavior, API/OpenAPI, and list/detail/action UI paths.
 
 This child becomes implementation-ready only after the definition-release child is accepted and its own exact model/API/ACL/event/command contracts pass readiness review. Site, routing, Work Centers, generic posting groups, and broader P1.10 behavior are not MVP prerequisites.
 
@@ -88,6 +89,7 @@ The contract preserves tenant/organization isolation, append-only history, optim
 
 ## Changelog
 
+- 2026-09-05: Required complete issue before receipt, attempt-scoped issue intents, safe mixed correction ordering, cancellation after receipt, and issue as the sole start transition.
 - 2026-09-05: Clarified MVP-O as an extensible CRUD-first order model rather than a complete production-control state or policy engine.
 - 2026-09-05: Created the proposed single-step order and append-only facts child contract for the end-to-end MVP.
 - 2026-09-05: Added full multi-level execution snapshots and optional explicit parent-order references while retaining direct-occurrence execution per order.

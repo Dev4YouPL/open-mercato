@@ -8,7 +8,7 @@
 
 This document turns the Manufacturing roadmap into an execution-oriented Phase 1 plan with staged readiness. It permits real draft BOM/routing CRUD before stock execution, identifies the smaller gate for releasing production orders, and reserves exact WMS prerequisites for stock-affecting execution.
 
-The plan deliberately allows early implementation of **manufacturing-definition drafts**: BOMs, optional sequential routings, operations, and work-centre applicability. Draft CRUD/API/UI does not alter physical stock. A draft cannot become an executable released order until the smaller release gate passes, and it cannot post material movements until exact WMS precision/evidence and the atomic posting contract pass.
+For the broader post-MVP Wave 0 profile, the plan allows early implementation of **manufacturing-definition drafts**: BOMs, optional sequential routings, operations, and work-centre applicability. Draft CRUD/API/UI does not alter physical stock. That broader profile cannot release an executable order until its release gate passes or post material movements until exact WMS precision/evidence and the atomic posting contract pass. The restricted MVP follows its dedicated MVP-D/MVP-O/MVP-X gates instead and uses the current-unit compatibility envelope plus the narrow guarded WMS posting port.
 
 The target composition is:
 
@@ -205,6 +205,7 @@ The WMS–Sales work is especially contract-sensitive: current sales-order event
 
 ## Changelog
 
+- 2026-09-05: Qualified the exact-precision and atomic-posting gates as broader post-MVP requirements; restricted MVP execution follows MVP-D/MVP-O/MVP-X.
 - 2026-09-05: Made the end-to-end MVP the active delivery path and retained broader Wave 0 sequencing as post-MVP guidance.
 
 - 2026-08-13: Created the Phase 1/Wave 0 execution plan from the proposed Manufacturing roadmap, separating early manufacturing-definition draft work from WMS-dependent execution work.
