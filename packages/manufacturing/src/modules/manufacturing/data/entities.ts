@@ -293,6 +293,11 @@ type WorkCenterOptionalProps = 'createdAt' | 'updatedAt' | 'deletedAt'
 @Entity({ tableName: 'manufacturing_work_centers' })
 @Index({ name: 'manufacturing_work_centers_scope_idx', properties: ['tenantId', 'organizationId'] })
 @Index({
+  name: 'manufacturing_work_centers_scope_unique_idx',
+  expression:
+    'create unique index "manufacturing_work_centers_scope_unique_idx" on "manufacturing_work_centers" ("id", "tenant_id", "organization_id")',
+})
+@Index({
   name: 'manufacturing_work_centers_code_unique_idx',
   expression:
     'create unique index "manufacturing_work_centers_code_unique_idx" on "manufacturing_work_centers" ("tenant_id", "organization_id", lower("code")) where "deleted_at" is null',
@@ -353,11 +358,6 @@ export class ManufacturingWorkCenter {
   name: 'manufacturing_work_center_resources_unique_idx',
   expression:
     'create unique index "manufacturing_work_center_resources_unique_idx" on "manufacturing_work_center_resources" ("tenant_id", "organization_id", "work_center_id", "resource_id")',
-})
-@Index({
-  name: 'manufacturing_work_center_resources_parent_idx',
-  expression:
-    'create index "manufacturing_work_center_resources_parent_idx" on "manufacturing_work_center_resources" ("tenant_id", "organization_id", "work_center_id", "resource_id")',
 })
 export class ManufacturingWorkCenterResource {
   [OptionalProps]?: 'createdAt' | 'updatedAt'

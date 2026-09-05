@@ -5,9 +5,7 @@ import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { DataTable } from "@open-mercato/ui/backend/DataTable"
 import type { FilterDef, FilterValues } from "@open-mercato/ui/backend/FilterOverlay"
-import type { LegacyColumnDef as ColumnDef } from "@tanstack/react-table/legacy"
 import { Button } from "@open-mercato/ui/primitives/button"
-import { StatusBadge } from "@open-mercato/ui/primitives/status-badge"
 import { RowActions } from "@open-mercato/ui/backend/RowActions"
 import { ListEmptyState } from "@open-mercato/ui/backend/filters/ListEmptyState"
 import { ErrorMessage } from "@open-mercato/ui/backend/detail"
@@ -21,19 +19,14 @@ import { surfaceRecordConflict } from "@open-mercato/ui/backend/conflicts"
 import { flash } from "@open-mercato/ui/backend/FlashMessages"
 import { useT } from "@open-mercato/shared/lib/i18n/context"
 import { useWorkCenterPermissions } from "./useWorkCenterPermissions"
+import {
+  WORK_CENTERS_LIST_HREF,
+  buildWorkCenterColumns,
+  type WorkCenterRow,
+} from "./workCenterTableColumns"
 
 const PAGE_SIZE = 25
-const LIST_HREF = "/backend/manufacturing/work-centers"
 const MUTATION_CONTEXT_ID = "manufacturing-work-centers-list:delete"
-
-export type WorkCenterRow = {
-  id: string
-  code: string
-  name: string
-  isActive: boolean
-  resourceCount: number
-  updatedAt: string
-}
 
 type ListResponse = {
   items?: WorkCenterRow[]
@@ -170,52 +163,7 @@ export function WorkCentersTableClient({ extensionTableId }: { extensionTableId:
     [t],
   )
 
-  const columns = React.useMemo<ColumnDef<WorkCenterRow>[]>(
-    () => [
-      {
-        accessorKey: "code",
-        header: t("manufacturing.workCenters.columns.code", "Code"),
-        meta: { alwaysVisible: true, truncate: true, maxWidth: "220px" },
-        cell: ({ row }) => (
-          <Link href={`${LIST_HREF}/${row.original.id}`} className="font-medium hover:underline">
-            {row.original.code}
-          </Link>
-        ),
-      },
-      {
-        accessorKey: "name",
-        header: t("manufacturing.workCenters.columns.name", "Name"),
-        meta: { truncate: true, maxWidth: "320px" },
-      },
-      {
-        accessorKey: "isActive",
-        header: t("manufacturing.workCenters.columns.isActive", "Status"),
-        meta: { maxWidth: "160px" },
-        cell: ({ row }) => (
-          <StatusBadge variant={row.original.isActive ? "success" : "neutral"} dot>
-            {row.original.isActive
-              ? t("manufacturing.workCenters.status.active", "Active")
-              : t("manufacturing.workCenters.status.inactive", "Inactive")}
-          </StatusBadge>
-        ),
-      },
-      {
-        accessorKey: "resourceCount",
-        header: t("manufacturing.workCenters.columns.resourceCount", "Resources"),
-        // Not sortable: the count is an enrichment, not a queryable column.
-        enableSorting: false,
-        meta: { maxWidth: "140px" },
-        cell: ({ row }) => row.original.resourceCount,
-      },
-      {
-        accessorKey: "updatedAt",
-        header: t("manufacturing.workCenters.columns.updatedAt", "Updated"),
-        meta: { maxWidth: "220px" },
-        cell: ({ row }) => new Date(row.original.updatedAt).toLocaleString(),
-      },
-    ],
-    [t],
-  )
+  const columns = React.useMemo(() => buildWorkCenterColumns(t), [t])
 
   if (error) {
     return (
@@ -241,7 +189,7 @@ export function WorkCentersTableClient({ extensionTableId }: { extensionTableId:
         actions={
           canManage ? (
             <Button asChild>
-              <Link href={`${LIST_HREF}/create`}>
+              <Link href={`${WORK_CENTERS_LIST_HREF}/create`}>
                 {t("manufacturing.workCenters.list.create", "New work centre")}
               </Link>
             </Button>
@@ -260,7 +208,7 @@ export function WorkCentersTableClient({ extensionTableId }: { extensionTableId:
         filterValues={filterValues}
         onFiltersApply={applyFilters}
         onFiltersClear={handleClearFilters}
-        onRowClick={(row) => router.push(`${LIST_HREF}/${row.id}`)}
+        onRowClick={(row) => router.push(`${WORK_CENTERS_LIST_HREF}/${row.id}`)}
         pagination={{ page, pageSize: PAGE_SIZE, total, totalPages, onPageChange: setPage }}
         showQueryTime={false}
         rowActions={(row) => (
@@ -269,7 +217,7 @@ export function WorkCentersTableClient({ extensionTableId }: { extensionTableId:
               {
                 id: "open",
                 label: t("manufacturing.workCenters.actions.open", "Open"),
-                onSelect: () => router.push(`${LIST_HREF}/${row.id}`),
+                onSelect: () => router.push(`${WORK_CENTERS_LIST_HREF}/${row.id}`),
               },
               ...(canManage
                 ? [
@@ -296,7 +244,7 @@ export function WorkCentersTableClient({ extensionTableId }: { extensionTableId:
           <ListEmptyState
             entityName={t("manufacturing.workCenters.entityPlural", "Work centres")}
             entityNameGenitive={t("manufacturing.workCenters.entityPlural", "Work centres")}
-            createHref={canManage ? `${LIST_HREF}/create` : undefined}
+            createHref={canManage ? `${WORK_CENTERS_LIST_HREF}/create` : undefined}
             createLabel={t("manufacturing.workCenters.list.create", "New work centre")}
           />
         }
