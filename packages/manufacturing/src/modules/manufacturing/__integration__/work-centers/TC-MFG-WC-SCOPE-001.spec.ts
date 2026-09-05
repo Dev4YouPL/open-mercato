@@ -8,8 +8,8 @@ import {
   deleteWorkCenter,
   expectStableError,
   listWorkCenters,
-  resolveUrl,
   readWorkCenter,
+  resolveUrl,
   uniqueCode,
   updateWorkCenter,
 } from './helpers'
@@ -53,27 +53,24 @@ test.describe('TC-MFG-WC-SCOPE-001: tenant and organization isolation', () => {
     expectStableError(remove.body, 'work_center_not_found')
   })
 
-  test('never trusts tenant or organization ids supplied in the request body', async ({ request }) => {
+  test('refuses a request that targets a foreign tenant or organization', async ({ request }) => {
     const token = await adminToken(request)
     const code = uniqueCode('WC-SPOOF')
-    let id: string | null = null
 
-    try {
-      const created = await createWorkCenter(request, token, {
-        code,
-        name: 'Spoofed scope',
-        tenantId: '22222222-2222-4222-8222-222222222222',
-        organizationId: '33333333-3333-4333-8333-333333333333',
-      })
-      expect(created.status, JSON.stringify(created.body)).toBe(201)
-      id = created.id
+    // The platform's scoped-input parser fails closed rather than silently
+    // ignoring the spoofed ids, so no record may be created at all.
+    const created = await createWorkCenter(request, token, {
+      code,
+      name: 'Spoofed scope',
+      tenantId: '22222222-2222-4222-8222-222222222222',
+      organizationId: '33333333-3333-4333-8333-333333333333',
+    })
+    expect(created.status, JSON.stringify(created.body)).toBe(403)
+    expect(created.id).toBeNull()
 
-      // Scope came from the authenticated context, so the record is still ours.
-      const detail = await readWorkCenter(request, token, id as string)
-      expect(detail?.code).toBe(code)
-    } finally {
-      await cleanupWorkCenter(request, token, id)
-    }
+    // Nothing was written under the caller's own scope either.
+    const { body } = await listWorkCenters(request, token, `?search=${encodeURIComponent(code)}`)
+    expect(body.items ?? []).toEqual([])
   })
 
   test('gates every verb behind its declared feature', async ({ request }) => {

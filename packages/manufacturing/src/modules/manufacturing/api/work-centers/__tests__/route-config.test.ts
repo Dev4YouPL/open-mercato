@@ -47,6 +47,19 @@ describe('Work Centre CRUD route configuration', () => {
     expect(map).not.toContain('resourceCount')
   })
 
+  it('uses the undefined-returning boolean parser for the activity filter', () => {
+    // Regression: `parseBooleanToken` returns null for an absent value, and
+    // `null !== undefined`, so the guard applied `is_active IS NULL` to every
+    // unfiltered list request and returned nothing.
+    expect(source).toContain('parseBooleanFlag(query.isActive)')
+    expect(source).not.toContain('parseBooleanToken(query.isActive)')
+  })
+
+  it('applies no activity filter unless the caller asked for one', () => {
+    const filters = source.slice(source.indexOf('buildFilters:'), source.indexOf('transformItem:'))
+    expect(filters).toContain('if (isActive !== undefined) filters[F.is_active] = isActive')
+  })
+
   it('routes writes to the exact command ids', () => {
     expect(source).toContain("commandId: 'manufacturing.work_center.create'")
     expect(source).toContain("commandId: 'manufacturing.work_center.update'")

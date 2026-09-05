@@ -5,6 +5,7 @@ import {
   createWorkCenter,
   deleteWorkCenter,
   readWorkCenter,
+  sameInstant,
   uniqueCode,
   updateWorkCenter,
 } from './helpers'
@@ -40,7 +41,9 @@ test.describe('TC-MFG-WC-CONCURRENCY-001: same-version contenders', () => {
       expect(conflict.body.code).toBe('optimistic_lock_conflict')
       // The unified conflict bar keys off this body shape.
       expect(typeof conflict.body.currentUpdatedAt).toBe('string')
-      expect(conflict.body.expectedUpdatedAt).toBe(version)
+      // The conflict body normalizes to canonical ISO-8601 while the list read
+      // returns PostgreSQL's own spelling, so compare instants, not strings.
+      expect(sameInstant(conflict.body.expectedUpdatedAt, version)).toBe(true)
 
       const after = await readWorkCenter(request, token, id as string)
       expect(['Winner A', 'Winner B']).toContain(after?.name)

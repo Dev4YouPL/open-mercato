@@ -142,3 +142,48 @@ const BASE_URL = process.env.BASE_URL?.trim() || ''
 export function resolveUrl(path: string): string {
   return BASE_URL ? `${BASE_URL}${path}` : path
 }
+
+/**
+ * Locates a CrudForm input by its visible label.
+ *
+ * The shared CrudForm renders its `<label>` without an `htmlFor`, so the input
+ * has no accessible name and `getByLabel` cannot reach it. Matching the label
+ * text and stepping to its sibling input is the structural equivalent, and it
+ * tolerates the trailing required marker the form appends.
+ */
+export function formField(page: import('@playwright/test').Page, label: RegExp) {
+  return page
+    .locator('label')
+    .filter({ hasText: label })
+    .locator('xpath=..')
+    .locator('input, textarea')
+    .first()
+}
+
+export const CODE_FIELD = /^Code\s*\*?$/
+export const NAME_FIELD = /^Name\s*\*?$/
+
+/** Opens a DataTable row's action menu; the trigger's accessible name is "Open actions". */
+export async function openRowActions(page: import('@playwright/test').Page): Promise<void> {
+  await page.getByRole('button', { name: /open actions/i }).first().click()
+}
+
+/** Two ISO-8601 spellings of the same instant are equal versions. */
+export function sameInstant(left: unknown, right: unknown): boolean {
+  if (typeof left !== 'string' || typeof right !== 'string') return false
+  return new Date(left).getTime() === new Date(right).getTime()
+}
+
+/**
+ * Filters the Work Centre list through its own search box.
+ *
+ * The list client owns its search state and does not seed it from the URL, so a
+ * `?search=` query string would leave the table unfiltered and the target row
+ * potentially off the first page.
+ */
+export async function filterList(page: import('@playwright/test').Page, term: string): Promise<void> {
+  const search = page.getByPlaceholder(/search by code or name|szukaj po kodzie/i).first()
+  await search.waitFor({ state: 'visible', timeout: 20000 })
+  await search.fill(term)
+  await page.getByRole('cell', { name: new RegExp(term.slice(0, 18), 'i') }).first().waitFor({ timeout: 20000 })
+}

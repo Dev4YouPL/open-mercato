@@ -2,8 +2,10 @@ import { expect, test } from '@playwright/test'
 import { login } from '@open-mercato/core/helpers/integration/auth'
 import {
   adminToken,
+  filterList,
   cleanupWorkCenter,
   createWorkCenter,
+  openRowActions,
   readWorkCenter,
   uniqueCode,
   updateWorkCenter,
@@ -26,8 +28,8 @@ test.describe('TC-MFG-WC-UI-DELETE-CONFLICT-001: stale list row delete', () => {
       id = (await createWorkCenter(request, token, { code, name: 'Delete target' })).id
 
       await login(page, 'admin')
-      await page.goto(`${LIST_URL}?search=${encodeURIComponent(code)}`)
-      await expect(page.getByText(code)).toBeVisible({ timeout: 20000 })
+      await page.goto(LIST_URL)
+      await filterList(page, code)
 
       // The list now holds a stale version for this row.
       const current = await readWorkCenter(request, token, id as string)
@@ -35,9 +37,14 @@ test.describe('TC-MFG-WC-UI-DELETE-CONFLICT-001: stale list row delete', () => {
         200,
       )
 
-      await page.getByRole('button', { name: /actions|akcje|more/i }).first().click()
-      await page.getByRole('menuitem', { name: /delete|usuń/i }).click()
-      await page.getByRole('button', { name: /delete|usuń|confirm|potwierd/i }).last().click()
+      await openRowActions(page)
+      await page.getByRole('menuitem').filter({ hasText: /delete|usuń/i }).first().click()
+      await page
+        .getByRole('alertdialog')
+        .getByRole('button')
+        .filter({ hasText: /delete|usuń/i })
+        .first()
+        .click()
 
       await expect(page.getByText(/changed since|record changed|zmieni/i).first()).toBeVisible({ timeout: 20000 })
 
@@ -59,12 +66,17 @@ test.describe('TC-MFG-WC-UI-DELETE-CONFLICT-001: stale list row delete', () => {
       id = (await createWorkCenter(request, token, { code, name: 'Clean delete' })).id
 
       await login(page, 'admin')
-      await page.goto(`${LIST_URL}?search=${encodeURIComponent(code)}`)
-      await expect(page.getByText(code)).toBeVisible({ timeout: 20000 })
+      await page.goto(LIST_URL)
+      await filterList(page, code)
 
-      await page.getByRole('button', { name: /actions|akcje|more/i }).first().click()
-      await page.getByRole('menuitem', { name: /delete|usuń/i }).click()
-      await page.getByRole('button', { name: /delete|usuń|confirm|potwierd/i }).last().click()
+      await openRowActions(page)
+      await page.getByRole('menuitem').filter({ hasText: /delete|usuń/i }).first().click()
+      await page
+        .getByRole('alertdialog')
+        .getByRole('button')
+        .filter({ hasText: /delete|usuń/i })
+        .first()
+        .click()
 
       await expect
         .poll(async () => await readWorkCenter(request, token, id as string), { timeout: 20000 })

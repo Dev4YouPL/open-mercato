@@ -128,6 +128,9 @@ export function WorkCentersTableClient({
           "manufacturing.workCenters.list.deleteConfirmBody",
           "The work centre will be deactivated and hidden from routing selection. Its resource membership is kept.",
         ),
+        // Name the destructive action explicitly rather than leaving the
+        // generic "Confirm": the button the user presses should say what it does.
+        confirmText: t("manufacturing.workCenters.actions.delete", "Delete"),
         variant: "destructive",
       })
       if (!confirmed) return

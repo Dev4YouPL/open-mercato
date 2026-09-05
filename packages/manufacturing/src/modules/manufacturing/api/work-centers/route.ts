@@ -4,7 +4,7 @@ import { makeCrudRoute } from '@open-mercato/shared/lib/crud/factory'
 import { resolveTranslations } from '@open-mercato/shared/lib/i18n/server'
 import { resolveCrudRecordId, parseScopedCommandInput } from '@open-mercato/shared/lib/api/scoped'
 import { buildIlikeTerm } from '@open-mercato/shared/lib/db/buildIlikeTerm'
-import { parseBooleanToken } from '@open-mercato/shared/lib/boolean'
+import { parseBooleanFlag } from '@open-mercato/shared/lib/boolean'
 import { ManufacturingWorkCenter } from '../../data/entities'
 import {
   createWorkCenterSchema,
@@ -112,7 +112,10 @@ const crud = makeCrudRoute({
         const like = buildIlikeTerm(term)
         filters.$or = [{ [F.code]: { $ilike: like } }, { [F.name]: { $ilike: like } }]
       }
-      const isActive = parseBooleanToken(query.isActive)
+      // `parseBooleanFlag` yields undefined for an absent/unparseable value;
+      // `parseBooleanToken` returns null, which would filter `is_active IS NULL`
+      // on every unfiltered request and hide every row.
+      const isActive = parseBooleanFlag(query.isActive)
       if (isActive !== undefined) filters[F.is_active] = isActive
       return filters
     },

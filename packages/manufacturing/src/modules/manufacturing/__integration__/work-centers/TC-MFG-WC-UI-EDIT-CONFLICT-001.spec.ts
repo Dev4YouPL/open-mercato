@@ -1,9 +1,11 @@
 import { expect, test } from '@playwright/test'
 import { login } from '@open-mercato/core/helpers/integration/auth'
 import {
+  NAME_FIELD,
   adminToken,
   cleanupWorkCenter,
   createWorkCenter,
+  formField,
   readWorkCenter,
   uniqueCode,
   updateWorkCenter,
@@ -27,7 +29,7 @@ test.describe('TC-MFG-WC-UI-EDIT-CONFLICT-001: stale edit form', () => {
 
       await login(page, 'admin')
       await page.goto(`${LIST_URL}/${id}`)
-      await expect(page.getByLabel(/^name$/i)).toHaveValue('Original name', { timeout: 20000 })
+      await expect(formField(page, NAME_FIELD)).toHaveValue('Original name', { timeout: 20000 })
 
       // A second actor commits while this form holds the old version.
       const current = await readWorkCenter(request, token, id as string)
@@ -39,14 +41,14 @@ test.describe('TC-MFG-WC-UI-EDIT-CONFLICT-001: stale edit form', () => {
       )
       expect(elsewhere.status).toBe(200)
 
-      await page.getByLabel(/^name$/i).fill('My local edit')
-      await page.getByRole('button', { name: /^save|zapisz$/i }).click()
+      await formField(page, NAME_FIELD).fill('My local edit')
+      await page.getByRole('button', { name: /^(save|zapisz)$/i }).first().click()
 
       // The unified conflict surface, not a bare error toast.
       await expect(page.getByText(/changed since|record changed|zmieni/i).first()).toBeVisible({ timeout: 20000 })
 
       // What the user typed is still on screen...
-      await expect(page.getByLabel(/^name$/i)).toHaveValue('My local edit')
+      await expect(formField(page, NAME_FIELD)).toHaveValue('My local edit')
 
       // ...and the refused save wrote nothing.
       const afterConflict = await readWorkCenter(request, token, id as string)
@@ -66,20 +68,20 @@ test.describe('TC-MFG-WC-UI-EDIT-CONFLICT-001: stale edit form', () => {
 
       await login(page, 'admin')
       await page.goto(`${LIST_URL}/${id}`)
-      await expect(page.getByLabel(/^name$/i)).toHaveValue('Base', { timeout: 20000 })
+      await expect(formField(page, NAME_FIELD)).toHaveValue('Base', { timeout: 20000 })
 
       const current = await readWorkCenter(request, token, id as string)
       await updateWorkCenter(request, token, { id, name: 'Bumped' }, current?.updatedAt)
 
-      await page.getByLabel(/^name$/i).fill('Deliberate retry')
-      await page.getByRole('button', { name: /^save|zapisz$/i }).click()
+      await formField(page, NAME_FIELD).fill('Deliberate retry')
+      await page.getByRole('button', { name: /^(save|zapisz)$/i }).first().click()
       await expect(page.getByText(/changed since|record changed|zmieni/i).first()).toBeVisible({ timeout: 20000 })
 
       // Reload adopts the current server version, then the same edit lands.
       await page.reload()
-      await expect(page.getByLabel(/^name$/i)).toHaveValue('Bumped', { timeout: 20000 })
-      await page.getByLabel(/^name$/i).fill('Deliberate retry')
-      await page.getByRole('button', { name: /^save|zapisz$/i }).click()
+      await expect(formField(page, NAME_FIELD)).toHaveValue('Bumped', { timeout: 20000 })
+      await formField(page, NAME_FIELD).fill('Deliberate retry')
+      await page.getByRole('button', { name: /^(save|zapisz)$/i }).first().click()
 
       await expect
         .poll(async () => (await readWorkCenter(request, token, id as string))?.name, { timeout: 20000 })

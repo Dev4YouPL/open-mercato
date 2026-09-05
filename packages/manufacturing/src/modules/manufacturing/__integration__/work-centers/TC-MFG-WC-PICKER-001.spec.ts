@@ -37,7 +37,7 @@ test.describe('TC-MFG-WC-PICKER-001: resource selector', () => {
       await login(page, 'admin')
       await page.goto(`${LIST_URL}/create`)
 
-      const search = page.getByLabel(/search resources|szukaj zasob/i)
+      const search = page.getByRole('searchbox', { name: /search resources|szukaj zasob/i }).first()
       await expect(search).toBeVisible({ timeout: 20000 })
       await search.fill(marker)
 
@@ -83,7 +83,7 @@ test.describe('TC-MFG-WC-PICKER-001: resource selector', () => {
       await page.goto(`${LIST_URL}/${id}`)
 
       // The stored member renders by name, not as a raw uuid.
-      await expect(page.getByText(marker)).toBeVisible({ timeout: 20000 })
+      await expect(page.getByText(marker).first()).toBeVisible({ timeout: 20000 })
 
       expect(hydrationUrls.length).toBeGreaterThan(0)
       const hydration = new URL(hydrationUrls[0], 'http://localhost')
@@ -119,7 +119,7 @@ test.describe('TC-MFG-WC-PICKER-001: resource selector', () => {
 
       await login(page, 'admin')
       await page.goto(`${LIST_URL}/${id}`)
-      await expect(page.getByText(`${marker} active`)).toBeVisible({ timeout: 20000 })
+      await expect(page.getByText(`${marker} active`).first()).toBeVisible({ timeout: 20000 })
 
       // The selection survives whatever the provider reports.
       const detail = await readWorkCenter(request, token, id as string)
@@ -152,7 +152,7 @@ test.describe('TC-MFG-WC-PICKER-001: resource selector', () => {
       await page.route('**/api/resources/resources?*page=*', (route) => route.abort())
       await page.goto(`${LIST_URL}/${id}`)
 
-      await expect(page.getByText(/1 selected|wybrano: 1/i)).toBeVisible({ timeout: 20000 })
+      await expect(page.getByText(/1 selected|wybrano: 1/i).first()).toBeVisible({ timeout: 20000 })
       // A failed search is not an empty catalogue: a retry is offered.
       await expect(page.getByRole('button', { name: /retry|ponów/i })).toBeVisible()
 

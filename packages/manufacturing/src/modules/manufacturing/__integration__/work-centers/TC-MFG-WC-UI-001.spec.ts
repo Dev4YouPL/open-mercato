@@ -1,9 +1,13 @@
 import { expect, test } from '@playwright/test'
 import { login } from '@open-mercato/core/helpers/integration/auth'
 import {
+  CODE_FIELD,
+  NAME_FIELD,
   adminToken,
   cleanupWorkCenter,
   createWorkCenter,
+  formField,
+  listWorkCenters,
   uniqueCode,
 } from './helpers'
 
@@ -27,7 +31,7 @@ test.describe('TC-MFG-WC-UI-001: Work Centre pages', () => {
 
       await login(page, 'admin')
       await page.goto(LIST_URL)
-      await expect(page.getByText(code)).toBeVisible({ timeout: 20000 })
+      await expect(page.getByText(code).first()).toBeVisible({ timeout: 20000 })
       await expect(page.getByText('Visible cell')).toBeVisible()
       await expect(page.getByRole('link', { name: /new work centre|nowe gniazdo/i })).toBeVisible()
 
@@ -48,17 +52,25 @@ test.describe('TC-MFG-WC-UI-001: Work Centre pages', () => {
       await login(page, 'admin')
       await page.goto(`${LIST_URL}/create`)
 
-      await page.getByLabel(/^code$/i).fill(code)
-      await page.getByLabel(/^name$/i).fill('Created in browser')
-      await page.getByRole('button', { name: /create work centre|utwórz/i }).click()
+      await formField(page, CODE_FIELD).fill(code)
+      await formField(page, NAME_FIELD).fill('Created in browser')
+      await page.getByRole('button', { name: /create work centre|utwórz/i }).first().click()
 
-      await expect(page).toHaveURL(new RegExp(`${LIST_URL}(/|$)`), { timeout: 20000 })
+      // The form navigates away from /create once the write lands; poll the API
+      // rather than assuming the redirect and the commit are simultaneous.
+      await expect(page).not.toHaveURL(/\/create$/, { timeout: 20000 })
 
-      // Confirm through the API that the browser write really landed.
-      const { body } = await (
-        await import('./helpers')
-      ).listWorkCenters(request, token, `?search=${encodeURIComponent(code)}`)
-      expect(body.items?.[0]?.name).toBe('Created in browser')
+      await expect
+        .poll(
+          async () => {
+            const { body } = await listWorkCenters(request, token, `?search=${encodeURIComponent(code)}`)
+            return body.items?.[0]?.name ?? null
+          },
+          { timeout: 20000 },
+        )
+        .toBe('Created in browser')
+
+      const { body } = await listWorkCenters(request, token, `?search=${encodeURIComponent(code)}`)
       id = body.items?.[0]?.id ?? null
     } finally {
       await cleanupWorkCenter(request, token, id)
@@ -81,8 +93,8 @@ test.describe('TC-MFG-WC-UI-001: Work Centre pages', () => {
       await login(page, 'admin')
       await page.goto(`${LIST_URL}/${id}`)
 
-      await expect(page.getByLabel(/^code$/i)).toHaveValue(code, { timeout: 20000 })
-      await expect(page.getByLabel(/^name$/i)).toHaveValue('Detail cell')
+      await expect(formField(page, CODE_FIELD)).toHaveValue(code, { timeout: 20000 })
+      await expect(formField(page, NAME_FIELD)).toHaveValue('Detail cell')
       expect(errors, `client errors: ${errors.join('; ')}`).toEqual([])
     } finally {
       await cleanupWorkCenter(request, token, id)
