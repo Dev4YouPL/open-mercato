@@ -58,7 +58,7 @@ It will not define the entities, APIs, UI, events, migrations, or implementation
 | 2 | P1.0a Manufacturing package and module bootstrap | Full specification | Design resolved; scope-cohesion review **KEEP**; accepted for staged implementation |
 | 3 | P1.1 optional `wms_sales` integration | New specification | Issue #5260 exists; specification missing |
 | 4 | P1.2 WMS Sites and warehouse roles | Readiness analysis of existing specification | Design complete |
-| 5 | P1.3a Catalog quantity normalization | Readiness analysis of existing specification | Design complete |
+| 5 | P1.3a Catalog quantity normalization | Readiness analysis of existing specification | Specification-level readiness remediation complete; parent merge gate remains |
 | 6 | P1.3b WMS quantity precision | Data audit plus readiness analysis of existing specification | Design complete; final precision envelope open until audit |
 | 7 | P1.3c WMS quantity evidence and reversal | Readiness analysis of existing specification | Design complete; depends on P1.3b |
 | 8a | P1.4a BOM draft authoring and integrity | Full specification | Implementation-ready design; fresh-context review **PASS**; upstream gates remain |
@@ -69,7 +69,7 @@ It will not define the entities, APIs, UI, events, migrations, or implementation
 | Post-W0 4 | P1.4f BOM revision comparison and where-used | New specification | Decision queue accepted; tracker [#5411](https://github.com/open-mercato/open-mercato/issues/5411) open |
 | Post-W0 5 | P1.4g BOM copy | New specification | Decision queue accepted; tracker [#5412](https://github.com/open-mercato/open-mercato/issues/5412) open |
 | Post-W0 6 | P1.4h BOM extensibility and document control | New specification | Decision queue accepted; tracker [#5413](https://github.com/open-mercato/open-mercato/issues/5413) open |
-| 9 | P1.6 Work Center boundary | New specification | Missing |
+| 9 | P1.6 Work Center boundary | [Full specification](2026-08-19-manufacturing-work-centres.md) | Design complete; readiness review pending |
 | 10 | P1.5 routing and operation drafts | New specification | Missing; finalization depends on P1.6 |
 | 11 | P1.7 released definitions and immutable definition snapshots | New specification | Missing |
 | 12 | P1.8a generic atomic WMS posting groups | New WMS specification | Missing |
@@ -177,7 +177,7 @@ The lanes describe contract-finalization order, not a ban on earlier skeletons o
 | P1.0a | `2026-08-19-manufacturing-package-module-bootstrap.md` | `@open-mercato/manufacturing` / `manufacturing` | Full spec complete | P1.0 package/module decision is accepted through repository review |
 | P1.1 | `2026-08-19-wms-sales-optional-integration.md` | Owner selected by #5260 | Code audit and skeleton now | #5260 selects Option A/B and, for B, module/package placement |
 | P1.2 | `analysis/ANALYSIS-2026-08-19-wms-sites-and-warehouse-roles.md` | WMS | Readiness audit now | P1.0 accepted and all critical findings remediated |
-| P1.3a | `analysis/ANALYSIS-2026-08-19-catalog-quantity-normalization.md` | Catalog | Readiness audit now | P1.0 accepted and all critical findings remediated |
+| P1.3a | `analysis/ANALYSIS-2026-08-19-catalog-quantity-normalization.md` | Catalog | Readiness analysis complete; implementation gated | Parent-roadmap repository acceptance/merge; all critical findings remediated |
 | P1.3b | `analysis/ANALYSIS-2026-08-19-wms-quantity-precision-alignment.md` | WMS | Real-data audit now | P1.3a ready; precision envelope selected from evidence; critical findings remediated |
 | P1.3c | `analysis/ANALYSIS-2026-08-19-wms-quantity-evidence-reversal.md` | WMS | Audit preparation now | P1.3b ready and storage/arithmetic envelope frozen |
 | P1.4a | `2026-08-19-manufacturing-bom-drafts.md` | `manufacturing` | Full specification complete; implementation gated | P1.0 accepted; P1.0a package contract and P1.3a quantity contract ready |
@@ -188,7 +188,7 @@ The lanes describe contract-finalization order, not a ban on earlier skeletons o
 | P1.4f | `manufacturing-bom-revision-comparison-and-where-used.md` | `manufacturing` | Post-Wave 0 decision/specification work after P1.4b | Diff/reverse-use scope and released/execution visibility resolved |
 | P1.4g | `manufacturing-bom-copy.md` | `manufacturing` | Post-Wave 0 decision/specification work after P1.4a/P1.3a | Eligible source/target and revalidation behavior resolved |
 | P1.4h | `manufacturing-bom-extensibility-and-document-control.md` | `manufacturing` | Post-Wave 0 decision/specification work after P1.4a | Field/reference ownership, provider, retention and release behavior resolved |
-| P1.6 | `2026-08-19-manufacturing-work-centres.md` | `manufacturing` with optional `resources` input | Skeleton/code audit now | Ownership, resource cardinality, snapshot and planner-absent behavior resolved |
+| P1.6 | `2026-08-19-manufacturing-work-centres.md` | `manufacturing` with optional `resources` input | Full specification complete; readiness review pending | P1.0a bootstrap evidence and P1.12/readiness evidence accepted; ownership, resource cardinality, snapshot and planner-absent behavior resolved |
 | P1.5 | `2026-08-19-manufacturing-routing-drafts.md` | `manufacturing` | Skeleton after P1.6 questions are known | P1.6 Work Center contract ready |
 | P1.7 | `2026-08-19-manufacturing-released-definitions.md` | `manufacturing` | Skeleton after P1.4a/P1.5 release inputs and P1.6 ownership shapes are known | P1.2, P1.3a, P1.4a, P1.5 and P1.6 ready; scope stops before order release; P1.4b is not a release prerequisite |
 | P1.8a | `2026-08-19-wms-atomic-posting-groups.md` | WMS | Current-state audit, benchmark and skeleton now | P1.2 and P1.3a-c ready; reference/reason registry and BC strategy resolved |
@@ -307,7 +307,7 @@ The first batch starts only artifacts that can make independent progress without
 3. **P1.3a readiness analysis** — formal report for the Catalog normalization contract.
 4. **P1.3b data-audit task** — measure real and schema-supported quantity envelopes before selecting precision.
 5. **P1.4a/P1.4b full specifications** — occurrence-preserving direct-level BOM authoring/integrity and its independently bounded read-only multi-level preview; no release or stock behavior.
-6. **P1.6 skeleton** — Work Center ownership over `resources`; no scheduling semantics.
+6. **P1.6 full specification** — Work Center identity plus optional many-Resource membership, scalar-ID/display-fallback snapshots, no scheduling semantics; readiness review remains required.
 7. **P1.8a skeleton and WMS audit** — generic atomic posting group only; no Manufacturing vocabulary.
 8. **P1.9 skeleton** — model-neutral append-only fact ledger, correction/idempotency and opaque evidence references; no discrete confirmation UI or order orchestration.
 9. **P1.1 audit/skeleton** may run in parallel but retains #5260 as an explicit Open Question and cannot freeze placement.
@@ -453,3 +453,5 @@ Every child records its work-item ID, owner, planned artifact, upstream dependen
 - 2026-08-19: Added a post-Wave 0 BOM decision queue for list perspectives/filtering, business identity, history/comments, revision impact analysis, reuse/import/export, extensibility/document control, and alternatives. Each remains an independent candidate rather than an unapproved expansion of P1.4a.
 - 2026-08-19: Owner assigned the approved post-Wave 0 BOM decision queue to P1.4c-h and created trackers #5408-#5413: list workspace, business identity, history/comments, revision comparison/where-used, copy only, and extensibility/document control. Import/export and alternatives remain unassigned future work.
 - 2026-08-20: Accepted the parent roadmap as the staged Wave 0 delivery baseline. P1.0a is authorized for implementation; all other capability slices continue to require their dedicated readiness evidence and dependency gates.
+- 2026-08-28: Added and aligned the P1.3a readiness analysis; critical design findings are remediated and the remaining implementation gate is parent-roadmap repository acceptance/merge.
+- 2026-08-28: Completed P1.6 full specification after official SAP, Oracle, Dynamics, IFS, and Infor benchmark review. The approved scope adds optional zero-to-many Resource membership but defers capacity, calendars, costs, capabilities, and scheduling.

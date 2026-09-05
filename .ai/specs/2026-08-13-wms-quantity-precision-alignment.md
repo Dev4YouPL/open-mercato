@@ -73,7 +73,7 @@ Unrelated weight/capacity fields are classified explicitly and changed only when
 - Domain values are canonical decimal strings.
 - Compatibility adapters accept existing JSON numbers only on already published fields.
 - Zod validation rejects exponent form, invalid scale, and overflow before a command mutates state.
-- All addition, subtraction, comparison, minimum, sign, and zero checks use the P1.3a shared exact-decimal utility.
+- P1.3b extends the P1.3a shared exact-decimal foundation with addition, subtraction, minimum and zero helpers required by WMS; comparison/sign may reuse the P1.3a primitives. All remain pure shared operations and never use JavaScript `number` for authoritative arithmetic.
 - Database-returned numeric strings stay strings through the command path.
 - No epsilon is used for authoritative quantity equality.
 - A previously normalized quantity is never rounded again.
@@ -201,6 +201,7 @@ Documentation validation uses `git diff --check` and `yarn agents:check-budget`.
 
 - 2026-08-13: Created P1.3b from the audited WMS precision/profile portion of the original quantity proposal.
 - 2026-08-19: Clarified that P1.3b remains generic WMS precision work and does not add posting groups, consumer registrations, or production-specific enums; aligned governance with pending parent-roadmap acceptance.
+- 2026-08-28: Aligned utility ownership with the narrowed P1.3a scope: WMS-required add/subtract/minimum/zero primitives are delivered by P1.3b as additive shared helpers.
 
 ### Review — 2026-08-13
 

@@ -112,7 +112,7 @@ The preview therefore needs a separate contract with traversal semantics, exact 
 | Concern | Repository evidence | P1.4b decision |
 |---|---|---|
 | Draft aggregate | P1.4a owns family/revision/line schema, target resolution, scope, ordering, and exact snapshots | Depend on its internal read contracts; add no duplicate persistence or resolver. |
-| Exact arithmetic | P1.3a specifies canonical decimal multiply/divide/round and snapshot rounding | Use shared exact operations; never use JS `number` or re-normalize stored nominal values. |
+| Exact arithmetic | P1.3a specifies canonical decimal parsing/multiply/round and snapshot rounding; exact division is intentionally outside its Catalog/Sales scope | P1.4b adds the pure shared bounded division primitive required by preview; never use JS `number` or re-normalize stored nominal values. |
 | Scoped reads | Modules use `QueryEngine` for cross-module scalar-ID enrichment | Batch Catalog labels; arithmetic remains possible when enrichment is missing. |
 | Custom routes | Repository custom routes export `metadata`, `openApi`, zod contracts, auth/ACL and scoped queries | Add one custom GET; mutation guards and operation headers do not apply. |
 | Transactions | MikroORM allows explicit isolation and ambient entity managers | Run traversal inside one `REPEATABLE READ` transaction. |
@@ -187,7 +187,8 @@ Rules:
 
 - fixed quantity applies once per occurrence for each invocation of its immediate parent BOM, independent of the parent's required/base-output ratio;
 - both variable and fixed nominal demand are divided by yield;
-- multiplication builds the exact numerator and denominator first; one P1.3a division then produces `gross` at the component line snapshot's explicit mode/scale, never through binary floating point;
+- multiplication builds the exact numerator and denominator first; one P1.4b-owned pure shared division then produces `gross` at the component line snapshot's explicit mode/scale, never through binary floating point;
+- P1.4b adds `divideDecimals(dividend, divisor, scale, mode)` additively to `@open-mercato/shared/lib/decimal`; it rejects a zero divisor and invalid scale, applies the same signed rounding semantics as `roundDecimal`, and returns a canonical string;
 - no intermediate ratio is serialized or rounded, so non-terminating `R / B` values remain deterministic;
 - only final `gross` is rounded once with that component line snapshot's mode/scale;
 - stored normalized values are evidence and are not re-normalized through current Catalog policy;
@@ -519,7 +520,8 @@ The synchronous path is justified only by the hard `2,000`-node/depth-`20` cap. 
 | Work item | Contract |
 |---|---|
 | P1.0a | One opt-in package/runtime module; Catalog only hard dependency; no public domain export. |
-| P1.3a | Blocking exact decimal multiply/divide/round and immutable line/revision evidence. |
+| P1.3a | Blocking exact decimal parse/multiply/round, Catalog normalization contract and immutable line/revision evidence shape. |
+| P1.4b | Owns the additive pure shared exact-division primitive used by bounded preview yield arithmetic. |
 | P1.4a | Blocking source schema, scoped readers, target resolution, occurrence/order semantics, cycle prevention, ACL/events. |
 | P1.5 | Preview contains no operation/routing reference; a later additive field needs explicit display semantics. |
 | P1.6 | No Work Center/resource/calendar dependency, data, or capacity calculation. |
@@ -634,6 +636,7 @@ Implementation remains gated by P1.0, P1.0a, P1.3a, and P1.4a. No product code i
 - 2026-08-19: Defined draft-only resolution, occurrence identity, exact variable/fixed/yield calculation, repeatable-read consistency, all-or-error limits, API/UI, and evidence gates.
 - 2026-08-19: Fresh-context review returned **PASS** after exact single-round arithmetic, historical base-unit failure, transaction ordering, bounded sentinel traversal and deterministic limit precedence were made explicit.
 - 2026-08-19: Aligned base-unit compatibility checks with P1.4a's explicit `normalizedUnitCode` and `baseOutputNormalizedUnitCode` scalars while retaining snapshot consistency validation.
+- 2026-08-28: Aligned arithmetic ownership with narrowed P1.3a: P1.4b now owns the additive pure exact-division primitive required by yield preview.
 
 ### Review — 2026-08-19
 

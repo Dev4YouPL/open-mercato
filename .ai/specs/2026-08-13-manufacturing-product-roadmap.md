@@ -461,9 +461,9 @@ The following do not block the first production flow and receive dedicated speci
 
 | Slice | Primary owner | Required evidence | Current document status |
 |---|---|---|---|
-| Draft quantities | Catalog | Exact normalization and immutable snapshot contract | P1.3a design complete — readiness review pending |
+| Draft quantities | Catalog | Exact normalization and immutable snapshot contract | P1.3a readiness remediation complete at specification level; implementation waits for parent-roadmap merge gate |
 | WMS Site | WMS | Scope, activation roles, one-active-site-per-warehouse, snapshots, migration, setup UI | P1.2 design complete — readiness review pending |
-| Work centres | `resources`, `planner`, Manufacturing | Minimal work-centre/resource boundary and optional sequential routing | Not authored |
+| Work centres | `resources`, `planner`, Manufacturing | Minimal Work Center identity, optional many-resource membership, snapshot producer, and optional sequential routing | P1.6 design complete — readiness review pending; P1.5 routing remains separate |
 | Released definitions | `manufacturing` | Lifecycle, child selection, immutable definition snapshots, cycle validation, fixed/variable/yield semantics; order release is excluded | Not authored; tracked by #5396 |
 | Minimum fact ledger | `manufacturing` model-neutral boundary | Append-only model-neutral facts, acceptance/correction/idempotency primitives and opaque evidence references | Not authored; tracked by #5399 |
 | Discrete order lifecycle and confirmations | `manufacturing` | Order/operation state, top-level definition selection, execution snapshot, simple display number and basic stock-free confirmations/corrections | Not authored; tracked by #5400 |
@@ -789,6 +789,8 @@ No closer `AGENTS.md` exists under `packages/core/src/modules/wms`, `resources`,
 - 2026-08-19: Aligned Wave 0 work-item cohesion with the approved specification backlog: P1.7 owns definition release, P1.9 owns the model-neutral fact ledger, P1.10 owns discrete order release/execution snapshots/basic confirmations, and P1.8 is tracked as generic WMS P1.8a plus Manufacturing adapter P1.8b.
 - 2026-08-19: Added owner-approved post-Wave 0 BOM capability trackers P1.4c-h: list workspace, business identity, history/comments, revision comparison/where-used, copy, and extensibility/document control. They are independent decision/specification work and do not delay the Wave 0 gates.
 - 2026-08-20: Accepted the roadmap as the baseline for staged Wave 0 delivery. Initial capability work prioritizes the BOM lane (P1.4a), the Work Center boundary (P1.6), and routing/operation drafts (P1.5), while preserving the prerequisite order: P1.0a and P1.3a unlock P1.4a, and P1.6 precedes P1.5.
+- 2026-08-28: Aligned the readiness register with the remediated P1.3a specification and its formal analysis artifact; product implementation remains gated by the parent-roadmap repository acceptance/merge.
+- 2026-08-28: Completed P1.6 Work Center design: Manufacturing owns the scoped Work Center and optional zero-to-many Resource membership by scalar IDs/display fallbacks; `resources` retains resource master data, `planner` remains out of scope, and P1.5/P1.7/P1.10 consume the defined reference/snapshot boundary.
 
 ### Review - 2026-08-13
 

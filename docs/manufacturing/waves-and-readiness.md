@@ -2,7 +2,7 @@
 
 > A business-readable map of Manufacturing capabilities and a navigation dashboard for Wave 0 specification readiness.
 
-**Last verified:** 2026-08-20
+**Last verified:** 2026-08-28
 **Status:** Operational documentation dashboard. It is not a release schedule, implementation approval, delivery promise, or licensing commitment.
 
 ## How to read this document
@@ -58,7 +58,7 @@
 | **P1.4g** | BOM copy | [Spec task #5412](https://github.com/open-mercato/open-mercato/issues/5412) | Post-Wave 0 decision accepted | One command-driven copy capability with full revalidation; no import/export | **No — specification missing** | Define source/target policy after P1.4a and P1.3a |
 | **P1.4h** | BOM extensibility and document control | [Spec task #5413](https://github.com/open-mercato/open-mercato/issues/5413) | Post-Wave 0 decision accepted | Custom fields, optional tags and controlled attachment/link references | **No — specification missing** | Select provider/entity ownership/retention; released semantics consume P1.7 without gating it |
 | **P1.5** | Draft routing and operation authoring | [Spec task #5395](https://github.com/open-mercato/open-mercato/issues/5395) | Bounded scope proposed | Optional single-sequence direction is coherent | **No** | Author CRUD/API/UI/data-model spec for sequential operations, setup/run time, instructions and Work Center references after P1.6 |
-| **P1.6** | Minimal Work Center/resource boundary | [Spec task #5394](https://github.com/open-mercato/open-mercato/issues/5394) | Ownership proposed | No duplicate resource/calendar master; calendars are non-blocking | **No** | Author the Work Center identity, applicability, snapshot, API and disabled-calendar behavior specification |
+| **P1.6** | Minimal Work Center/resource boundary | [Full specification](../../.ai/specs/2026-08-19-manufacturing-work-centres.md); [spec task #5394](https://github.com/open-mercato/open-mercato/issues/5394) | Work Center/resource-membership boundary accepted by roadmap owner | Work Center identity, optional many-Resource membership, snapshot producer, API/UI, and disabled-peer behaviour are coherent; no duplicate resource/calendar master | **No — readiness review pending** | Run readiness audit after P1.0a bootstrap evidence; P1.5 may then consume the one-Work-Center operation contract |
 | **P1.7** | Released definitions and immutable definition snapshots | [Spec task #5396](https://github.com/open-mercato/open-mercato/issues/5396) | Lifecycle and child selection proposed | Definition-only boundary is cohesive; order release moved to P1.10 | **No** | Author release transaction, revision state, attachment reference, immutable definition snapshot, error and concurrency contracts after P1.2/P1.3a/P1.4a/P1.5/P1.6; P1.4b is not a release prerequisite |
 | **P1.8a** | Generic atomic WMS posting groups | [Spec task #5397](https://github.com/open-mercato/open-mercato/issues/5397) | Direction proposed | Consumer-neutral physical ownership, atomicity, idempotency, opaque references, reversal and reconciliation are coherent | **No** | Audit/benchmark WMS, then author the generic command/result, registration and historical-fallback contracts after P1.3a–c |
 | **P1.8b** | Manufacturing inventory posting adapter | [Spec task #5398](https://github.com/open-mercato/open-mercato/issues/5398) | Direction proposed | Manufacturing owns semantic derivation; WMS remains unaware of Manufacturing vocabulary | **No** | Author the adapter after P1.8a, P1.9 and P1.10 contracts are ready |
@@ -73,7 +73,7 @@
 | Group | Current result |
 |---|---|
 | Architecture baseline | **Accepted for staged Wave 0 delivery — 2026-08-20** |
-| Dedicated specs with completed design | **P1.2, P1.3a–c, P1.4a and P1.4b** |
+| Dedicated specs with completed design | **P1.2, P1.3a–c, P1.4a, P1.4b and P1.6** |
 | Dedicated specs fully ready for implementation | **P1.0a — package/module bootstrap; other readiness reviews remain pending** |
 | Architecture direction proposed but dedicated full spec missing | **P1.1, P1.4c–P1.4h and P1.5–P1.11; all have trackers** |
 | Evidence maintained per epic | **P1.12** |
