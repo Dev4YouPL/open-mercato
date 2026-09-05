@@ -225,7 +225,7 @@ Production order: draft -> released -> in_progress -> completed
 - `in_progress` begins with the first accepted material issue. The MVP has no separate start command or start endpoint.
 - `completed` requires a complete accepted, uncompensated direct-material issue set plus accepted full-output receipt evidence that has not been compensated.
 - Cancellation from `draft` or `released` is immediate. Cancellation after any accepted stock effect first enters `cancellation_pending`; the command reaches `cancelled` only after every uncompensated issue and receipt has an accepted compensating movement. A failed compensation leaves the order non-terminal and visibly recoverable.
-- Receipt is allowed only after every required direct occurrence in the current issue attempt has an accepted, uncompensated issue fact. Correcting material is forbidden while an uncompensated output receipt exists. After output compensation, correcting all material returns the order to `released`; correcting only some material leaves it `in_progress`. Correcting the completed output receipt moves the order through `correction_pending` to `in_progress`; it may be received again with a new intent. Correction never edits history.
+- Receipt is allowed only after every required direct occurrence in the current issue attempt has an accepted, uncompensated issue fact. Correcting material is forbidden while an uncompensated output receipt exists. After output compensation, an issue attempt may be compensated line by line, but replacement issue and receipt remain blocked until the entire attempt is compensated and the order returns to `released`; the next full issue uses a new attempt and new intents. Correcting the completed output receipt moves the order through `correction_pending` to `in_progress`; it may be received again with a new intent. Correction never edits history.
 
 ### Commands and evidence
 
@@ -302,7 +302,7 @@ The MVP is implemented as testable internal increments but released as one outco
 ### Increment 4 - acceptance and OSS release
 
 1. Pass the complete production scenario and all P1.12 safety evidence.
-2. Verify current WMS compatibility, disabled-module behavior, API/OpenAPI, UI, Manufacturing-only migrations, build, and integration tests.
+2. Verify current WMS compatibility, disabled-module behavior, API/OpenAPI, UI, Manufacturing migrations, the additive WMS production-correlation index migration and snapshot, build, and integration tests.
 3. Publish the first Manufacturing OSS MVP only when the whole flow passes.
 
 ## Acceptance Scenario
@@ -328,7 +328,7 @@ Given eligible WMS stock of `5` units of stocked subassembly S and `20` units of
 9. If one material line fails after earlier lines succeeded, the order remains visibly incomplete and retry posts only missing lines.
 10. Cross-tenant, cross-organization, stale-version, invalid-state, and insufficient-stock attempts fail without disclosing foreign records.
 
-The scenario supports only canonical decimal strings in the same inventory unit used by the current Catalog variant and WMS profile. Every persisted or posted quantity must be positive where the operation requires it, have at most four fractional digits, and have absolute value at most `999999999999.9999`, matching current WMS `numeric(16,4)`. Manufacturing performs scaling and yield calculations with exact decimal-string operations, never JavaScript `number`; every final occurrence and order quantity must already fit the envelope exactly, with no rounding. The restricted MVP profile owns this current-unit validation and may reuse a shared exact-decimal helper, but it does not call or require the broader Catalog conversion/rounding resolver from P1.3a. Cross-unit conversion, non-terminating results beyond four fractional digits, overflow, and lot/serial-controlled variants are rejected before definition or order release.
+The scenario supports only canonical positive whole-number strings in the same inventory unit used by the current Catalog variant and WMS profile. Every input, calculated occurrence, existing affected WMS balance, posted delta, and resulting balance must be an integer from `0` through `999999999999` as appropriate for the operation. Manufacturing performs scaling and yield calculations with exact decimal-string operations, never JavaScript `number`, and accepts the result only when it is a whole number inside that envelope. Current WMS then performs only safe integer addition/subtraction within the same bound. The restricted MVP profile owns this current-unit validation and may reuse a shared exact-decimal helper, but it does not call or require the broader Catalog conversion/rounding resolver from P1.3a. Cross-unit conversion, fractional inputs or results, overflow, and lot/serial-controlled variants are rejected before definition release, order release, and physical posting.
 
 ## Testing and Readiness Evidence
 
@@ -344,7 +344,7 @@ The scenario supports only canonical decimal strings in the same inventory unit 
 
 This roadmap change is additive and changes delivery priority, not a published contract. Existing P1 identifiers, specifications, implementation, package exports, entity IDs, routes, ACL features, event IDs, and generated registries remain intact.
 
-Dedicated implementation specs classify every new contract under `BACKWARD_COMPATIBILITY.md`. New Manufacturing structures use additive migrations and reviewed snapshots. Catalog receives no MVP change. WMS receives one additive typed posting-port contract and production reference discriminator, without schema, arithmetic, route, or generic posting-group changes. Deferred, already implemented BOM behavior is preserved.
+Dedicated implementation specs classify every new contract under `BACKWARD_COMPATIBILITY.md`. New Manufacturing structures use additive migrations and reviewed snapshots. Catalog receives no MVP change. WMS receives one additive typed posting-port contract, production reference discriminator, and partial unique production-correlation index over existing movement columns, without a new table, column, arithmetic rule, route, or generic posting-group change. Deferred, already implemented BOM behavior is preserved.
 
 ## Post-MVP Sequence
 
@@ -422,7 +422,7 @@ If evidence is weak or contradictory, the team runs a smaller discovery experime
 - **Scenario**: BOM quantity or conversion is valid for authoring but cannot be represented consistently by current WMS storage/arithmetic.
 - **Severity**: High.
 - **Affected area**: Order release and stock execution.
-- **Mitigation**: Apply the exact current-unit predicate defined in the acceptance scenario at definition and order release, reject cross-unit, over-scale, non-terminating, or overflowing execution quantities, and snapshot accepted decimal strings. Do not silently round.
+- **Mitigation**: Apply the whole-number current-unit predicate defined in the acceptance scenario at definition release, order release, and posting; reject cross-unit, fractional, or overflowing inputs, calculations, existing balances, and results, and snapshot accepted integer strings. Do not silently round.
 - **Residual risk**: Some legitimate manufacturing quantities remain unsupported until P1.3a-c follow-on work.
 
 ### Cross-scope or stale-master interpretation

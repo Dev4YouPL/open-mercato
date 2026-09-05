@@ -1,6 +1,6 @@
 # Manufacturing BOM Draft Authoring and Integrity
 
-> **MVP alignment (2026-09-05):** P1.4a is the definition-input portion of the proposed [`Manufacturing End-to-End MVP`](2026-09-05-manufacturing-end-to-end-mvp.md), not a standalone Manufacturing MVP. Preserve its specified integrity contract, but prioritize only the direct-level authoring/release input required by the end-to-end flow before starting deferred BOM enhancements. For the restricted MVP profile only, canonical same-inventory-unit decimal strings are validated and calculated by Manufacturing under MVP-D's frozen four-decimal envelope; the broader Catalog conversion/rounding resolver remains the gate for general P1.4a behavior.
+> **MVP alignment (2026-09-05):** P1.4a is the definition-input portion of the proposed [`Manufacturing End-to-End MVP`](2026-09-05-manufacturing-end-to-end-mvp.md), not a standalone Manufacturing MVP. Preserve its specified integrity contract, but prioritize only the direct-level authoring/release input required by the end-to-end flow before starting deferred BOM enhancements. For the restricted MVP profile only, canonical same-inventory-unit whole-number strings are validated and calculated by Manufacturing under MVP-D's frozen integer envelope; the broader Catalog conversion/rounding resolver remains the gate for general P1.4a behavior.
 
 ## TLDR
 
@@ -873,13 +873,13 @@ None.
 
 ### Verdict
 
-**Fully compliant at specification level.** Approved as implementation-ready subject to P1.0 acceptance, ready P1.0a, and an available Catalog exact quantity/UoM contract for its quantity-bearing write paths.
+**Fully compliant at specification level.** General P1.4a is approved as implementation-ready subject to P1.0 acceptance, ready P1.0a, and an available Catalog exact quantity/UoM contract. The restricted MVP-D path instead uses its explicitly bounded same-unit integer profile.
 
-Implementation of the quantity-bearing P1.4a write paths remains gated by P1.0 acceptance, P1.0a, and the Catalog quantity/UoM contract. This does not block non-quantity Manufacturing work. No product code is authorized by this documentation task.
+Implementation of general quantity-bearing P1.4a remains gated by P1.0 acceptance, P1.0a, and the Catalog quantity/UoM contract. Restricted MVP-D and non-quantity Manufacturing work follow their own stated gates. No product code is authorized by this documentation task.
 
 ## Changelog
 
-- 2026-09-05: Added the restricted MVP-D same-unit exact-decimal profile without changing the broader Catalog-resolver gate for general P1.4a behavior.
+- 2026-09-05: Added the restricted MVP-D same-unit integer profile without changing the broader Catalog-resolver gate for general P1.4a behavior.
 - 2026-09-05: Reclassified P1.4a as definition input to the end-to-end MVP rather than a standalone Manufacturing MVP.
 
 - 2026-08-19: Created the combined P1.4 skeleton from owner-approved BOM decisions.

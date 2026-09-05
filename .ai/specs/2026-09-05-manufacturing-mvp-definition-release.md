@@ -25,15 +25,15 @@ Validation is intentionally limited to the declared operating profile. The imple
 ## Scope
 
 - Reuse the existing P1.4a family, revision, line, aggregate-lock, command, undo, and scope model.
-- Permit concrete Catalog variants as executable BOM outputs and component occurrences. Both `stock` and resolvable `produce` lines are valid definition inputs.
-- Require base-output and component quantities as canonical decimal strings in the current inventory unit accepted by Catalog and WMS. The restricted profile accepts at most four fractional digits and absolute values through `999999999999.9999`; it rejects rather than rounds cross-unit, over-scale, non-terminating, or overflowing results.
-- Reuse the bounded P1.4b multi-level preview, occurrence identity, cycle detection, and depth/node limits. For this profile, Manufacturing performs multiplication and yield division with exact decimal-string operations and requires every final value to fit the current-unit envelope exactly. It does not depend on the broader P1.3a Catalog conversion/rounding resolver.
+- Permit concrete Catalog variants as executable BOM outputs and component occurrences. Both `stock` and `produce` lines are valid definition inputs. Each MVP `produce` line explicitly selects one already released child revision in the same scope; missing, mutable, or mismatched selections fail closed.
+- Require base-output and component quantities as canonical whole-number strings in the current inventory unit accepted by Catalog and WMS. Every input and calculated result must be an integer from `0` through `999999999999` as appropriate for its invariant; the profile rejects rather than rounds cross-unit, fractional, non-terminating, or overflowing results.
+- Reuse P1.4b's bounded traversal, occurrence identity, cycle detection, and depth/node limits, but replace its active-draft child lookup with traversal by the explicit released child-revision IDs above. Manufacturing performs multiplication and yield division with exact decimal-string operations and requires every final value to fit the integer envelope. It does not depend on the broader P1.3a Catalog conversion/rounding resolver.
 - Release one immutable snapshot containing the target variant, output quantity, ordered occurrences at every selected level, selected child revision IDs, full occurrence paths, component variants, normalized decimal strings, inventory-unit codes, and Catalog labels needed for historical readability.
 - Reject product-only executable targets, unresolved or ambiguous `produce` lines, cycles, cross-unit conversion, unsupported precision or magnitude, lot/serial-controlled variants, unresolved variants, and out-of-scope Catalog references.
 
 ## Data and lifecycle
 
-The existing editable BOM revision remains the optimistic-lock aggregate root. Release is one command and one transaction. It validates the complete bounded graph, deterministically selects each child revision, creates an immutable occurrence-preserving released-definition snapshot, marks the source revision released, and emits side effects only after commit. A later definition change creates a new draft revision; it never mutates a released snapshot.
+The existing editable BOM revision remains the optimistic-lock aggregate root. Release is one command and one transaction. It validates the complete bounded graph through the explicitly selected released child revisions, creates an immutable occurrence-preserving released-definition snapshot, marks the source revision released, and emits side effects only after commit. A later definition change creates a new draft revision; it never mutates a released snapshot.
 
 All rows carry `tenant_id`, `organization_id`, `created_at`, and `updated_at` where editable. Cross-module references are scalar UUIDs plus immutable labels/unit evidence; no Catalog ORM relationship is introduced.
 
@@ -56,7 +56,7 @@ Backend page roots remain server components. Client islands are limited to the e
 
 ## Testing and readiness
 
-Implementation coverage must create its own Catalog and BOM fixtures and prove direct and nested release, deterministic child-revision selection, bounded preview, cycle/limit rejection, occurrence-path preservation, snapshot immutability, stale-version rejection, cross-tenant and cross-organization isolation, exact four-decimal boundary acceptance, over-scale/non-terminating/overflow rejection, cross-unit rejection, product-only executable-target rejection, unresolved/ambiguous `produce` rejection, duplicate release, command undo policy, disabled-module behavior, API/OpenAPI, and the key UI path.
+Implementation coverage must create its own Catalog and BOM fixtures and prove direct and nested release, explicit released child-revision selection, rejection of active-draft/missing/mismatched/cross-scope child selections, bounded preview after child release, cycle/limit rejection, occurrence-path preservation, snapshot immutability, stale-version rejection, cross-tenant and cross-organization isolation, maximum-integer boundary acceptance, fractional/non-terminating/overflow rejection, cross-unit rejection, product-only executable-target rejection, unresolved `produce` rejection, duplicate release, command undo policy, disabled-module behavior, API/OpenAPI, and the key UI path.
 
 This child becomes implementation-ready only after P1.0a is available, the P1.4a/P1.4b contracts are accepted with the current-unit exact-decimal profile above, its exact release entity/API/ACL/event contracts are frozen, and the readiness review is linked. P1.2, the broader P1.3a-c conversion/rounding contracts, P1.4c-h, P1.5, P1.6, and P1.8a are not prerequisites for this restricted profile.
 
@@ -76,7 +76,7 @@ The contract preserves module ownership, scalar cross-module IDs, trusted scope,
 
 ## Changelog
 
-- 2026-09-05: Froze the restricted same-unit four-decimal quantity envelope and separated it from the broader Catalog conversion/rounding prerequisite.
+- 2026-09-05: Froze explicit released child-revision selection and the restricted same-unit integer envelope, separating both from the active-draft preview and broader Catalog conversion/rounding contracts.
 - 2026-09-05: Clarified MVP-D as an extensible CRUD-first definition model with validation limited to the supported manual operating profile.
 - 2026-09-05: Created the proposed direct-BOM and immutable-definition child contract for the end-to-end MVP.
 - 2026-09-05: Expanded the MVP profile to bounded multi-level authoring/preview and deterministic child-revision snapshots while keeping automatic child-order execution out of scope.

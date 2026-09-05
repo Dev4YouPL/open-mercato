@@ -53,6 +53,8 @@ The WMS module registers the port through DI and owns its public schemas and imp
 
 Manufacturing persists intent before calling WMS. Issue processes deterministic BOM occurrence order and records each result independently. Receipt has one intent for the full planned output. A retry first reconciles every pending intent and calls WMS only for missing work.
 
+Every order lifecycle mutation uses the same order serialization boundary and reconciles all pending WMS intents before evaluating its source state or starting another stock action. This closes the WMS-commit/Manufacturing-save window for cancellation and correction as well as retry.
+
 Compensation derives the inverse target and quantity solely from the original accepted fact and WMS movement. It creates a new movement and correction fact; it never edits or deletes the original. If compensation cannot post because stock is no longer eligible or available, the order stays `correction_pending` or `cancellation_pending` with a stable retryable error.
 
 ## Crash-window contract
@@ -67,7 +69,7 @@ Order detail shows per-intent pending/accepted/failed/corrected evidence and blo
 
 ## Testing and readiness
 
-Self-contained integration coverage must prove guarded issue and receipt, wildcard and direct WMS feature grants, denial without the matching WMS feature, non-spoofable `performedBy`, inventory-freeze denial, insufficient stock, scope isolation, partial multi-line failure, missing-line retry, exact same-key replay, concurrent identical and incompatible replay, WMS-committed/Manufacturing-failed reconciliation, output correction, issue correction, compensation failure, cancellation compensation after issue and receipt, disabled WMS behavior, balances, movements, facts, API/OpenAPI, and key UI recovery states.
+Self-contained integration coverage must prove guarded issue and receipt, wildcard and direct WMS feature grants, denial without the matching WMS feature, non-spoofable `performedBy`, inventory-freeze denial, insufficient stock, scope isolation, partial multi-line failure, missing-line retry, exact same-key replay, concurrent identical and incompatible replay, WMS-committed/Manufacturing-failed reconciliation before retry and every lifecycle transition, output correction, issue correction, compensation failure, output-first cancellation compensation after receipt, cancellation after issue, disabled WMS behavior, balances, movements, facts, API/OpenAPI, and key UI recovery states.
 
 This child becomes implementation-ready only after the order/facts child is accepted, the typed port contract is reviewed as additive, and the WMS and Manufacturing implementation seams are specified precisely. Generic atomic posting groups, WMS evidence migrations, and exact reversal infrastructure remain post-MVP options.
 
@@ -89,6 +91,7 @@ The proposed port preserves WMS ownership, guard execution, tenant/organization 
 
 ## Changelog
 
+- 2026-09-05: Extended pending-intent reconciliation to every lifecycle mutation and fixed output-first cancellation compensation after receipt.
 - 2026-09-05: Required trusted actor provenance, WMS feature authorization, post-commit callbacks, and a partial unique correlation index for concurrent incompatible-replay safety.
 - 2026-09-05: Clarified MVP-X as the minimum inventory-safety seam for one manual workflow, without generalized posting or production-policy options.
 - 2026-09-05: Created the proposed guarded WMS execution and compensation child contract for the end-to-end MVP.

@@ -36,7 +36,7 @@ Routing, operations, partial quantities, backflush, scrap, `complete_short`, rec
 
 ```text
 draft -> released -> in_progress -> completed
-   \       \-> cancelled          \-> correction_pending -> in_progress
+   \       \-> cancelled          \-> correction_pending -> in_progress/released
     \-> cancelled
 in_progress -> cancellation_pending -> cancelled
 completed -> cancellation_pending -> cancelled
@@ -45,9 +45,10 @@ completed -> cancellation_pending -> cancelled
 - `released` requires a valid immutable execution snapshot.
 - The first accepted issue moves the order to `in_progress`.
 - Receipt is forbidden until every required direct occurrence in the current issue attempt has an accepted, uncompensated issue fact. `completed` requires that complete material set plus one accepted, uncompensated full-output receipt.
-- Cancellation after any stock effect remains `cancellation_pending` until every uncompensated posting is compensated; failures remain visible and retryable.
+- Before any lifecycle mutation, Manufacturing serializes the order and reconciles every pending stock intent through the WMS correlation lookup. The transition uses reconciled evidence, so an order with a WMS-committed but locally unrecorded movement cannot take the stock-free cancellation path or begin a conflicting action.
+- Cancellation after any stock effect remains `cancellation_pending` until every uncompensated posting is compensated; failures remain visible and retryable. Cancellation after receipt compensates output first and begins material compensation only after output compensation succeeds.
 - Correcting the only output receipt moves `completed` through `correction_pending` to `in_progress` and permits a new receipt intent.
-- Material correction is forbidden while an uncompensated output receipt exists. Once output is absent or compensated, correcting all issued material returns the order to `released`; correcting only part leaves it `in_progress`. A later full issue uses a new issue-attempt number.
+- Material correction is forbidden while an uncompensated output receipt exists. Once output is absent or compensated, the operator may compensate an issue attempt line by line, but no replacement issue or receipt is allowed while that attempt is partially compensated. Correcting the complete issued set returns the order to `released`; a later full issue uses a new issue-attempt number and new intents for every direct occurrence.
 
 Every transition is a command with optimistic locking and an explicit allowed-source-state matrix. Facts are append-only and never rewritten by correction.
 
@@ -65,11 +66,11 @@ Manufacturing owns state transitions, snapshots, intent fingerprints, facts, aut
 
 ## Idempotency and recovery
 
-Each logical action first persists its intent and input fingerprint. Repeating the same key and fingerprint returns the original outcome; reusing the key with different input fails as incompatible replay. A pending intent is reconciled against the WMS posting port before any retry creates physical stock work.
+Each logical action first persists its intent and input fingerprint. Repeating the same key and fingerprint returns the original outcome; reusing the key with different input fails as incompatible replay. Before every lifecycle mutation or retry, pending intents are reconciled against the WMS posting port under the order's serialization boundary; no new state transition or physical stock work begins until reconciliation completes.
 
 ## Testing and readiness
 
-Coverage must prove lifecycle transitions and forbidden transitions, immutable multi-level snapshots, direct-occurrence execution boundaries, optional parent-order scope validation, no implicit child-order creation, stale versions, scope isolation, intent cardinality per issue attempt, same-key replay, concurrent identical and incompatible replay, receipt denial before complete issue, re-issue with new intents after full compensation, material-correction denial while output remains, cancellation before stock effects, after issue, and after receipt, mixed correction state transitions, append-only evidence, disabled WMS/module behavior, API/OpenAPI, and list/detail/action UI paths.
+Coverage must prove lifecycle transitions and forbidden transitions, `correction_pending -> released`, immutable multi-level snapshots, direct-occurrence execution boundaries, optional parent-order scope validation, no implicit child-order creation, stale versions, scope isolation, intent cardinality per issue attempt, same-key replay, concurrent identical and incompatible replay, pending-intent reconciliation before every transition, cancellation denial/reclassification across the WMS-commit/local-save crash window, receipt denial before complete issue, replacement-issue and receipt denial during partial issue-attempt compensation, re-issue with new intents after full-attempt compensation, material-correction denial while output remains, output-first cancellation after receipt, cancellation before stock effects, after issue, and after receipt, mixed correction state transitions, append-only evidence, disabled WMS/module behavior, API/OpenAPI, and list/detail/action UI paths.
 
 This child becomes implementation-ready only after the definition-release child is accepted and its own exact model/API/ACL/event/command contracts pass readiness review. Site, routing, Work Centers, generic posting groups, and broader P1.10 behavior are not MVP prerequisites.
 
@@ -89,6 +90,7 @@ The contract preserves tenant/organization isolation, append-only history, optim
 
 ## Changelog
 
+- 2026-09-05: Required pending-intent reconciliation before every lifecycle mutation, added correction-to-released, and ordered completed cancellation output-first.
 - 2026-09-05: Required complete issue before receipt, attempt-scoped issue intents, safe mixed correction ordering, cancellation after receipt, and issue as the sole start transition.
 - 2026-09-05: Clarified MVP-O as an extensible CRUD-first order model rather than a complete production-control state or policy engine.
 - 2026-09-05: Created the proposed single-step order and append-only facts child contract for the end-to-end MVP.
