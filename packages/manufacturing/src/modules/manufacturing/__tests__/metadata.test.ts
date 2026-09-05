@@ -14,8 +14,10 @@ function listSourceFiles(dir: string): string[] {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const entryPath = path.join(dir, entry.name)
     if (entry.isDirectory()) {
-      // Test material is not shipped runtime code: the isolated-profile fixtures
-      // legitimately name peer packages as manifest data rather than importing them.
+      // Test material, excluded from the published bundle by build.mjs. The
+      // Playwright specs deliberately use the core integration helpers and name
+      // peer packages in profile manifests; the guard below protects the runtime
+      // code that actually ships.
       if (entry.name === '__tests__' || entry.name === '__integration__') continue
       files.push(...listSourceFiles(entryPath))
     } else if (/\.tsx?$/.test(entry.name)) {

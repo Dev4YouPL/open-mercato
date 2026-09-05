@@ -12,7 +12,7 @@ import { createCrud, updateCrud } from "@open-mercato/ui/backend/utils/crud"
 import { flash } from "@open-mercato/ui/backend/FlashMessages"
 import { useT } from "@open-mercato/shared/lib/i18n/context"
 import { WorkCenterResourcePicker } from "./WorkCenterResourcePicker"
-import { sortResourceIds } from "./workCenterResourceOptions"
+import { probeResourcesProvider, sortResourceIds } from "./workCenterResourceOptions"
 import { toWorkCenterFormError } from "./workCenterFormErrors"
 import { useWorkCenterPermissions } from "./useWorkCenterPermissions"
 import { extensionPoints } from "../extension-points"
@@ -39,15 +39,50 @@ type WorkCenterFormValues = {
   updatedAt?: string
 }
 
-export function WorkCenterFormClient({ initial }: { initial?: WorkCenterFormInitial }) {
+export function WorkCenterFormClient({
+  initial,
+  onSaved,
+}: {
+  initial?: WorkCenterFormInitial
+  /**
+   * Called after a successful edit so the owner can re-read the record. The
+   * optimistic-lock token lives in `initial`, so without a fresh read a second
+   * save would resubmit the pre-save version and 409 against the user's own
+   * first save.
+   */
+  onSaved?: () => void
+}) {
   const t = useT()
   const router = useRouter()
   const isEdit = Boolean(initial?.id)
   const { canManage, canViewResources, isLoading: permissionsLoading } = useWorkCenterPermissions()
 
-  // Without `resources.view` the picker must not issue a lookup at all, and no
-  // membership change may be offered — the server would reject it anyway.
-  const membershipUnavailable = permissionsLoading || canViewResources ? null : "forbidden"
+  // Two different reasons membership may be uneditable, with two different
+  // messages: the peer module is not deployed at all, or the caller lacks its
+  // `resources.view` grant. A wildcard grant passes the ACL check even when the
+  // module is absent, so the module itself is probed rather than inferred.
+  const [providerAvailable, setProviderAvailable] = React.useState<boolean | null>(null)
+  React.useEffect(() => {
+    if (permissionsLoading || !canViewResources) return
+    const controller = new AbortController()
+    let cancelled = false
+    void (async () => {
+      const available = await probeResourcesProvider(controller.signal)
+      if (!cancelled) setProviderAvailable(available)
+    })()
+    return () => {
+      cancelled = true
+      controller.abort()
+    }
+  }, [canViewResources, permissionsLoading])
+
+  const membershipUnavailable: "provider" | "forbidden" | null = permissionsLoading
+    ? null
+    : !canViewResources
+      ? "forbidden"
+      : providerAvailable === false
+        ? "provider"
+        : null
   const scopeKey = initial?.id ?? "create"
   const storedResourceIds = React.useMemo(() => sortResourceIds(initial?.resourceIds ?? []), [initial?.resourceIds])
 
@@ -172,7 +207,7 @@ export function WorkCenterFormClient({ initial }: { initial?: WorkCenterFormInit
               ...(membershipChanged ? { resourceIds: nextResourceIds } : {}),
             })
             flash(t("manufacturing.workCenters.detail.success", "Work centre saved"), "success")
-            router.refresh()
+            onSaved?.()
             return
           }
           const { result } = await createCrud<{ id: string }>("manufacturing/work-centers", {

@@ -113,6 +113,16 @@ describe('Work Centre response mapping', () => {
     expect(hook.match(/loadMembershipByWorkCenter/g)).toHaveLength(1)
   })
 
+  it('scopes membership by the organization set the parent query used', () => {
+    // Regression: pinning a single selected organization blanked every row's
+    // membership in all-organizations mode, where `selectedId`/`orgId` are null.
+    const hook = source.slice(source.indexOf('afterList: async'), source.indexOf('actions: {'))
+    expect(hook).toContain('organizationIds')
+    expect(hook).toContain('{ tenantId, organizationIds }')
+    // It must never substitute an empty membership set as a fallback.
+    expect(hook).not.toContain('item.resourceIds = []')
+  })
+
   it('never drops updatedAt from the public contract', () => {
     expect(source).toContain('updatedAt: item.updated_at')
   })

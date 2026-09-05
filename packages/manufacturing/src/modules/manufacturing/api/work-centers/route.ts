@@ -149,17 +149,18 @@ const crud = makeCrudRoute({
       if (workCenterIds.length === 0) return
 
       const tenantId = ctx.organizationScope?.tenantId ?? ctx.auth?.tenantId ?? null
-      const organizationId = ctx.selectedOrganizationId ?? ctx.organizationScope?.selectedId ?? ctx.auth?.orgId ?? null
-      if (!tenantId || !organizationId) {
-        for (const item of items) {
-          item.resourceIds = []
-          item.resourceCount = 0
-        }
-        return
-      }
+      if (!tenantId) return
+      // Follow the parent query's organization narrowing instead of a single
+      // selected id: in all-organizations mode `selectedId`/`orgId` are null and
+      // the page may span organizations, so pinning one would report every row
+      // as unassigned.
+      const selectedOrganizationId = ctx.selectedOrganizationId ?? ctx.organizationScope?.selectedId ?? ctx.auth?.orgId ?? null
+      const organizationIds = ctx.organizationIds
+        ?? ctx.organizationScope?.filterIds
+        ?? (selectedOrganizationId ? [selectedOrganizationId] : null)
 
       const em = (ctx.container.resolve('em') as EntityManager).fork()
-      const membership = await loadMembershipByWorkCenter(em, { tenantId, organizationId }, workCenterIds)
+      const membership = await loadMembershipByWorkCenter(em, { tenantId, organizationIds }, workCenterIds)
       for (const item of items) {
         const id = typeof item.id === 'string' ? item.id : null
         const resourceIds = id ? (membership.get(id) ?? []) : []

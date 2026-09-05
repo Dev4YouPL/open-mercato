@@ -22,6 +22,9 @@ export function WorkCenterDetailClient({ workCenterId }: { workCenterId: string 
   const t = useT()
   const [record, setRecord] = React.useState<WorkCenterFormInitial | null>(null)
   const [status, setStatus] = React.useState<"loading" | "ready" | "missing" | "error">("loading")
+  // Bumped after every successful save so the record — and with it the
+  // optimistic-lock token the form submits — is re-read from the server.
+  const [reloadToken, setReloadToken] = React.useState(0)
 
   React.useEffect(() => {
     const controller = new AbortController()
@@ -53,7 +56,7 @@ export function WorkCenterDetailClient({ workCenterId }: { workCenterId: string 
       cancelled = true
       controller.abort()
     }
-  }, [workCenterId])
+  }, [reloadToken, workCenterId])
 
   if (status === "loading") {
     return <LoadingMessage label={t("manufacturing.workCenters.detail.loading", "Loading work centre...")} />
@@ -82,7 +85,7 @@ export function WorkCenterDetailClient({ workCenterId }: { workCenterId: string 
     )
   }
 
-  return <WorkCenterFormClient initial={record} />
+  return <WorkCenterFormClient initial={record} onSaved={() => setReloadToken((token) => token + 1)} />
 }
 
 export default WorkCenterDetailClient

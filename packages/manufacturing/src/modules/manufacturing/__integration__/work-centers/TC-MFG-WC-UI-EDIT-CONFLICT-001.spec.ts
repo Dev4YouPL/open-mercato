@@ -58,6 +58,51 @@ test.describe('TC-MFG-WC-UI-EDIT-CONFLICT-001: stale edit form', () => {
     }
   })
 
+  test('allows two consecutive saves without a self-inflicted conflict', async ({ page, request }) => {
+    const token = await adminToken(request)
+    let id: string | null = null
+
+    /** Submits the form and resolves once the PUT has actually completed. */
+    const save = async () => {
+      const response = page.waitForResponse(
+        (candidate) =>
+          candidate.url().includes('/api/manufacturing/work-centers') && candidate.request().method() === 'PUT',
+        { timeout: 20000 },
+      )
+      await page.getByRole('button', { name: /^(save|zapisz)$/i }).first().click()
+      return response
+    }
+
+    try {
+      id = (await createWorkCenter(request, token, { code: uniqueCode('WC-TWOSAVE'), name: 'First' })).id
+
+      await login(page, 'admin')
+      await page.goto(`${LIST_URL}/${id}`)
+      await expect(formField(page, NAME_FIELD)).toHaveValue('First', { timeout: 20000 })
+
+      await formField(page, NAME_FIELD).fill('Second')
+      expect((await save()).status()).toBe(200)
+
+      // The save triggers a re-read that replaces the form values; wait for it
+      // to land before typing again, or the next keystrokes are discarded.
+      await expect(formField(page, NAME_FIELD)).toHaveValue('Second', { timeout: 20000 })
+
+      // The form must now hold the version its own save produced. Without the
+      // re-read this second submit resubmits the stale token and 409s against
+      // the user's own first save.
+      await formField(page, NAME_FIELD).fill('Third')
+      await expect(formField(page, NAME_FIELD)).toHaveValue('Third')
+      expect((await save()).status(), 'a second save must not conflict with the first').toBe(200)
+
+      await expect(page.getByText(/changed since|record changed|zmieni/i)).toHaveCount(0)
+      await expect
+        .poll(async () => (await readWorkCenter(request, token, id as string))?.name, { timeout: 20000 })
+        .toBe('Third')
+    } finally {
+      await cleanupWorkCenter(request, token, id)
+    }
+  })
+
   test('lets a deliberate retry against the refreshed version succeed', async ({ page, request }) => {
     const token = await adminToken(request)
     const code = uniqueCode('WC-EDITCONF2')

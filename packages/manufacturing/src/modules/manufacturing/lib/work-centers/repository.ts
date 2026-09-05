@@ -136,21 +136,44 @@ export async function syncMembership(
 }
 
 /**
+ * Read scope for the batched membership lookup.
+ *
+ * `organizationIds` mirrors the organization set the parent list query ran
+ * under. It is `null` in all-organizations mode, where the parent rows may span
+ * several organizations and no single id applies.
+ */
+export type MembershipReadScope = {
+  tenantId: string
+  organizationIds: string[] | null
+}
+
+/**
  * One scoped batch query that groups sorted membership by parent id. Used by
  * the CRUD `afterList` hook so a page of Work Centres costs exactly one
  * membership query regardless of row count.
+ *
+ * Organization narrowing follows the parent query rather than a single selected
+ * id: in all-organizations mode a page legitimately spans organizations, and
+ * pinning one id there would report every row as having no members. Tenant
+ * scope is always applied, and the parent ids are themselves already
+ * scope-filtered, so a membership row can only belong to a parent the caller
+ * was allowed to see.
  */
 export async function loadMembershipByWorkCenter(
   em: EntityManager,
-  scope: WorkCenterScope,
+  scope: MembershipReadScope,
   workCenterIds: readonly string[],
 ): Promise<Map<string, string[]>> {
   const grouped = new Map<string, string[]>()
   if (workCenterIds.length === 0) return grouped
-  const rows = await em.find(ManufacturingWorkCenterResource, {
+  const where: Record<string, unknown> = {
     workCenter: { $in: [...workCenterIds] },
-    ...scope,
-  } as never)
+    tenantId: scope.tenantId,
+  }
+  if (scope.organizationIds && scope.organizationIds.length > 0) {
+    where.organizationId = { $in: scope.organizationIds }
+  }
+  const rows = await em.find(ManufacturingWorkCenterResource, where as never)
   for (const row of rows) {
     const parentId = (row.workCenter as unknown as { id: string })?.id ?? String(row.workCenter)
     const list = grouped.get(parentId) ?? []

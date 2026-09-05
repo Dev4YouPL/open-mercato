@@ -111,3 +111,21 @@ export function mergeResourceOptions(
 export function sortResourceIds(ids: readonly string[]): string[] {
   return Array.from(new Set(ids.filter((id) => id.length > 0))).sort()
 }
+
+/**
+ * Probes whether the optional resources module is deployed at all.
+ *
+ * `resources.view` being granted is not the same as the module being enabled: a
+ * wildcard grant satisfies the ACL check while the route itself is absent. Only
+ * a 404 means "not deployed" — a transient error or a network failure leaves
+ * the picker on its retry path, because a failed search is not an absent
+ * module and must not silently disable membership editing.
+ */
+export async function probeResourcesProvider(signal?: AbortSignal): Promise<boolean> {
+  try {
+    const response = await apiCall(`/api/resources/resources?page=1&pageSize=1`, { signal })
+    return response.status !== 404
+  } catch {
+    return true
+  }
+}
