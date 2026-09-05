@@ -10,6 +10,8 @@ This proposed child specification narrows P1.9 and P1.10 to a single-step produc
 
 MVP-O owns production intent and durable Manufacturing evidence without performing physical inventory writes itself. It is independently mergeable behind the opt-in module after MVP-D is accepted.
 
+This child is an extensible CRUD-first order model with the smallest state and evidence surface required by one manual production flow. It is not a complete production-control domain model. New order types, operations, partials, policies, genealogy, and automated orchestration remain additive follow-on decisions driven by observed usage.
+
 ## Problem Statement
 
 The broad P1.9/P1.10 model includes routing, partial confirmation, scrap, and Site-aware behavior. The narrow MVP needs a smaller lifecycle whose terminal states remain consistent with compensating stock evidence.
@@ -17,6 +19,8 @@ The broad P1.9/P1.10 model includes routing, partial confirmation, scrap, and Si
 ## Proposed Solution
 
 Define one single-step order aggregate plus append-only intents and facts. The order retains the full multi-level definition snapshot for traceability and gross-requirement visibility but executes only the direct occurrences of its top-level revision. Physical writes remain delegated to MVP-X through a typed port.
+
+The first release validates only rules needed to keep the supported happy path understandable and inventory-safe. It must not anticipate every legal transition or production exception with a configurable state machine; unsupported actions fail clearly and remain candidates for later product learning.
 
 ## Scope
 
@@ -84,5 +88,6 @@ The contract preserves tenant/organization isolation, append-only history, optim
 
 ## Changelog
 
+- 2026-09-05: Clarified MVP-O as an extensible CRUD-first order model rather than a complete production-control state or policy engine.
 - 2026-09-05: Created the proposed single-step order and append-only facts child contract for the end-to-end MVP.
 - 2026-09-05: Added full multi-level execution snapshots and optional explicit parent-order references while retaining direct-occurrence execution per order.

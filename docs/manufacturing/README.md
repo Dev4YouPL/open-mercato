@@ -74,21 +74,25 @@ Parallel foundation work
     P1.4f revision comparison/where-used, P1.4g copy, P1.4h extensibility/document control
   P1.5 optional sequential routing drafts, P1.6 work-centre boundary
 
-Foundation contracts
-  External WMS Site contract + Catalog quantity/UoM contract for release data + P1.4a + P1.5 + P1.6 → P1.7 released definitions
-  P1.0a → P1.9 Manufacturing fact ledger
-First shippable production flow
-  External WMS Site contract + Catalog quantity/UoM contract for order data + P1.7 + P1.9 → P1.10 lifecycle + execution snapshot + basic confirmations
-  External provider-neutral WMS posting contract + P1.9 + P1.10 → P1.8b Manufacturing inventory adapter
-  External WMS quantity/evidence/posting contracts + P1.8b + P1.10 → P1.11 stock-affecting execution
+Proposed first-release MVP
+  P1.0a → MVP-D: restricted P1.4a/P1.4b definition CRUD and preview + restricted P1.7 release
+  MVP-D → MVP-O order CRUD, immutable execution snapshot and minimum facts
+  MVP-O + narrow guarded WMS posting port → MVP-X manual issue, receipt and correction
+
+Broader post-MVP foundation path
+  External WMS Site contract + Catalog quantity/UoM contract for release data + P1.4a + P1.5 + P1.6 → broad P1.7
+  P1.0a → broad P1.9 Manufacturing fact ledger
+  External WMS Site/Catalog/WMS posting foundations + P1.7 + P1.9 → broad P1.10/P1.8b/P1.11 execution
 
 Later capability
   P1.13 configurable order/batch/lot/serial number ranges and offline allocation
 ```
 
-The first staged increment is the P1.0a package/module bootstrap, alongside the P1.4a BOM lane, the P1.6 Work Center boundary, and then P1.5 routing/operation drafts. P1.4a consumes Catalog only through its public quantity/UoM contract, which gates its quantity-bearing write paths rather than the wider Manufacturing programme; P1.5 follows P1.6. P1.10 and P1.11 are not implementation work to start now. The WMS Site capability is tracked and delivered by WMS; Manufacturing consumes its public contract only when release and order flows need a site.
+The active proposed sequence is P1.0a, then MVP-D, MVP-O, and MVP-X. MVP-D itself contains the restricted P1.4a/P1.4b authoring/preview profile and restricted P1.7 release boundary; they are not separate increments after MVP-D. The sequence delivers extensible CRUD records and one manually controlled stock-affecting workflow without attempting to implement the full manufacturing domain before product validation. The broad P1.5/P1.6/P1.7/P1.8b/P1.9/P1.10/P1.11 path remains post-MVP guidance and must not be mistaken for the first-release critical path. The WMS Site capability remains WMS-owned and is required only when later site-aware flows are selected.
 
-## Mandatory BOM rules
+## Broader roadmap BOM rules
+
+The rules below describe the accepted long-term Wave 0 architecture. The CRUD-first MVP implements only the restricted subset named by MVP-D and must not pull routing, Site, backflush, partial execution, effectivity, or generalized policy handling onto the first-release critical path.
 
 - A BOM is a multi-level, acyclic occurrence tree. A component may be a raw material or an assembly with its own applicable BOM.
 - The same product or variant may appear more than once in one BOM. Each use is a separate BOM line with its own stable identity and position; it must remain distinct through release, explosion, UI, execution snapshots, and posting correlation.
@@ -104,7 +108,7 @@ The first staged increment is the P1.0a package/module bootstrap, alongside the 
 - Reversal copies and negates the exact persisted posting; it never recalculates from current definitions or Catalog policy.
 - Alternatives, substitutes, phantom flattening, and unit/serial effectivity are not first-core behaviour. They require their own specifications and must extend, rather than replace, the occurrence-preserving model.
 
-## First-core simplifications
+## Broader Wave 0 simplifications
 
 - Routing is optional and, when present, is one sequential path with basic setup/run time and work-centre/resource references. Calendars, parallel/alternate routings, overlap, setup matrices, and finite scheduling are later capabilities.
 - The first WMS implementation uses a generic atomic posting-group command. `manufacturing` calculates the concrete physical lines, including cumulative backflush; WMS validates and records them without Manufacturing-specific enums. Durable saga support is reserved for external WMS providers.

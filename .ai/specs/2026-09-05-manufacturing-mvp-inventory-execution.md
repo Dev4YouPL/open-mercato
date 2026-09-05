@@ -10,6 +10,8 @@ This proposed child specification narrows P1.8b and P1.11 to guarded material is
 
 MVP-X is the only physical-stock integration used by the narrow MVP. It is independently reviewable, but public MVP release waits for the composed MVP-D/MVP-O/MVP-X scenario.
 
+The port is a safety seam for one manual workflow, not a generalized manufacturing-posting platform. It protects scope, guards, idempotency, and recoverability while deliberately avoiding a policy engine for partials, backflush, lots/serials, routing, automatic child orders, or provider-neutral posting groups.
+
 ## Problem Statement
 
 Calling internal WMS commands directly would create an untyped runtime dependency, bypass route-owned mutation guards, and misclassify normal production as manual adjustment. Building the full generic posting-group platform first would delay validation.
@@ -17,6 +19,8 @@ Calling internal WMS commands directly would create an untyped runtime dependenc
 ## Proposed Solution
 
 Add one narrow WMS-owned typed and guarded posting port over existing inventory commands. Manufacturing owns orchestration and compensation; WMS retains physical posting authority.
+
+The implementation should expose only the operations required by the accepted walkthrough. Extensibility comes from additive typed contracts and persisted references, not from preconfiguring future posting variants before demand is observed.
 
 ## Typed WMS posting port
 
@@ -81,4 +85,5 @@ The proposed port preserves WMS ownership, guard execution, tenant/organization 
 
 ## Changelog
 
+- 2026-09-05: Clarified MVP-X as the minimum inventory-safety seam for one manual workflow, without generalized posting or production-policy options.
 - 2026-09-05: Created the proposed guarded WMS execution and compensation child contract for the end-to-end MVP.

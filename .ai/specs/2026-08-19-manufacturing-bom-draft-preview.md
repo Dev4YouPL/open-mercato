@@ -1,6 +1,6 @@
 # Manufacturing Bounded Multi-level BOM Draft Preview
 
-> **Post-MVP priority (2026-09-05):** P1.4b remains an approved read capability, but it is not on the active [`Manufacturing End-to-End MVP`](2026-09-05-manufacturing-end-to-end-mvp.md) critical path. Preserve this specification for the next stage; do not delay definition release, single-step orders, explicit material issue, output receipt, or compensating correction to deliver preview first.
+> **MVP alignment (2026-09-05):** the restricted bounded preview is part of MVP-D because the first user must be able to inspect the structure being released. Implement only the existing bounded tree needed by the manual MVP walkthrough; broader BOM workspace, comparison, where-used, collaboration, and document-control capabilities remain post-MVP.
 
 ## TLDR
 
@@ -632,7 +632,7 @@ Implementation remains gated by P1.0, P1.0a, the Catalog quantity/UoM contract, 
 
 ## Changelog
 
-- 2026-09-05: Moved P1.4b behind the end-to-end MVP while preserving it as follow-on work.
+- 2026-09-05: Aligned the restricted bounded preview with MVP-D while keeping broader BOM workspace capabilities post-MVP.
 
 - 2026-08-19: Created P1.4b after the combined P1.4 fresh-context review returned **SPLIT** and the roadmap owner accepted the authoring/preview boundary.
 - 2026-08-19: Defined draft-only resolution, occurrence identity, exact variable/fixed/yield calculation, repeatable-read consistency, all-or-error limits, API/UI, and evidence gates.

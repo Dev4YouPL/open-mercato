@@ -7,7 +7,7 @@
 
 ## How to read this document
 
-- **MVP is a narrower vertical slice through Wave 0**, proposed by the [end-to-end MVP](../../.ai/specs/2026-09-05-manufacturing-end-to-end-mvp.md) and pending linked maintainer acceptance.
+- **MVP is a narrower CRUD-first vertical slice through Wave 0**, proposed by the [end-to-end MVP](../../.ai/specs/2026-09-05-manufacturing-end-to-end-mvp.md) and pending linked maintainer acceptance. It provides extensible BOM/order records and one manually controlled happy path rather than a complete manufacturing policy engine.
 - The MVP changes Manufacturing plus one additive typed and guarded WMS posting port. The remaining Wave 0 workstreams keep their boundaries as follow-on options.
 - Post-MVP priority is deliberately undecided. Maintainers choose it from real workflow blockers, repeat usage, partner/customer demand, business impact, delivery cost, and compatibility risk; wave or P1 numbering does not decide implementation order.
 - Waves 1–4 are a proposed business grouping of later capabilities already present in the product roadmap. The grouping is not yet a normative delivery order.
@@ -18,7 +18,7 @@
 
 | Wave | Business objective | Main capabilities | User outcome | Current standing |
 |---|---|---|---|---|
-| **MVP** | Prove one production transaction end to end with minimal shared change | Bounded multi-level BOM and preview; immutable occurrence snapshot; direct-occurrence single-step order; typed guarded WMS posting port; full material issue; full output receipt; idempotent retry, facts and compensating correction | Define a product tree, release an order, consume its direct components, receive output and recover from an error | Proposed first-release focus; maintainer review pending |
+| **MVP** | Prove one production transaction end to end with minimal shared change | Extensible CRUD-first BOM/order records; bounded multi-level preview; immutable occurrence snapshot; direct-occurrence single-step order; typed guarded WMS posting port; full material issue; full output receipt; idempotent retry, facts and compensating correction | Define a product tree, release an order, consume its direct components, receive output and recover from an error | Proposed first-release focus; maintainer review pending |
 | **Wave 0 follow-on** | Complete the broader discrete core and platform foundations | Site roles; UoM/precision/evidence improvements; atomic posting groups; automatic child-order/multi-level execution; partials, returns, backflush, scrap; routing and Work Centers | Expand the MVP without changing its core ownership boundaries | Accepted architecture and decomposed backlog; not the first-release critical path |
 | **Wave 1 — material planning** | Reduce manual planning and material shortages | MRP, netting, pegging, proposals, explicit reservation requests, automatic child orders, planning exceptions, advanced numbering and a basic traceability view | See what must be made, bought or transferred and detect shortages earlier | Proposed grouping; capabilities exist in the roadmap, but wave scope and placement are not approved |
 | **Wave 2 — shop floor and optimization** | Improve throughput and reduce downtime | Finite scheduling, calendars, shop-floor execution, MES/data collection, scanning, edge/offline support, OEE, advanced genealogy, tooling and workforce constraints | Sequence work, capture trustworthy floor data and react to resource constraints | Proposed grouping; each capability requires its own specification and validation |

@@ -12,6 +12,8 @@ The current Wave 0 architecture correctly describes the contracts required for a
 
 The MVP therefore takes a thin vertical slice through the existing P1 workstreams. It does not replace their ownership boundaries or detailed designs. It selects the smallest subset that lets an operator convert physical input stock into finished-goods stock through an auditable production order.
 
+This is deliberately a **CRUD-first product slice**, not a complete manufacturing domain engine. The first release establishes understandable, extensible BOM and production-order records plus one manually driven stock-affecting happy path. It protects tenancy, authorization, concurrency, inventory integrity, and duplicate posting because those concerns are expensive to repair after adoption, but it does not attempt to encode every valid production policy or operational exception before users validate the workflow.
+
 ## Problem Statement
 
 A BOM-only release cannot answer whether Open Mercato can execute production. Conversely, the complete Wave 0 backlog includes several independently valuable capabilities that are not required to prove the first production transaction. Treating all of them as one MVP combines authoring, engineering control, shop-floor modelling, production accounting, and advanced stock orchestration into a release too broad for early OSS validation.
@@ -37,13 +39,21 @@ This is not a claim that Site, exact UoM normalization, atomic posting groups, r
 
 Small and medium discrete-production teams can obtain useful value from Open Mercato when they can define a product structure, release a simple production order, consume real component stock, receive finished stock, and recover from an operational error in one understandable workflow.
 
+The primary job is to replace the disconnected spreadsheet-or-memory workflow in which a team keeps its BOM outside Open Mercato and then enters unrelated manual WMS adjustments after production. The expected improvement is one traceable record connecting what the team intended to make with the component and finished-stock movements it posted, reducing duplicate entry and making a posting mistake recoverable by the operator who made it.
+
+### First user profile
+
+The first intended user is a small or medium assembly-oriented team that already manages products and stock in Open Mercato, produces a discrete finished variant from stocked component variants, and can operate with one manually controlled production step. Its product structure includes at least one stocked subassembly reused by a parent product, so the team needs to inspect and freeze a bounded multi-level definition even though each order executes only one level. The team chooses existing warehouses and locations, issues all required direct materials explicitly, receives the full planned output, and does not require routing, Work Centers, scheduling, lots/serials, partial confirmations, automatic subassembly orders, costing, or regulatory genealogy for this first workflow.
+
 ### What the MVP must prove
 
 - A user can complete the flow without maintaining routing, Work Centers, planning, or advanced manufacturing master data.
 - Existing Catalog and WMS capabilities are sufficient for a deliberately restricted first operating profile.
 - The BOM-to-order snapshot is understandable and trusted when master data later changes.
+- A user can inspect a parent product and stocked subassembly in one bounded tree without requiring automatic child-order execution.
 - Inventory effects are visible, repeatable without duplication, and operationally recoverable despite the current per-command WMS boundary.
 - The module produces enough value that users return to create and execute additional orders rather than treating it as a one-time demo.
+- Pilot users report less spreadsheet/manual-adjustment duplication and can identify the production order behind each tested stock movement.
 
 ### What the MVP is not trying to prove
 
@@ -51,6 +61,29 @@ Small and medium discrete-production teams can obtain useful value from Open Mer
 - full engineering change control, production planning, capacity optimization, shop-floor automation, quality, costing, or genealogy;
 - that current Catalog/WMS limitations are the correct final platform contracts;
 - the final priority or packaging of the remaining Wave 0 capabilities.
+- exhaustive domain validation for production models and policies outside the declared first-user profile.
+
+### Product-learning decision criteria
+
+The MVP is successful enough to justify another Manufacturing increment when evidence shows all of the following during the agreed validation cohort or pilot period:
+
+- at least three independent organizations complete the end-to-end scenario without a custom Manufacturing code fork;
+- at least two organizations create and complete a second production order after their first successful order;
+- at least 80% of validation orders that reach `in_progress` are completed through the supported UI during the pre-recorded pilot period, excluding only orders deliberately created as error fixtures;
+- every deliberately exercised duplicate-call, posting-failure, and correction scenario is recoverable through the supported UI without database or custom-code intervention; and
+- maintainers can identify the next investment from repeated observed blockers or requests rather than from roadmap numbering alone.
+
+These are product-learning thresholds, not a public service-level objective or a permanent product KPI. Before release validation starts, maintainers may record a different cohort size or period, but they must not retrospectively redefine success after seeing the result.
+
+### Delivery classification
+
+| Class | Included in the first release | Rationale |
+|---|---|---|
+| User-visible pilot minimum | BOM and order CRUD, bounded tree inspection, release, manual full issue, manual full receipt, evidence view, and operator-triggered correction | This is the smallest flow that replaces the spreadsheet plus unrelated WMS-adjustment workaround. |
+| Day-one integrity floor | Tenant/organization scope, ACL, optimistic locking, WMS mutation guards, stable action idempotency, persisted posting references, retry of only missing issue lines, and reconciliation of the WMS-commit/local-save crash window | A pilot that can silently duplicate or orphan real stock movements cannot produce trustworthy business learning. These are stock-integrity safeguards, not broader manufacturing-domain modelling. |
+| Post-MVP reliability and policy | Automatic background retry, scheduled reconciliation, alerts, generic sagas/posting groups, configurable transition policy, partial production, and every deferred production option listed below | These improve scale or operating breadth but are not required for the manually supervised pilot. |
+
+The day-one integrity floor stays mandatory because the walkthrough changes real inventory. It must be implemented narrowly for issue, receipt, and correction only; it is not permission to build a reusable workflow, policy, or reliability platform.
 
 ## Expected Business Outcome
 
@@ -70,6 +103,8 @@ Deliver one single-step production flow over existing Catalog and WMS behavior, 
 
 The MVP is one product outcome even though implementation crosses several module-owned contracts. BOM authoring supplies the order definition, the order supplies production intent, and WMS postings supply the physical result. Intermediate work may merge behind disabled or incomplete capability boundaries, but the OSS Manufacturing MVP is announced only after the complete acceptance scenario passes.
 
+The implementation bias is intentionally simple: use conventional CRUD resources for editable master and order data, keep the first state model small, and add action commands only where a stock effect or immutable release boundary requires one. Models and APIs should remain additively extensible, but the MVP must not pre-build generalized policy engines, configurable transition frameworks, routing abstractions, automatic orchestration, or option matrices for deferred production modes.
+
 ### Design decisions
 
 | Decision | MVP rule | Why |
@@ -81,6 +116,7 @@ The MVP is one product outcome even though implementation crosses several module
 | Inventory model | Additive typed WMS posting port implemented over current inventory commands | Reuses working WMS behavior while preserving WMS guards, production semantics, and compile-time contract checks. |
 | Correction model | Correlated compensating movements through the same typed WMS port | Enables operational recovery without requiring a generic atomic posting-group or reversal framework. |
 | Delivery model | Existing P1 workstreams provide profiled inputs | Preserves reviewed ownership and avoids a competing architecture. |
+| Domain depth | Extensible CRUD plus one explicit manual workflow | Validates usefulness before encoding broader production policy. |
 
 ### Alternatives considered
 
@@ -132,6 +168,19 @@ P1.1, P1.2, P1.3a-c, and P1.8a do not block this MVP. This MVP baseline explicit
 - import/export, search, saved views, bulk actions, analytics, approvals, and segregation-of-duties policy.
 
 Existing code or reviewed contracts for a deferred capability are preserved. They must not expand the MVP acceptance gate, UI promise, or implementation critical path.
+
+### Deliberate operating constraints
+
+The following constraints are part of the MVP offer, not defects to hide with speculative domain logic:
+
+- one production order represents one manually controlled production step;
+- the operator issues the complete direct material set and receives the complete planned output;
+- subassemblies are consumed as stocked variants; producing them requires a separate manually created order;
+- no partial production, automatic child-order network, routing, capacity, lot/serial, scrap, backflush, substitution, or cross-unit conversion is inferred;
+- the operator selects valid existing warehouses and locations and controls when each action is invoked; and
+- unsupported cases fail with a clear boundary message rather than activating a generalized policy or configuration mechanism.
+
+Only invariants required to prevent cross-scope access, stale overwrites, duplicate stock postings, or unrecoverable inventory corruption are first-release blockers. Richer business-policy validation is deferred until real usage demonstrates which rule is needed.
 
 ## Architecture
 
@@ -257,6 +306,14 @@ The MVP is implemented as testable internal increments but released as one outco
 
 ## Acceptance Scenario
 
+### Business walkthrough
+
+An operator creates a BOM for finished variant X, reviews its component tree, releases it, creates an order for five units, issues the direct stocked components, receives five units of X, and can see both the production record and resulting WMS movements. Repeating an already accepted action does not duplicate stock. If the operator posts the wrong issue or receipt, the UI provides a visible compensating action without database intervention.
+
+The scenario is accepted from the user's perspective only when the operator can complete it through the supported UI using ordinary business labels and without understanding intent UUIDs, command names, movement internals, or the wider Wave 0 architecture.
+
+### Technical evidence fixture
+
 Given eligible WMS stock of `5` units of stocked subassembly S and `20` units of component B:
 
 1. The user creates and releases a child BOM stating that `1` subassembly S requires `2` units of component A, then creates a parent BOM stating that `1` output variant X requires `1` `produce` occurrence of S and `2` units of variant B, all in the current WMS inventory units.
@@ -312,6 +369,8 @@ Before starting the next capability, maintainers review:
 - whether current Catalog/WMS limitations caused real failures or only theoretical constraints;
 - adoption signals such as activated installations, repeated orders, completion rate, support requests, and contributor/partner demand;
 - implementation cost, migration risk, cross-module blast radius, and compatibility impact.
+
+The review also records the product-learning thresholds above: number of independent organizations completing the flow, repeat-order usage, completion/recovery rate, and whether database or custom-code intervention was required. Missing a threshold does not automatically cancel Manufacturing, but it prevents the roadmap from treating the MVP hypothesis as validated without an explicit maintainer decision.
 
 The next capability is chosen by demonstrated business impact and risk reduction. For example:
 
@@ -422,7 +481,7 @@ If evidence is weak or contradictory, the team runs a smaller discovery experime
 | Check | Status | Notes |
 |---|---|---|
 | Outcome matches included P1 profiles | Pass | Every included profile supports the acceptance scenario. |
-| Deferred scope is off the critical path | Pass | Routing, Work Centers, preview, partial/backflush/scrap, and usability extensions are excluded. |
+| Deferred scope is off the critical path | Pass | The bounded preview is included in MVP-D; routing, Work Centers, broader BOM usability, partial/backflush/scrap, and generalized policy extensions are excluded. |
 | Ownership matches the roadmap | Pass | Manufacturing owns intent/facts; WMS owns stock; Catalog owns identity/UoM. |
 | Risks cover stock writes | Pass | Idempotency, partial-failure state, retry, compensation, scope, and current precision limits are mandatory. |
 | Compatibility with detailed specs | Pass | Existing IDs/specs remain; the MVP selects profiles rather than replacing contracts. |
@@ -447,6 +506,7 @@ Implementation remains split into cohesive specifications for [multi-level BOM/r
 
 ## Changelog
 
+- 2026-09-05: Clarified the business-first strategy as extensible CRUD plus one manual stock-affecting happy path, defined the first user profile and product-learning thresholds, and made broader domain-policy validation explicitly post-MVP.
 - 2026-09-05: Created the active end-to-end OSS MVP boundary after product-scope review concluded that BOM-only delivery was not a usable Manufacturing module and full Wave 0 was too broad for the first release.
 - 2026-09-05: Added the business hypothesis, learning goals, expected outcomes, and evidence-based post-MVP decision gate; clarified that the earlier Wave 0 analysis is a long-term option map rather than a committed delivery sequence.
 - 2026-09-05: Kept bounded multi-level BOM authoring, preview and immutable occurrence snapshots in MVP while limiting each production order to direct-occurrence execution. Subassemblies use separately created, optionally parent-linked orders; automatic order networks, MRP and phantom/direct-issue behavior remain deferred.

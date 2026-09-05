@@ -1,6 +1,6 @@
 # Manufacturing Phase 1 / Wave 0 Execution Plan
 
-> **Delivery priority changed (2026-09-05):** the active first release is the narrower [`Manufacturing End-to-End MVP`](2026-09-05-manufacturing-end-to-end-mvp.md). This plan and all P1 decompositions remain valid, but work outside the MVP profiles is a subsequent stage and must not expand the first-release critical path.
+> **Delivery priority changed (2026-09-05):** the active first release is the narrower CRUD-first [`Manufacturing End-to-End MVP`](2026-09-05-manufacturing-end-to-end-mvp.md): extensible BOM/order records and one manually controlled stock-affecting flow. This plan and all P1 decompositions remain valid, but broader domain validation and work outside the MVP profiles are subsequent stages and must not expand the first-release critical path.
 
 > The purpose is to validate business value through a complete stock-affecting production flow before investing in broad foundations. After MVP evidence is reviewed, this plan is a menu of dependency-aware next steps rather than an automatic implementation sequence.
 

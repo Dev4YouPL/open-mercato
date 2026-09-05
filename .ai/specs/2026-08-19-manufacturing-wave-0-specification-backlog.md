@@ -1,6 +1,6 @@
 # Manufacturing Wave 0 Specification Backlog
 
-> **Backlog role changed (2026-09-05):** [`Manufacturing End-to-End MVP`](2026-09-05-manufacturing-end-to-end-mvp.md) defines the proposed first-release scope, pending linked maintainer acceptance. It uses P1.0a, P1.4a-P1.4b, and restricted profiles of P1.7/P1.8b/P1.9-P1.12 plus one additive typed WMS posting port. P1.1-P1.3, P1.4c-h, P1.5-P1.6, P1.8a, and their broader cross-module work remain follow-on options.
+> **Backlog role changed (2026-09-05):** [`Manufacturing End-to-End MVP`](2026-09-05-manufacturing-end-to-end-mvp.md) defines the proposed CRUD-first release scope, pending linked maintainer acceptance. It uses P1.0a, P1.4a-P1.4b, and restricted profiles of P1.7/P1.8b/P1.9-P1.12 plus one additive typed WMS posting port to deliver extensible records and one manual happy path. P1.1-P1.3, P1.4c-h, P1.5-P1.6, P1.8a, generalized production-policy validation, and their broader cross-module work remain follow-on options.
 
 > Backlog order is not post-MVP priority. Once the MVP is in use, maintainers select the next capability from observed blockers, workarounds, adoption, business impact, and cross-module cost. Detailed specification work begins only after that selection.
 

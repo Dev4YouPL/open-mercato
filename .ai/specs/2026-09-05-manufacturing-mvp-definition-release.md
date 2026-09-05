@@ -10,6 +10,8 @@ This proposed child specification profiles P1.4a, P1.4b, and P1.7 for the defini
 
 MVP-D turns the existing BOM-authoring design into the smallest executable definition boundary. It is independently mergeable behind the opt-in module and produces the immutable input consumed by MVP-O.
 
+This child is CRUD-first. It defines a small, additive family/revision/line model and the minimum release snapshot needed by the manual MVP flow. It must remain sensible to extend later, but it does not model future routing, effectivity, alternatives, substitutions, engineering control, or every possible BOM policy in advance.
+
 ## Problem Statement
 
 The broad P1.7 contract waits for quantity normalization, Site, and routing decisions that the same-unit MVP does not exercise. P1.4a already provides the normalized direct-line graph and P1.4b defines its bounded recursive read. Reusing the full broad readiness gate would block the vertical slice unnecessarily.
@@ -17,6 +19,8 @@ The broad P1.7 contract waits for quantity normalization, Site, and routing deci
 ## Proposed Solution
 
 Adopt the restricted profile below without weakening P1.4a aggregate integrity or changing Catalog. Broader definition behavior remains a separate post-MVP option.
+
+Validation is intentionally limited to the declared operating profile. The implementation rejects data that cannot be posted safely or scoped correctly, but it does not introduce generalized rule engines or speculative option matrices for deferred manufacturing models.
 
 ## Scope
 
@@ -72,5 +76,6 @@ The contract preserves module ownership, scalar cross-module IDs, trusted scope,
 
 ## Changelog
 
+- 2026-09-05: Clarified MVP-D as an extensible CRUD-first definition model with validation limited to the supported manual operating profile.
 - 2026-09-05: Created the proposed direct-BOM and immutable-definition child contract for the end-to-end MVP.
 - 2026-09-05: Expanded the MVP profile to bounded multi-level authoring/preview and deterministic child-revision snapshots while keeping automatic child-order execution out of scope.
