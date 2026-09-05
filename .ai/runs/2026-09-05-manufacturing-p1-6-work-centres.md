@@ -29,30 +29,30 @@ This run-specific user override supersedes the configured develop base and prere
 > Convention: `- [ ]` pending, `- [x]` done. Append ` — <commit sha>` when a step lands. Do not rename step titles.
 
 ### Phase 0: Readiness
-- [ ] 0.1 Verify inherited package, activation, generated registries and explicitly waived acceptance gate.
-- [ ] 0.2 Verify dependencies and standalone package resolution.
-- [ ] 0.3 Verify generated resources entity ID, RBAC and exact query projection.
-- [ ] 0.4 Verify absence of cross-module ORM relationships.
+- [x] 0.1 Verify inherited package, activation, generated registries and explicitly waived acceptance gate. — d80b19486
+- [x] 0.2 Verify dependencies and standalone package resolution. — d80b19486
+- [x] 0.3 Verify generated resources entity ID, RBAC and exact query projection. — d80b19486
+- [x] 0.4 Verify absence of cross-module ORM relationships. — d80b19486
 
 ### Phase 1: Data model
-- [ ] 1.1 Add parent and membership entities, constants and parity tests.
-- [ ] 1.2 Add code uniqueness, scoped membership indexes and parent FK.
-- [ ] 1.3 Generate and review intended migration and snapshot.
+- [x] 1.1 Add parent and membership entities, constants and parity tests. — 2f6f3a8f4
+- [x] 1.2 Add code uniqueness, scoped membership indexes and parent FK. — d80b19486
+- [x] 1.3 Generate and review intended migration and snapshot. — d80b19486
 
 ### Phase 2: Commands and API
-- [ ] 2.1 Add validators and deterministic membership normalization.
-- [ ] 2.2 Add transactional commands, scoped optional resolver, undo/redo and audit tests.
-- [ ] 2.3 Add CRUD route, OpenAPI, indexer, events and batched projections.
-- [ ] 2.4 Add ACL/setup grants, translations and optimistic locking.
+- [x] 2.1 Add validators and deterministic membership normalization. — 2f6f3a8f4
+- [x] 2.2 Add transactional commands, scoped optional resolver, undo/redo and audit tests. — 2f6f3a8f4
+- [x] 2.3 Add CRUD route, OpenAPI, indexer, events and batched projections. — 2f6f3a8f4
+- [x] 2.4 Add ACL/setup grants, translations and optimistic locking. — 2f6f3a8f4
 
 ### Phase 3: Provider and handoff reads
-- [ ] 3.1 Verify optional provider outcomes, authorization and wildcard handling.
-- [ ] 3.2 Verify active scoped read contract and absence of planner/WMS effects.
+- [x] 3.1 Verify optional provider outcomes, authorization and wildcard handling. — d80b19486
+- [x] 3.2 Verify active scoped read contract and absence of planner/WMS effects. — d80b19486
 
 ### Phase 4: User interface
-- [ ] 4.1 Add list/create/detail pages, extension hosts and stable row actions.
-- [ ] 4.2 Add paged resource selector and selected-ID hydration with stale-response protection.
-- [ ] 4.3 Add keyboard, guarded retry, conflicts and required UI integration coverage.
+- [x] 4.1 Add list/create/detail pages, extension hosts and stable row actions. — ae888a5af
+- [x] 4.2 Add paged resource selector and selected-ID hydration with stale-response protection. — ae888a5af
+- [x] 4.3 Add keyboard, guarded retry, conflicts and required UI integration coverage. — ae888a5af
 
 ### Phase 5: Verification and delivery
 - [ ] 5.1 Verify stable read-model contract without implementing snapshots.

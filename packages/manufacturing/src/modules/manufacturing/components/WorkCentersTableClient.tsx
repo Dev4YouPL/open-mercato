@@ -24,6 +24,7 @@ import {
   buildWorkCenterColumns,
   type WorkCenterRow,
 } from "./workCenterTableColumns"
+import { extensionPoints } from "../extension-points"
 
 const PAGE_SIZE = 25
 const MUTATION_CONTEXT_ID = "manufacturing-work-centers-list:delete"
@@ -34,7 +35,16 @@ type ListResponse = {
   totalPages?: number
 }
 
-export function WorkCentersTableClient({ extensionTableId }: { extensionTableId: string }) {
+/**
+ * The declared host id is bound here, in the file `extension-points.ts` names as
+ * this host's source, so the generator can resolve the declaration. The page
+ * still passes it explicitly; the default keeps the island usable on its own.
+ */
+export function WorkCentersTableClient({
+  extensionTableId = extensionPoints.hosts.workCentersTable.tableId,
+}: {
+  extensionTableId?: string
+}) {
   const t = useT()
   const router = useRouter()
   const { confirm, ConfirmDialogElement } = useConfirmDialog()
