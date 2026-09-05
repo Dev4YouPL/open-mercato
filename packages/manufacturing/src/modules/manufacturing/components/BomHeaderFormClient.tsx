@@ -43,7 +43,7 @@ export type BomHeaderFormInitial = {
 
 const PRODUCT_SCOPED_FIELDS = { variant: "variantId", unit: "baseOutputUnitCode" }
 
-export function BomHeaderFormClient({ initial, onSaved }: { initial?: BomHeaderFormInitial; onSaved?: () => void }) {
+export function BomHeaderFormClient({ initial, onSaved, wrapInCard = true }: { initial?: BomHeaderFormInitial; onSaved?: () => void; wrapInCard?: boolean }) {
   const t = useT()
   const router = useRouter()
   const isEdit = Boolean(initial?.bomId)
@@ -155,8 +155,7 @@ export function BomHeaderFormClient({ initial, onSaved }: { initial?: BomHeaderF
     }
   }, [initial])
 
-  return (
-    <div className="rounded-xl border bg-card p-4 sm:p-6">
+  const form = (
       <CrudForm<BomHeaderFormValues>
       // Custom fields are stored against the platform entity id, while the
       // widget spot and replacement handle stay on the published
@@ -210,6 +209,13 @@ export function BomHeaderFormClient({ initial, onSaved }: { initial?: BomHeaderF
         }
       }}
       />
+  )
+
+  if (!wrapInCard) return form
+
+  return (
+    <div className="rounded-xl border bg-card p-4 sm:p-6">
+      {form}
     </div>
   )
 }

@@ -133,14 +133,16 @@ export function BomEditorClient({ bomId }: { bomId: string }) {
           </>
         )}
       />
-      <div className="space-y-4">
-        <BomHeaderFormClient initial={initial} onSaved={reload} />
-        <BomLinesEditor
-          bomId={detail.id}
-          revisionId={detail.activeDraft.id}
-          revisionUpdatedAt={detail.activeDraft.updatedAt}
-          onAggregateChange={reload}
-        />
+      <div className="rounded-xl border bg-card p-4 sm:p-6">
+        <div className="space-y-4">
+          <BomHeaderFormClient initial={initial} onSaved={reload} wrapInCard={false} />
+          <BomLinesEditor
+            bomId={detail.id}
+            revisionId={detail.activeDraft.id}
+            revisionUpdatedAt={detail.activeDraft.updatedAt}
+            onAggregateChange={reload}
+          />
+        </div>
       </div>
     </>
   )
