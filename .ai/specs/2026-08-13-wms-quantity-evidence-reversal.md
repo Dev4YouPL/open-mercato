@@ -222,7 +222,7 @@ Documentation validation uses `git diff --check` and `yarn agents:check-budget`.
 - No cross-module ORM relationship is introduced.
 - No new UI is required beyond existing detail/audit presentation of additive evidence.
 
-**Verdict:** Design complete as WMS-owned non-critical backlog, pending P1.3a/P1.3b and pre-implementation readiness audit; mandatory before stock-affecting production.
+**Verdict:** Design complete as WMS-owned non-critical backlog, pending P1.3a/P1.3b and pre-implementation readiness audit; mandatory before broader generic P1.11 reversal, but not before restricted MVP-X compensation.
 
 ## Changelog
 
@@ -239,4 +239,4 @@ Documentation validation uses `git diff --check` and `yarn agents:check-budget`.
 - **Cache:** Passed; database remains authoritative for remainder.
 - **Commands:** Passed; append-only reversal is fully specified.
 - **Risks:** Passed.
-- **Verdict:** Design complete, pending parent-roadmap acceptance and readiness review; implementation remains gated.
+- **Verdict:** Design complete under the accepted parent roadmap, pending its own readiness review; implementation remains gated.

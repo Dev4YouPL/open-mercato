@@ -239,4 +239,4 @@ Implementation validation includes `yarn generate`, relevant shared/core unit te
 - **Cache:** Passed.
 - **Commands:** Passed; existing Sales writes remain command-driven.
 - **Risks:** Passed.
-- **Verdict:** Design complete, pending parent-roadmap acceptance and readiness review; implementation remains gated.
+- **Verdict:** Design complete under the accepted parent roadmap, pending its own readiness review; implementation remains gated.

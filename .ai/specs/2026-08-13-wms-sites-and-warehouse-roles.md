@@ -587,7 +587,7 @@ The following are separate capabilities, not unfinished work inside P1.2:
 - **Cache**: Passed; Phase 1 explicitly disables list caching.
 - **Commands**: Passed; all mutations, transaction boundaries, optimistic locking, default invariants, and undo outcomes are defined.
 - **Risks**: Passed; current-only history, stable identity, warehouse eligibility, concurrency, N+1, and deferred numbering are covered.
-- **Verdict**: Design complete, pending parent-roadmap acceptance and pre-implementation readiness evidence.
+- **Verdict**: Design complete under the accepted parent roadmap, pending its own pre-implementation readiness evidence.
 
 ### Review — 2026-08-23
 

@@ -1,6 +1,6 @@
 # Manufacturing Wave 0 Specification Backlog
 
-> **Backlog role changed (2026-09-05):** [`Manufacturing End-to-End MVP`](2026-09-05-manufacturing-end-to-end-mvp.md) defines the active first-release scope. It uses P1.0a, P1.4a, and Manufacturing-owned profiles of P1.7/P1.8b/P1.9-P1.12 over current Catalog/WMS behavior. P1.1-P1.3, P1.4b-h, P1.5-P1.6, P1.8a, and their cross-module refactors remain intact as follow-on backlog.
+> **Backlog role changed (2026-09-05):** [`Manufacturing End-to-End MVP`](2026-09-05-manufacturing-end-to-end-mvp.md) defines the proposed first-release scope, pending linked maintainer acceptance. It uses P1.0a, P1.4a-P1.4b, and restricted profiles of P1.7/P1.8b/P1.9-P1.12 plus one additive typed WMS posting port. P1.1-P1.3, P1.4c-h, P1.5-P1.6, P1.8a, and their broader cross-module work remain follow-on options.
 
 > Backlog order is not post-MVP priority. Once the MVP is in use, maintainers select the next capability from observed blockers, workarounds, adoption, business impact, and cross-module cost. Detailed specification work begins only after that selection.
 
@@ -17,6 +17,18 @@ Every capability specification must follow the accepted parent roadmap before it
 This document is the planning and governance specification for turning Manufacturing Wave 0 into independently reviewable capability specifications and readiness reports. Its status is **accepted as the Wave 0 specification backlog**. The [parent architecture](2026-08-13-manufacturing-product-roadmap.md) is the accepted staged-delivery baseline.
 
 The intended readers are the roadmap owner, maintainers, specification authors and implementers. The output is an ordered specification backlog with stable ownership boundaries, start and finalization gates, shared evidence requirements and a GitHub tracking model.
+
+## Proposed MVP child-contract lane
+
+The end-to-end MVP has its own readiness lane. These contracts are independently reviewable and mergeable behind the opt-in module boundary; their composed scenario gates only the public MVP release:
+
+| Child contract | Artifact | Immediate prerequisites | Status |
+|---|---|---|---|
+| Bounded multi-level BOM and definition release | [`2026-09-05-manufacturing-mvp-definition-release.md`](2026-09-05-manufacturing-mvp-definition-release.md) | P1.0a; P1.4a-P1.4b profile; current same-inventory-unit compatibility envelope | Proposed — maintainer review pending |
+| Single-step order and append-only facts | [`2026-09-05-manufacturing-mvp-order-and-facts.md`](2026-09-05-manufacturing-mvp-order-and-facts.md) | Accepted definition-release child contract | Proposed — maintainer review pending |
+| Guarded inventory execution and correction | [`2026-09-05-manufacturing-mvp-inventory-execution.md`](2026-09-05-manufacturing-mvp-inventory-execution.md) | Accepted order/facts child contract; additive typed WMS posting port | Proposed — maintainer review pending |
+
+P1.7-P1.11 below retain their broader Wave 0 meaning and must not be used as the readiness gate for these restricted MVP profiles. After the MVP, this backlog supplies candidates rather than an automatic delivery sequence.
 
 ## Problem Statement
 
@@ -400,7 +412,7 @@ Every child records its work-item ID, owner, planned artifact, upstream dependen
 
 ### Verdict
 
-**Internally coherent planning backlog, ready for owner review.** After approval, the first authoring batch and GitHub tracking structure may be created. No implementation is authorized by this document.
+**Owner-approved follow-on planning backlog.** It remains an option map after the proposed end-to-end MVP; selecting any item for implementation still requires current evidence, a dedicated ready specification, and its applicable dependencies. No implementation is authorized by this document alone.
 
 ## Changelog
 

@@ -197,7 +197,7 @@ Documentation validation uses `git diff --check` and `yarn agents:check-budget`.
 - Commands, guards, tenant scope, OpenAPI, audit, idempotency, and cache mechanisms remain canonical.
 - No new UI except translated degraded-state feedback on the existing profile surface.
 
-**Verdict:** Design complete as WMS-owned non-critical backlog, pending P1.3a and pre-implementation readiness audit; mandatory before stock-affecting production.
+**Verdict:** Design complete as WMS-owned non-critical backlog, pending P1.3a and pre-implementation readiness audit; mandatory before broader P1.11 precision support, but not before the restricted MVP-X compatibility envelope.
 
 ## Changelog
 
@@ -214,4 +214,4 @@ Documentation validation uses `git diff --check` and `yarn agents:check-budget`.
 - **Cache:** Passed.
 - **Commands:** Passed.
 - **Risks:** Passed.
-- **Verdict:** Design complete, pending parent-roadmap acceptance and readiness review; implementation remains gated.
+- **Verdict:** Design complete under the accepted parent roadmap, pending its own readiness review; implementation remains gated.

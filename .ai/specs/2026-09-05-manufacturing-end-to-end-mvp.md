@@ -2,9 +2,9 @@
 
 ## TLDR
 
-The first Open Source Manufacturing release must deliver one narrow but complete production flow: define a direct-level BOM, release it, create and release a single-step production order, issue its direct materials through the existing WMS commands, receive the finished output, and record compensating corrections for incorrect stock postings.
+The first Open Source Manufacturing release must deliver one narrow but complete production flow: define and inspect a bounded multi-level BOM, release its immutable occurrence tree, create and release a single-step production order, issue that order's direct components through a guarded WMS posting port, receive the finished output, and record compensating corrections for incorrect stock postings.
 
-This MVP becomes the active delivery focus. It does not require changes to Catalog UoM behavior, WMS precision/schema, WMS Site topology, or a new atomic posting-group contract. The accepted Manufacturing roadmap and P1 splits remain follow-on backlog, but no cross-module foundation refactor may block the first release.
+This MVP becomes the proposed active delivery focus. It does not require changes to Catalog UoM behavior, WMS precision/schema, WMS Site topology, or a new atomic posting-group contract. It does require one additive, typed WMS posting port so Manufacturing does not depend on internal command payloads or bypass WMS mutation guards. The accepted Manufacturing roadmap and P1 splits remain follow-on backlog, but no broader cross-module foundation refactor may block the first release.
 
 ## Overview
 
@@ -66,7 +66,7 @@ The intended programme outcomes are:
 
 ## Proposed Solution
 
-Deliver one single-step, direct-material production flow over existing Catalog and WMS behavior. Reuse the existing P1 ownership boundaries, but implement only the Manufacturing-owned MVP profiles defined here. Keep all cross-module foundation changes and broader P1 specifications as additive follow-on work after MVP acceptance.
+Deliver one single-step production flow over existing Catalog and WMS behavior, backed by a bounded multi-level BOM definition. Reuse the existing P1 ownership boundaries, but implement only the Manufacturing-owned MVP profiles defined here. Keep all cross-module foundation changes and broader P1 specifications as additive follow-on work after MVP acceptance.
 
 The MVP is one product outcome even though implementation crosses several module-owned contracts. BOM authoring supplies the order definition, the order supplies production intent, and WMS postings supply the physical result. Intermediate work may merge behind disabled or incomplete capability boundaries, but the OSS Manufacturing MVP is announced only after the complete acceptance scenario passes.
 
@@ -76,10 +76,10 @@ The MVP is one product outcome even though implementation crosses several module
 |---|---|---|
 | Release boundary | One end-to-end production transaction | A definition-only release does not validate Manufacturing value. |
 | Production model | Discrete, selected existing warehouses, single step | Proves production without Site, routing, scheduling, or capacity modelling. |
-| Material model | Direct BOM lines only for execution | Avoids recursive explosion and child-order orchestration in the first flow. |
+| Material model | Multi-level definition and snapshot; each order executes only its own revision's direct occurrences | Represents real subassemblies without recursive execution or automatic child-order orchestration. |
 | Quantity model | Current Catalog/WMS behavior with a deliberately restricted compatibility profile | Avoids changing shared UoM and precision contracts for MVP. |
-| Inventory model | Existing `wms.inventory.adjust` and `wms.inventory.receive` commands | Reuses working WMS behavior without adding production vocabulary or APIs to WMS. |
-| Correction model | Correlated compensating movements using existing WMS commands | Enables operational recovery without requiring a new WMS reversal contract. |
+| Inventory model | Additive typed WMS posting port implemented over current inventory commands | Reuses working WMS behavior while preserving WMS guards, production semantics, and compile-time contract checks. |
+| Correction model | Correlated compensating movements through the same typed WMS port | Enables operational recovery without requiring a generic atomic posting-group or reversal framework. |
 | Delivery model | Existing P1 workstreams provide profiled inputs | Preserves reviewed ownership and avoids a competing architecture. |
 
 ### Alternatives considered
@@ -88,15 +88,15 @@ The MVP is one product outcome even though implementation crosses several module
 |---|---|
 | Release BOM authoring first | Rejected as the MVP product boundary. It remains implementation work feeding the vertical slice. |
 | Deliver all existing Wave 0 Gate A-C capabilities | Deferred until after the MVP. It is coherent but too broad for the first OSS validation. |
-| Add generic atomic WMS posting groups first | Deferred. Manufacturing invokes current WMS commands through the command bus and owns retry/compensation orchestration. |
+| Add generic atomic WMS posting groups first | Deferred. Manufacturing invokes the narrow typed WMS posting port and owns retry/compensation orchestration. |
 | Model a routing with one synthetic operation | Rejected. The MVP order is explicitly single-step and creates no fake Work Center or routing contract. |
 
 ## MVP Outcome
 
 An authorized user can:
 
-1. create a direct-level BOM for a concrete Catalog variant; product-only BOM targets cannot execute in this MVP because current WMS mutations require `catalogVariantId`;
-2. release an immutable BOM definition;
+1. create a direct-level normalized BOM revision for a concrete Catalog variant, link `produce` occurrences to child BOMs, and inspect the bounded multi-level tree; product-only executable targets remain unsupported because current WMS mutations require `catalogVariantId`;
+2. release an immutable multi-level BOM definition with the selected child revisions and occurrence paths frozen;
 3. create and release a production order for a requested quantity using selected existing WMS warehouses and locations;
 4. issue the calculated direct materials from WMS;
 5. receive the full finished quantity into WMS;
@@ -110,11 +110,11 @@ An authorized user can:
 | Existing work item | MVP profile |
 |---|---|
 | P1.0a | One opt-in `@open-mercato/manufacturing` package and `manufacturing` runtime module. |
-| P1.4a-MVP amendment | Direct-level variant-targeted BOM authoring with stable occurrences, current Catalog/WMS inventory-unit evidence, draft integrity, optimistic locking, scope, and release readiness. It supersedes the P1.3a readiness gate for this restricted profile only. |
-| P1.7 | `draft -> released` definition lifecycle and immutable direct-level snapshot; no routing or recursive child-revision selection. |
-| P1.8b-MVP profile | Manufacturing-only adapter invoking existing `wms.inventory.adjust` and `wms.inventory.receive`; no WMS contract or schema change. |
+| P1.4a/P1.4b-MVP profile | Direct-level normalized, variant-targeted BOM authoring plus bounded multi-level preview, stable occurrences, child resolution, cycle safety, current Catalog/WMS inventory-unit evidence, optimistic locking, and scope. It supersedes the P1.3a readiness gate for this restricted profile only. |
+| P1.7 | `draft -> released` definition lifecycle and immutable multi-level occurrence snapshot with deterministic child-revision selection; no routing. |
+| P1.8b-MVP profile | Manufacturing adapter resolving an additive typed WMS posting port. WMS owns the guarded physical posting implementation; no WMS schema or arithmetic change. |
 | P1.9 | Minimum append-only accepted/corrected fact evidence, persistent idempotency, correlation, timestamps, and WMS posting reference. |
-| P1.10 | Single-step production-order lifecycle and immutable execution snapshot; no operation entities or partial confirmation model. |
+| P1.10 | Single-step production-order lifecycle, optional explicit parent-order reference, and immutable multi-level execution snapshot; each order executes only its top-level revision's direct occurrences, with no operation entities or partial confirmation model. |
 | P1.11-MVP profile | Explicit material issue through current adjustments, full finished-output receipt, retry of missing lines, and compensating correction. |
 | P1.12 | End-to-end, isolation, conflict, idempotency, partial-failure recovery, disabled-module, and compensation evidence. |
 
@@ -122,12 +122,11 @@ P1.1, P1.2, P1.3a-c, and P1.8a do not block this MVP. This MVP baseline explicit
 
 ### Explicitly deferred until after MVP
 
-- P1.4b recursive BOM preview/explosion and its large-tree UI/performance contract;
 - P1.4c-h list perspectives, identity, collaboration history, comparison/where-used, copy, customisation, and document control;
 - P1.5 routing drafts, operation definitions, instructions, and setup/run time;
 - P1.6 Work Centers, resource applicability, capacity, and calendars;
-- WMS Site/warehouse-role modelling, Catalog UoM normalization redesign, WMS precision/evidence migrations, and generic atomic posting groups;
-- multi-level execution, `produce` child resolution at release, child orders, and automatic child-order creation;
+- WMS Site/warehouse-role modelling, Catalog UoM normalization redesign, WMS precision/evidence migrations, and generic atomic posting groups beyond the narrow typed MVP port;
+- recursive descendant execution inside one order, automatic child-order creation, MRP-driven order networks, phantom flattening, and direct issue between orders;
 - partial issue/output, cumulative confirmation, backflush, separate material return, scrap, `complete_short`, and over/under-production policy;
 - reservation automation, MRP, finite scheduling, MES/offline replay, QMS, costing, advanced traceability, and advanced numbering;
 - import/export, search, saved views, bulk actions, analytics, approvals, and segregation-of-duties policy.
@@ -142,22 +141,22 @@ The existing ownership laws remain unchanged, while the MVP prerequisite gates a
 - Manufacturing owns BOM definitions, released snapshots, production-order intent, execution snapshots, semantic commands, and production facts.
 - WMS owns existing warehouses, locations, stock balances, lots/serials, movements, and posting evidence.
 - Cross-module references use scalar IDs plus immutable snapshots where history must survive master-data changes. No cross-module ORM relationship is introduced.
-- Manufacturing invokes existing WMS commands through the command bus and fails stock actions closed when WMS is unavailable. It adds no route, entity, migration, enum, command, or configuration to WMS.
+- Manufacturing resolves the typed WMS posting port through DI and fails stock actions closed when WMS or the port is unavailable. The WMS-owned adapter applies the same mutation guards and post-success callbacks as WMS API writes before it delegates to existing inventory commands. The MVP adds no WMS route, entity, migration, or configuration; its only WMS contract addition is the typed port and production posting discriminator.
 
 ```text
 Catalog product/UoM
         |
         v
-Manufacturing released direct BOM
+Manufacturing released multi-level BOM occurrence tree
         |
         v
 Manufacturing production order + execution snapshot
         |
-        +---- per-line issue intent ----> wms.inventory.adjust (negative)
+        +---- per-line issue intent ----> typed WMS posting port -> adjust (negative)
         |
-        +---- output receipt intent ----> wms.inventory.receive
+        +---- output receipt intent ----> typed WMS posting port -> receive
         |
-        +---- correction intent --------> existing WMS adjust/receive-compatible compensation
+        +---- correction intent --------> typed WMS posting port -> compensation
                                           |
                                           v
                           WMS movements + Manufacturing correlated facts
@@ -168,26 +167,29 @@ Manufacturing production order + execution snapshot
 ```text
 BOM definition: draft -> released
 Production order: draft -> released -> in_progress -> completed
-                                  \-> cancelled before output receipt
+                    \-> cancelled     \-> correction_pending -> in_progress
 ```
 
 - A released BOM is immutable. A later change creates a new draft revision through the existing revision contract.
 - Order release freezes the BOM, quantities/UoM evidence, and selected warehouse/location IDs.
 - `in_progress` begins with accepted material issue or an explicit start immediately preceding it in guarded orchestration.
-- `completed` requires accepted full output receipt evidence.
-- Correction creates compensating WMS movements and Manufacturing evidence and changes operational state only through a command; it never edits history.
+- `completed` requires accepted full output receipt evidence that has not been compensated.
+- Cancellation from `draft` or `released` is immediate. Cancellation after any accepted stock effect first enters `cancellation_pending`; the command reaches `cancelled` only after every uncompensated issue and receipt has an accepted compensating movement. A failed compensation leaves the order non-terminal and visibly recoverable.
+- Correcting material issue returns the order to `released` when no uncompensated issue remains, otherwise it stays `in_progress`. Correcting the completed output receipt moves the order through `correction_pending` to `in_progress`; it may be received again with a new intent. Correction never edits history.
 
 ### Commands and evidence
 
-Every mutation uses canonical commands and mutation guards. Before each WMS call, Manufacturing persists one stable UUID intent/fact per BOM occurrence and action. That UUID is passed as the existing WMS `referenceId`, with `referenceType: 'manual'`; Manufacturing correlation remains authoritative and may be repeated in WMS `metadata`. This avoids collisions when the same variant appears more than once because current WMS idempotency includes `referenceId` but has no Manufacturing reference type. Manufacturing records progress per line, retries only missing lines after partial failure, and never marks an issue or receipt complete until all required commands succeeded.
+Every mutation uses canonical commands and mutation guards. Before physical posting, Manufacturing persists a stable issue intent per BOM occurrence, one output-receipt intent per order receipt attempt, or one correction intent per original WMS movement. The typed WMS port accepts that UUID as its idempotency/correlation key and records a production-specific reference discriminator; normal production movements must never be classified as `manual`. Manufacturing records progress per intent, retries only missing intents after partial failure, and never marks an issue, receipt, cancellation, or correction complete until all required postings succeeded.
 
-Manufacturing command names and payloads belong to dedicated MVP implementation specifications. The WMS calls are fixed here to existing `wms.inventory.adjust` and `wms.inventory.receive`, concrete `catalogVariantId`, `referenceType: 'manual'`, a persisted unique intent UUID as `referenceId`, and existing metadata. No public WMS surface is changed.
+The WMS-owned port is an additive public contract with typed issue, receipt, and compensation inputs and a typed result containing the stable movement ID, accepted quantity, posting timestamp, idempotent-replay flag, and correlation key. It validates tenant/organization scope, warehouse/location eligibility, inventory-profile restrictions, mutation guards, and incompatible replay before delegating to current `wms.inventory.adjust` or `wms.inventory.receive` handlers. Manufacturing resolves it softly through DI and does not import WMS business logic. Exact names, schemas, and the production reference discriminator are frozen by the inventory-execution child specification before implementation.
+
+If WMS commits but Manufacturing fails before persisting the result, retry uses the same intent UUID. The port returns the original movement, and Manufacturing reconciles it into the pending fact before changing order state. It must never create a second movement merely because local result persistence failed.
 
 ## Data Models
 
 This document introduces no parallel data model. P1.4a remains the BOM authoring source. Dedicated MVP specifications must define the smallest additive entities or profiles for:
 
-- a released direct-level definition snapshot;
+- a released multi-level definition snapshot with selected child revisions and occurrence paths;
 - a single-step production order and immutable execution snapshot;
 - append-only Manufacturing fact evidence; and
 - correlation to existing WMS movement evidence.
@@ -200,7 +202,7 @@ The MVP introduces no PII, credentials, or free text about people. Basic labels 
 
 Dedicated implementation specifications must expose the minimum authenticated and feature-guarded APIs for:
 
-- direct BOM create/read/update and line maintenance;
+- direct-line BOM create/read/update and line maintenance plus bounded multi-level preview;
 - definition release and released-definition read;
 - production-order create/read/release/start/cancel with existing warehouse/location selection;
 - explicit full material issue;
@@ -208,7 +210,7 @@ Dedicated implementation specifications must expose the minimum authenticated an
 - compensating issue or receipt correction; and
 - correlated fact/evidence read.
 
-All inputs use zod, routes export `metadata` and `openApi`, and reads/writes are tenant- and organization-scoped. Manufacturing validates referenced warehouse/location records through available WMS read contracts before mutation. CRUD-compatible resources use `makeCrudRoute`; aggregate/action routes use commands, mutation guards, optimistic-lock headers where applicable, and stable errors.
+All inputs use zod, routes export `metadata` and `openApi`, and reads/writes are tenant- and organization-scoped. Manufacturing validates referenced warehouse/location records through available WMS read contracts before mutation. The WMS posting port revalidates trusted scope, location ownership, inventory-profile eligibility, and active mutation guards at the physical-write boundary. CRUD-compatible resources use `makeCrudRoute`; aggregate/action routes use commands, mutation guards, optimistic-lock headers where applicable, and stable errors.
 
 Required error classes include invalid state, stale version, insufficient eligible stock, unsupported current-WMS quantity/UoM, invalid warehouse/location selection, duplicate incompatible intent, partial issue failure, posting failure, already compensated evidence, and non-disclosing not-found/out-of-scope responses.
 
@@ -216,12 +218,12 @@ Required error classes include invalid state, stale version, insufficient eligib
 
 The MVP UI contains only:
 
-- BOM list, create, and direct-level editor;
+- BOM list, create, direct-line editor, and bounded multi-level preview;
 - released-definition read state and Release action;
 - production-order list, create, detail, Release, Start/Issue, Receive output, Cancel, and Correct actions; and
 - visible stock-posting and correction evidence.
 
-There is no routing editor, Work Center setup, recursive preview, planning board, shop-floor terminal, bulk action, saved perspective, or analytics dashboard.
+There is no routing editor, Work Center setup, automatic order-network view, planning board, shop-floor terminal, bulk action, saved perspective, or analytics dashboard.
 
 Backend pages use canonical `Page`, `DataTable`, `CrudForm`, guarded mutations, `StatusBadge`, `Alert`, `FormField`, `SectionHeader`, `LoadingMessage`, `ErrorMessage`, `EmptyState`, and confirmation-dialog patterns. HTTP uses `apiCall` helpers. Dialogs support Cmd/Ctrl+Enter and Escape, icon-only controls have accessible labels, and all user-facing strings use module locale files.
 
@@ -233,17 +235,17 @@ The MVP is implemented as testable internal increments but released as one outco
 
 1. Complete P1.0a and document the current Catalog/WMS quantity compatibility envelope.
 2. Finish the P1.4a variant-only, current-inventory-unit MVP profile and its isolation/concurrency evidence without waiting for P1.3a.
-3. Keep P1.4b, P1.4c-h, P1.5, and P1.6 off the critical path.
+3. Finish the bounded P1.4b multi-level preview profile and keep P1.4c-h, P1.5, and P1.6 off the critical path.
 
 ### Increment 2 - release and order
 
-1. Specify and implement the direct-only P1.7 release snapshot profile.
+1. Specify and implement the P1.7 multi-level occurrence snapshot profile with deterministic child-revision selection.
 2. Implement the minimal P1.9 fact writer and single-step P1.10 order lifecycle.
 3. Reuse current WMS warehouse/location lookup and selection without Site work.
 
 ### Increment 3 - physical execution
 
-1. Implement the Manufacturing adapter over current `wms.inventory.adjust` and `wms.inventory.receive` commands.
+1. Add the narrow typed WMS posting port and implement the Manufacturing adapter over it; the port delegates to current `wms.inventory.adjust` and `wms.inventory.receive` commands behind WMS guards.
 2. Implement explicit per-line issue, full receipt, deterministic retries, and compensating correction.
 3. Test and document partial-failure behavior without changing WMS.
 
@@ -255,16 +257,16 @@ The MVP is implemented as testable internal increments but released as one outco
 
 ## Acceptance Scenario
 
-Given eligible WMS stock of `10` units of component A and `20` units of component B:
+Given eligible WMS stock of `5` units of stocked subassembly S and `20` units of component B:
 
-1. The user creates and releases a BOM stating that `1` output variant X requires `1` variant A and `2` variant B, all in the current WMS inventory units.
-2. The user creates and releases an order for `5` X with existing material/output warehouses and locations.
-3. The order snapshot preserves the BOM, current quantity/UoM values, and warehouse/location selections.
-4. Explicit issue creates idempotent negative WMS adjustments totaling `5` A and `10` B and records each result.
+1. The user creates and releases a child BOM stating that `1` subassembly S requires `2` units of component A, then creates a parent BOM stating that `1` output variant X requires `1` `produce` occurrence of S and `2` units of variant B, all in the current WMS inventory units.
+2. The user inspects the bounded multi-level tree and releases the parent definition, freezing the selected S revision and complete occurrence paths.
+3. The user creates and releases an order for `5` X with existing material/output warehouses and locations. The order snapshot preserves the complete tree, current quantity/UoM values, and warehouse/location selections, but its execution set contains only direct occurrences S and B.
+4. Explicit issue creates idempotent negative WMS adjustments totaling `5` S and `10` B and records each result; it does not consume A through the parent order.
 5. Repeating the same request with the same idempotency key does not consume stock again.
 6. One idempotent WMS receipt adds `5` X; after its movement ID is persisted, Manufacturing marks the order completed. A failure between those steps is recovered by retrying correlation, not by receiving stock again.
 7. Repeating the receipt does not add output again.
-8. An authorized correction derives compensating movements from persisted evidence; it does not recalculate from the current BOM.
+8. An authorized correction derives compensating movements from persisted evidence; it does not recalculate from the current BOM. A corrected output moves the order back to `in_progress`, while cancellation after any stock effect becomes terminal only after all required compensation succeeds.
 9. If one material line fails after earlier lines succeeded, the order remains visibly incomplete and retry posts only missing lines.
 10. Cross-tenant, cross-organization, stale-version, invalid-state, and insufficient-stock attempts fail without disclosing foreign records.
 
@@ -274,17 +276,17 @@ The scenario supports only quantities normalized into the same unit used by the 
 
 - Unit tests cover supported quantity calculation, lifecycle transitions, snapshot immutability, idempotency comparison, and compensation derivation.
 - Integration tests create their own Catalog, warehouse, location, stock, BOM, and order fixtures and clean them up in teardown or `finally`.
-- API tests cover auth, ACL, scope isolation, stale versions, invalid states, insufficient stock, duplicate calls, partial failure/retry, and correction.
+- API tests cover auth, ACL, scope isolation, stale versions, invalid states, insufficient stock, duplicate and incompatible calls, partial failure/retry, cancellation after issue, correction state transitions, and compensation failure.
 - UI tests cover the happy path plus conflict, posting error, correction confirmation, loading, empty, and permission states.
 - Packaging tests prove the module is opt-in and disabled routes/UI disappear.
-- Integration tests use current WMS commands as-is and prove resulting balances/movements; no WMS production change or seeded data is required.
+- Integration tests prove the WMS port runs mutation guards and preserves production semantics. A dedicated crash-window test commits a WMS movement, fails Manufacturing result persistence, retries the same intent, and proves one movement plus one reconciled fact. No seeded data is required.
 - Cache is omitted unless measured need proves otherwise. Lists remain bounded with `pageSize <= 100`; no bulk or greater-than-1,000-row foreground operation exists.
 
 ## Migration and Backward Compatibility
 
 This roadmap change is additive and changes delivery priority, not a published contract. Existing P1 identifiers, specifications, implementation, package exports, entity IDs, routes, ACL features, event IDs, and generated registries remain intact.
 
-Dedicated implementation specs classify every new Manufacturing contract under `BACKWARD_COMPATIBILITY.md`. New Manufacturing structures use additive migrations and reviewed snapshots. Catalog and WMS receive no MVP migration or public-contract change. Deferred, already implemented BOM behavior is preserved.
+Dedicated implementation specs classify every new contract under `BACKWARD_COMPATIBILITY.md`. New Manufacturing structures use additive migrations and reviewed snapshots. Catalog receives no MVP change. WMS receives one additive typed posting-port contract and production reference discriminator, without schema, arithmetic, route, or generic posting-group changes. Deferred, already implemented BOM behavior is preserved.
 
 ## Post-MVP Sequence
 
@@ -293,7 +295,7 @@ After the MVP passes, the team does not automatically resume the old roadmap in 
 The following list is illustrative, not an approved sequence:
 
 1. partial confirmations, returns, scrap, and backflush;
-2. multi-level execution and bounded recursive preview;
+2. automatic child-order networks, phantom/direct-issue behavior, and broader multi-level execution;
 3. routing, operations, Work Centers, and instructions;
 4. BOM usability/control P1.4c-h;
 5. planning, capacity, traceability, quality, costing, MES, and specialist models.
@@ -306,7 +308,7 @@ Before starting the next capability, maintainers review:
 
 - which steps block users from completing or repeating production orders;
 - which manual workarounds consume the most time or create the most errors;
-- whether users need multi-level production, routing, partial confirmation, backflush, planning, traceability, or another capability first;
+- whether users need automatic multi-level production orchestration, routing, partial confirmation, backflush, planning, traceability, or another capability first;
 - whether current Catalog/WMS limitations caused real failures or only theoretical constraints;
 - adoption signals such as activated installations, repeated orders, completion rate, support requests, and contributor/partner demand;
 - implementation cost, migration risk, cross-module blast radius, and compatibility impact.
@@ -314,7 +316,7 @@ Before starting the next capability, maintainers review:
 The next capability is chosen by demonstrated business impact and risk reduction. For example:
 
 - frequent manual material posting favors backflush or atomic posting work;
-- inability to represent subassemblies favors multi-level release/execution;
+- excessive manual creation or coordination of subassembly orders favors automatic child-order or planning work;
 - inability to coordinate shop-floor steps favors routing and Work Centers;
 - shortages and late orders favor reservations or planning;
 - audit/customer requirements favor traceability, quality, or costing.
@@ -329,7 +331,7 @@ If evidence is weak or contradictory, the team runs a smaller discovery experime
 - **Severity**: High.
 - **Affected area**: Definitions, orders, facts, WMS adapter, future routing and partial execution.
 - **Mitigation**: Map every MVP field/action to its P1 owner, use additive evolution seams, and run adjacent-contract consistency review.
-- **Residual risk**: Follow-on migrations may remain when multi-level and partial execution are selected.
+- **Residual risk**: Follow-on migrations may remain when automatic order networks and partial execution are selected.
 
 ### Existing WMS commands allow partial multi-line completion
 
@@ -347,13 +349,13 @@ If evidence is weak or contradictory, the team runs a smaller discovery experime
 - **Mitigation**: Create no fake routing or Work Center. Keep operation correlation additive/optional and version the later execution snapshot shape.
 - **Residual risk**: Mixed historical reporting will need a clear `single_step` versus routed execution-mode discriminator.
 
-### Direct-only BOM is mistaken for multi-level support
+### Multi-level definition is mistaken for automatic multi-level execution
 
-- **Scenario**: Users expect recursive requirements or child production from draft `produce` links.
+- **Scenario**: Users expect one parent order to execute descendant raw materials or create child production orders automatically.
 - **Severity**: Medium.
 - **Affected area**: Release UI, order calculation, documentation, issue.
-- **Mitigation**: Accept direct material lines only for MVP execution and label unsupported `produce` execution clearly; never silently flatten it.
-- **Residual risk**: Early adopters with multi-level products must stock subassemblies manually.
+- **Mitigation**: Show the full definition tree and gross requirements, but label the per-order direct-occurrence boundary clearly. A `produce` occurrence is issued as stocked subassembly inventory; making it uses a separate order with an optional parent reference. Never silently flatten it.
+- **Residual risk**: Early adopters must create and coordinate subassembly orders manually.
 
 ### Current UoM and precision limitations
 
@@ -379,6 +381,14 @@ If evidence is weak or contradictory, the team runs a smaller discovery experime
 - **Mitigation**: Link this baseline from all Manufacturing roadmap/index documents and mark existing decompositions follow-on unless included here.
 - **Residual risk**: GitHub trackers require a separate maintainer-authorized update outside this documentation change.
 
+### Posting port bypasses WMS policy
+
+- **Scenario**: A direct command-bus call skips an inventory freeze or another registered WMS mutation guard.
+- **Severity**: Critical.
+- **Affected area**: Physical inventory integrity and policy enforcement.
+- **Mitigation**: Manufacturing may call only the typed WMS posting port; the WMS implementation runs the canonical guard chain and post-success callbacks before delegating to inventory commands.
+- **Residual risk**: A future WMS write policy must be added to the shared guarded seam rather than only to an HTTP route.
+
 ## Final Compliance Report - 2026-09-05
 
 ### AGENTS.md Files Reviewed
@@ -387,7 +397,11 @@ If evidence is weak or contradictory, the team runs a smaller discovery experime
 - `.ai/specs/AGENTS.md`
 - `BACKWARD_COMPATIBILITY.md`
 - `packages/core/AGENTS.md`
+- `packages/ui/AGENTS.md`
+- `packages/ui/src/backend/AGENTS.md`
+- `.ai/qa/AGENTS.md`
 - `.ai/docs/module-development.md`
+- `om-spec-writing` Frontend Architecture Contract
 - `om-module-capability-audit` native mechanism catalogue
 - `om-spec-writing` checklist and compliance guide
 
@@ -400,7 +414,7 @@ If evidence is weak or contradictory, the team runs a smaller discovery experime
 | Root `AGENTS.md` | Commands, guards, compensation, and canonical HTTP/UI | Compliant | Required as implementation constraints; exact contracts stay in capability specs. |
 | `.ai/specs/AGENTS.md` | Explicit MVP/future scope, risks, compatibility, tests | Compliant | Existing workstreams remain post-MVP backlog. |
 | `BACKWARD_COMPATIBILITY.md` | No incompatible removal/rename | Compliant | This planning change removes no surface. |
-| Module capability audit | Reuse native owners and smallest safe mechanisms | Compliant | Uses current Catalog values and existing WMS commands; new behavior stays in Manufacturing. |
+| Module capability audit | Reuse native owners and smallest safe mechanisms | Compliant | Uses current Catalog values and a narrow guarded WMS-owned port over existing inventory commands. |
 | Spec-writing checklist | Independently deployable capabilities are split | Compliant after review | This file is a release umbrella; implementation remains in three cohesive child contracts. |
 
 ### Internal Consistency Check
@@ -413,31 +427,36 @@ If evidence is weak or contradictory, the team runs a smaller discovery experime
 | Risks cover stock writes | Pass | Idempotency, partial-failure state, retry, compensation, scope, and current precision limits are mandatory. |
 | Compatibility with detailed specs | Pass | Existing IDs/specs remain; the MVP selects profiles rather than replacing contracts. |
 
+### Frontend architecture disposition
+
+This umbrella introduces no route or component itself. Each UI-bearing child specification must provide its server/client boundary map, `"use client"` ledger, page-root and client-blob budgets, provider/bootstrap list, hydration smoke path, interaction coverage, and `check:client-boundaries` evidence. Until those child sections pass review, no UI path is implementation-ready.
+
 ### Non-Compliant Items
 
-None at roadmap-scope level. This document does not authorize implementation: its three Manufacturing-owned child contracts still require dedicated specifications or accepted amendments and readiness evidence.
+The three child contracts remain proposed and require maintainer acceptance plus readiness evidence. This umbrella does not authorize implementation or promote itself to an accepted baseline.
 
 ### Verdict
 
-**Approved as the active product-scope baseline.** Not implementation-ready by itself; implementation remains gated by dedicated capability contracts and evidence.
+**Proposed as the active product-scope baseline — maintainer review pending.** Not implementation-ready by itself; implementation remains gated by accepted child contracts and evidence.
 
 ## Relationship to the Existing Roadmap
 
-This document is the active first-release roadmap umbrella, not one independently implementable capability specification. The existing product roadmap remains the normative long-term architecture, but this document supersedes its Site, P1.3a-c, P1.8a, atomic-posting, and exact-reversal prerequisites for the restricted MVP profile only. Existing P1 identifiers and detailed specs remain intact as inputs or post-MVP capability work; they are not deleted or renumbered.
+This document is the proposed first-release roadmap umbrella, not one independently implementable capability specification. Once accepted with linked maintainer evidence, it supersedes the existing roadmap's Site, P1.3a-c, P1.8a, atomic-posting, and exact-reversal prerequisites for the restricted MVP profile only. The existing product roadmap remains normative for ownership and post-MVP architecture. Existing P1 identifiers and detailed specs remain intact as inputs or post-MVP capability work; they are not deleted or renumbered.
 
-Implementation remains split into cohesive Manufacturing-owned specifications or amendments for: direct BOM/release; single-step order and facts; and the adapter/execution/correction flow over current WMS commands. These children compose into one release acceptance scenario, but none may broaden its scope to refactor Catalog or WMS.
+Implementation remains split into cohesive specifications for [multi-level BOM/release](2026-09-05-manufacturing-mvp-definition-release.md), [single-step order and facts](2026-09-05-manufacturing-mvp-order-and-facts.md), and [guarded inventory execution/correction](2026-09-05-manufacturing-mvp-inventory-execution.md). Each child is independently reviewable and mergeable behind the opt-in module boundary; only the public product announcement waits for the composed acceptance scenario. None may broaden its scope into Catalog or general WMS refactoring.
 
 ## Changelog
 
 - 2026-09-05: Created the active end-to-end OSS MVP boundary after product-scope review concluded that BOM-only delivery was not a usable Manufacturing module and full Wave 0 was too broad for the first release.
 - 2026-09-05: Added the business hypothesis, learning goals, expected outcomes, and evidence-based post-MVP decision gate; clarified that the earlier Wave 0 analysis is a long-term option map rather than a committed delivery sequence.
+- 2026-09-05: Kept bounded multi-level BOM authoring, preview and immutable occurrence snapshots in MVP while limiting each production order to direct-occurrence execution. Subassemblies use separately created, optionally parent-linked orders; automatic order networks, MRP and phantom/direct-issue behavior remain deferred.
 
 ### Review - 2026-09-05
 
 - **Reviewer**: Codex self-review plus fresh-context scope review.
 - **Security**: Passed at roadmap level; stock specs must prove scoped calls, deterministic retry, and compensation.
-- **Performance**: Passed; recursive preview, bulk work, caching, and large foreground operations are outside MVP.
+- **Performance**: Passed at roadmap level; recursive preview is bounded by the existing P1.4b depth/node contract, while bulk work, caching, and unbounded foreground operations remain outside MVP.
 - **Cache**: N/A; omitted pending measured need.
 - **Commands**: Passed at roadmap level; mutations are assigned to commands and guards.
-- **Risks**: Passed; stock integrity, profile divergence, future routing, direct-only expectations, scope, and programme drift are covered.
-- **Verdict**: **SPLIT for implementation, KEEP as the release-roadmap umbrella.** Three child contracts are required; no Catalog/WMS change is allowed in them.
+- **Risks**: Passed; stock integrity, profile divergence, future routing, definition-versus-execution expectations, scope, and programme drift are covered.
+- **Verdict**: **SPLIT for implementation, KEEP as the proposed release-roadmap umbrella.** Three child contracts are required; Catalog stays unchanged and WMS changes are limited to the additive guarded posting port.

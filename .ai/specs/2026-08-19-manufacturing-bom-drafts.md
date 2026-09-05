@@ -1,6 +1,6 @@
 # Manufacturing BOM Draft Authoring and Integrity
 
-> **MVP alignment (2026-09-05):** P1.4a is the definition-input portion of the active [`Manufacturing End-to-End MVP`](2026-09-05-manufacturing-end-to-end-mvp.md), not a standalone Manufacturing MVP. Preserve its implemented integrity behavior, but prioritize only the direct-level authoring/release input required by the end-to-end flow before starting deferred BOM enhancements.
+> **MVP alignment (2026-09-05):** P1.4a is the definition-input portion of the proposed [`Manufacturing End-to-End MVP`](2026-09-05-manufacturing-end-to-end-mvp.md), not a standalone Manufacturing MVP. Preserve its specified integrity contract, but prioritize only the direct-level authoring/release input required by the end-to-end flow before starting deferred BOM enhancements.
 
 ## TLDR
 

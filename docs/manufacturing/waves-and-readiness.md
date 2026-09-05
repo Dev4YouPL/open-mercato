@@ -7,8 +7,8 @@
 
 ## How to read this document
 
-- **MVP is a narrower vertical slice through Wave 0**, defined by the [end-to-end MVP](../../.ai/specs/2026-09-05-manufacturing-end-to-end-mvp.md).
-- The MVP changes only Manufacturing and consumes existing Catalog/WMS behavior. The remaining Wave 0 workstreams keep their boundaries as follow-on backlog.
+- **MVP is a narrower vertical slice through Wave 0**, proposed by the [end-to-end MVP](../../.ai/specs/2026-09-05-manufacturing-end-to-end-mvp.md) and pending linked maintainer acceptance.
+- The MVP changes Manufacturing plus one additive typed and guarded WMS posting port. The remaining Wave 0 workstreams keep their boundaries as follow-on options.
 - Post-MVP priority is deliberately undecided. Maintainers choose it from real workflow blockers, repeat usage, partner/customer demand, business impact, delivery cost, and compatibility risk; wave or P1 numbering does not decide implementation order.
 - Waves 1–4 are a proposed business grouping of later capabilities already present in the product roadmap. The grouping is not yet a normative delivery order.
 - The normative architecture source is the accepted [Manufacturing product roadmap](../../.ai/specs/2026-08-13-manufacturing-product-roadmap.md). Detailed requirements belong to capability specifications, not this dashboard.
@@ -18,8 +18,8 @@
 
 | Wave | Business objective | Main capabilities | User outcome | Current standing |
 |---|---|---|---|---|
-| **MVP** | Prove one production transaction end to end without refactoring other modules | Direct BOM; released snapshot; single-step order; existing WMS adjust/receive commands; full material issue; full output receipt; idempotent retry, facts and compensating correction | Define a product, release an order, consume direct material, receive output and recover from an error | Active first-release focus; current Catalog/WMS limits define the supported envelope |
-| **Wave 0 follow-on** | Complete the broader discrete core and platform foundations | Site roles; UoM/precision/evidence improvements; atomic posting groups; multi-level preview/execution; partials, returns, backflush, scrap; routing and Work Centers | Expand the MVP without changing its core ownership boundaries | Accepted architecture and decomposed backlog; not the first-release critical path |
+| **MVP** | Prove one production transaction end to end with minimal shared change | Bounded multi-level BOM and preview; immutable occurrence snapshot; direct-occurrence single-step order; typed guarded WMS posting port; full material issue; full output receipt; idempotent retry, facts and compensating correction | Define a product tree, release an order, consume its direct components, receive output and recover from an error | Proposed first-release focus; maintainer review pending |
+| **Wave 0 follow-on** | Complete the broader discrete core and platform foundations | Site roles; UoM/precision/evidence improvements; atomic posting groups; automatic child-order/multi-level execution; partials, returns, backflush, scrap; routing and Work Centers | Expand the MVP without changing its core ownership boundaries | Accepted architecture and decomposed backlog; not the first-release critical path |
 | **Wave 1 — material planning** | Reduce manual planning and material shortages | MRP, netting, pegging, proposals, explicit reservation requests, automatic child orders, planning exceptions, advanced numbering and a basic traceability view | See what must be made, bought or transferred and detect shortages earlier | Proposed grouping; capabilities exist in the roadmap, but wave scope and placement are not approved |
 | **Wave 2 — shop floor and optimization** | Improve throughput and reduce downtime | Finite scheduling, calendars, shop-floor execution, MES/data collection, scanning, edge/offline support, OEE, advanced genealogy, tooling and workforce constraints | Sequence work, capture trustworthy floor data and react to resource constraints | Proposed grouping; each capability requires its own specification and validation |
 | **Wave 3 — quality, cost and enterprise operation** | Control risk, compliance and profitability at scale | QMS, sampling, SPC, NCR/CAPA, regulated traceability, costing/WIP/variance, finance integration, PLM/ECO, document control, multi-site operation and enterprise controls | Control quality, cost and compliance across a larger organization | Proposed grouping; no delivery or packaging decision is implied |
@@ -30,11 +30,11 @@
 
 | Capability | Owner and tracking | Current state | Manufacturing gates |
 |---|---|---|---|
-| WMS Site and current warehouse-role assignments | WMS; [specification](../../.ai/specs/2026-08-13-wms-sites-and-warehouse-roles.md); [readiness #5389](https://github.com/open-mercato/open-mercato/issues/5389) | Design complete; WMS readiness review pending | P1.7 released definitions and P1.10 production orders consume the public Site contract when a site is required. It is not a Manufacturing work item or `ModuleInfo.requires` dependency. |
-| Catalog exact quantity and UoM normalization | Catalog; [specification](../../.ai/specs/2026-08-13-catalog-quantity-normalization.md); [readiness #5390](https://github.com/open-mercato/open-mercato/issues/5390) | Design complete; Catalog readiness review pending | P1.4a, P1.4b, P1.4g, P1.7 and P1.10 require the public exact quantity/UoM contract. |
-| WMS quantity precision and profile alignment | WMS; [specification](../../.ai/specs/2026-08-13-wms-quantity-precision-alignment.md); [audit #5391](https://github.com/open-mercato/open-mercato/issues/5391) | Design complete; WMS data-envelope audit pending | P1.11 requires this contract before stock-affecting execution. |
-| WMS quantity evidence and correlated reversal | WMS; [specification](../../.ai/specs/2026-08-13-wms-quantity-evidence-reversal.md); [readiness #5392](https://github.com/open-mercato/open-mercato/issues/5392) | Design complete; WMS readiness review pending | P1.11 requires durable evidence and correlated reversal before stock-affecting execution. |
-| Provider-neutral atomic WMS posting groups | WMS; [spec task #5397](https://github.com/open-mercato/open-mercato/issues/5397) | Direction proposed; dedicated WMS contract remains to be authored | P1.8b consumes this contract; P1.11 additionally requires it through P1.8b before stock-affecting execution. |
+| WMS Site and current warehouse-role assignments | WMS; [specification](../../.ai/specs/2026-08-13-wms-sites-and-warehouse-roles.md); [readiness #5389](https://github.com/open-mercato/open-mercato/issues/5389) | Design complete; WMS readiness review pending | Required only when broader site-aware P1.7/P1.10 behavior is selected; not an MVP-D/MVP-O gate. |
+| Catalog exact quantity and UoM normalization | Catalog; [specification](../../.ai/specs/2026-08-13-catalog-quantity-normalization.md); [readiness #5390](https://github.com/open-mercato/open-mercato/issues/5390) | Design complete; Catalog readiness review pending | Required for later cross-unit behavior; MVP accepts only the current same-inventory-unit envelope. |
+| WMS quantity precision and profile alignment | WMS; [specification](../../.ai/specs/2026-08-13-wms-quantity-precision-alignment.md); [audit #5391](https://github.com/open-mercato/open-mercato/issues/5391) | Design complete; WMS data-envelope audit pending | Required for broader P1.11 precision; MVP-X rejects values outside the current envelope. |
+| WMS quantity evidence and correlated reversal | WMS; [specification](../../.ai/specs/2026-08-13-wms-quantity-evidence-reversal.md); [readiness #5392](https://github.com/open-mercato/open-mercato/issues/5392) | Design complete; WMS readiness review pending | Required for broader generic reversal; MVP-X uses persisted intent correlation and compensating movements. |
+| Provider-neutral atomic WMS posting groups | WMS; [spec task #5397](https://github.com/open-mercato/open-mercato/issues/5397) | Direction proposed; dedicated WMS contract remains to be authored | Required for broad P1.8b/P1.11; MVP-X uses the smaller typed guarded port. |
 | WMS status/expiry-aware availability projection | WMS; [core-inventory specification](../../.ai/specs/2026-04-15-wms-phase-1-core-inventory.md) | Core-inventory specification exists; no dedicated readiness evidence is linked for this contract | P1.11 requires basic WMS availability to exclude ineligible stock; an external QMS/disposition provider is not required. |
 
 These external entries are contract references, not Manufacturing work items or programme-wide blockers. Catalog/UoM is consumed only by quantity-bearing BOM, definition-release, and production-order paths; P1.0a, P1.6, P1.5, P1.9, and other non-quantity work may proceed independently.
@@ -51,7 +51,17 @@ These external entries are contract references, not Manufacturing work items or 
 | **Deferred — placement undecided** | The capability does not block the current slice and has no approved package/licensing placement |
 | **Implemented — evidence linked** | Implementation and required validation evidence are complete and linked; moving a spec to `implemented/` still follows repository rules |
 
-## Wave 0 specification-readiness matrix
+## Proposed MVP readiness matrix
+
+| ID | Capability | Dedicated specification | Decision status | Implementation ready | Next action |
+|---|---|---|---|---|---|
+| **MVP-D** | Bounded multi-level BOM and immutable definition release | [Child specification](../../.ai/specs/2026-09-05-manufacturing-mvp-definition-release.md) | Proposed | **No — maintainer review pending** | Freeze restricted authoring/preview/release model, API/UI, bounds, and current-unit compatibility contract |
+| **MVP-O** | Single-step order and append-only facts | [Child specification](../../.ai/specs/2026-09-05-manufacturing-mvp-order-and-facts.md) | Proposed | **No — MVP-D acceptance pending** | Freeze lifecycle, snapshots, intent cardinality, facts, and correction states |
+| **MVP-X** | Guarded inventory execution and correction | [Child specification](../../.ai/specs/2026-09-05-manufacturing-mvp-inventory-execution.md) | Proposed | **No — MVP-O and typed WMS port acceptance pending** | Freeze guarded port, replay/reconciliation, compensation, and crash-window evidence |
+
+The three children are independently reviewable and mergeable behind the opt-in module boundary. The composed scenario gates the public MVP announcement, not the ability to merge a completed child safely.
+
+## Broader Wave 0 specification-readiness matrix
 
 `Decision status` distinguishes a proposed direction from one accepted through repository review. `Implementation ready` is stricter: it requires an accepted architecture baseline, a dedicated specification, readiness approval and satisfied prerequisites. Specification/readiness work is tracked by parent [Issue #5386](https://github.com/open-mercato/open-mercato/issues/5386).
 
@@ -105,7 +115,7 @@ Every status promotion must link its evidence. Do not mark a capability `Ready f
 
 ## Source priority
 
-The [Manufacturing end-to-end MVP](../../.ai/specs/2026-09-05-manufacturing-end-to-end-mvp.md) takes precedence for first-release scope and explicitly keeps Catalog and WMS unchanged. The priority list below governs the broader post-MVP architecture and capability contracts.
+Once accepted with linked maintainer evidence, the [Manufacturing end-to-end MVP](../../.ai/specs/2026-09-05-manufacturing-end-to-end-mvp.md) takes precedence for first-release scope. It keeps Catalog unchanged and limits WMS work to the additive typed posting port. The priority list below governs broader post-MVP architecture and capability contracts.
 
 1. [Manufacturing product roadmap](../../.ai/specs/2026-08-13-manufacturing-product-roadmap.md) — accepted normative architecture and readiness gates.
 2. [Wave 0 specification backlog](../../.ai/specs/2026-08-19-manufacturing-wave-0-specification-backlog.md) — owner-approved work-item decomposition, readiness definitions and tracker map.
