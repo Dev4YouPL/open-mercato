@@ -1,7 +1,7 @@
 # Manufacturing P1.6 Work Centres implementation
 
 Source doc: .ai/specs/2026-08-19-manufacturing-work-centres.md
-Status: in-progress
+Status: complete
 Engine: om-auto-create-pr (steps: 19, --loop: no)
 
 ## Goal
@@ -55,6 +55,54 @@ This run-specific user override supersedes the configured develop base and prere
 - [x] 4.3 Add keyboard, guarded retry, conflicts and required UI integration coverage. — ae888a5af
 
 ### Phase 5: Verification and delivery
-- [ ] 5.1 Verify stable read-model contract without implementing snapshots.
-- [ ] 5.2 Run ordered full validation plus lint, package profiles and named integration/UI suites.
-- [ ] 5.3 Record every P1.12 evidence category, independent review, QA screenshots and final PR status.
+- [x] 5.1 Verify stable read-model contract without implementing snapshots. — d80b19486
+- [x] 5.2 Run ordered full validation plus lint, package profiles and named integration/UI suites. — fb94736c8
+- [x] 5.3 Record every P1.12 evidence category, independent review, QA screenshots and final PR status. — f3354bfd2
+
+## Verification evidence
+
+Runner: local (no compose `app` container was running).
+
+Ordered gate: `yarn build:packages`, `yarn generate`, `yarn build:packages`,
+`yarn i18n:check-sync`, `yarn i18n:check-usage`, `yarn typecheck`, `yarn test`,
+`yarn build:app` — all green. Additionally `yarn lint` (0 errors) and
+`yarn check:client-boundaries` (exit 0). `@open-mercato/manufacturing`: 263
+unit tests in 32 suites.
+
+Two pre-existing failures reproduce unchanged at the base commit 7cae0b5b7 and
+are unrelated to this change: `@open-mercato/queue`
+"continuous workers re-arm filesystem wake-ups" and `@open-mercato/shared`
+"warnOnEncryptedLikeFilter skips the encryption lookup entirely in production".
+
+Integration and browser QA ran against a real Next production server on an
+isolated PostgreSQL database (never the developer database), with manufacturing
+activated through a temporary, uncommitted manifest edit that was reverted; the
+committed manifest keeps the module opt-in and `activation-parity` enforces it.
+
+| Profile | Modules | Result |
+|---|---|---|
+| full | catalog, manufacturing, resources, planner | 58 passed, 1 skipped, 0 failed |
+| no-resources | catalog, manufacturing, planner | 46 passed, 12 skipped, 0 failed; BOOT 5/5 |
+| no-planner | catalog, manufacturing | BOOT 5/5; `/api/resources/resources` 404 while work centres serve 200 |
+| manufacturing-off | committed default | activation-parity + discovery tests, `yarn build:app` green, no work centre routes |
+
+`yarn generate` with the module activated emits
+`manufacturing:manufacturing_work_center` and
+`manufacturing:manufacturing_work_center_resource`, matching the local
+constants, plus the API route and all three backend routes.
+
+Defects found by executing the suites, then fixed:
+- the activity filter applied `is_active IS NULL` to every unfiltered list read
+  (`parseBooleanToken` returns null, not undefined), so the list returned nothing;
+- membership was blanked in all-organizations mode;
+- a second consecutive save conflicted with the user's own first save;
+- the "resources module unavailable" form state was unreachable.
+
+Deliberate deviations recorded for the maintainer:
+- `reversalVersion` derives an undo/redo version as `recorded + 1ms` so redo can
+  prove the exact post-undo state. It is strictly increasing but not wall-clock,
+  so a reversal does not advance `updated_at` past the present. Watermark-based
+  consumers would not observe it. Alternative designs lose redo's predictability.
+- The OpenAPI document does not yet carry the stable-error envelope: the shared
+  CRUD OpenAPI factory has no error-schema seam, and adding one touches
+  `packages/shared`. Left for a follow-up rather than widened unilaterally.
