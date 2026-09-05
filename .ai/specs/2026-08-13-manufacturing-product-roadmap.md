@@ -1,5 +1,9 @@
 # Manufacturing Product Roadmap and Capability Architecture
 
+> **Active first-release focus (2026-09-05):** [`Manufacturing End-to-End MVP`](2026-09-05-manufacturing-end-to-end-mvp.md) now defines the first OSS release: direct BOM -> released definition -> single-step production order -> explicit material issue through existing WMS adjustments -> full output receipt through existing WMS receive -> compensating correction. This roadmap remains the normative long-term architecture. Catalog UoM redesign, WMS Site/precision/evidence changes, atomic posting groups, and the remaining Wave 0 scope are follow-on work, not MVP prerequisites.
+
+> **Why:** a BOM-only release does not validate production value, while completing all Wave 0 foundations before release delays real-user learning and changes multiple modules before demand is proven. The MVP intentionally validates one complete business transaction with Manufacturing-only changes. After that release, usage evidence determines which capability from this roadmap should be selected next; the order below is not a delivery commitment.
+
 ## TLDR
 
 This document is the long-term product roadmap and architecture map for Open Mercato Manufacturing. It defines capability boundaries, ownership, dependency direction, and readiness gates. It is not a release calendar, delivery commitment, or detailed implementation specification.
@@ -744,6 +748,8 @@ No closer `AGENTS.md` exists under `packages/core/src/modules/wms`, `resources`,
 **Roadmap architecture is accepted as the baseline for staged Wave 0 delivery.** This acceptance authorizes work only through dedicated, ready specifications and their named gates: draft definition authoring may proceed first; released-order and stock-execution specifications/implementation unlock only after their named Gate B or Gate C dependencies. Deferred planning, numbering, MES/QMS, costing, and packaging work does not implicitly block the MVP.
 
 ## Changelog
+
+- 2026-09-05: Added the end-to-end MVP as the active first-release boundary and retained Wave 0 as an evidence-prioritized future option map.
 
 - 2026-08-13: Reframed the document as the Manufacturing product roadmap and capability architecture.
 - 2026-08-13: Added Wave 0 foundation contracts for sites, shared resources/calendars, released definitions, WMS postings, UoM precision, minimum facts, quality-aware availability, and ERP-MES confirmations.

@@ -1,5 +1,7 @@
 # Manufacturing BOM Draft Authoring and Integrity
 
+> **MVP alignment (2026-09-05):** P1.4a is the definition-input portion of the active [`Manufacturing End-to-End MVP`](2026-09-05-manufacturing-end-to-end-mvp.md), not a standalone Manufacturing MVP. Preserve its implemented integrity behavior, but prioritize only the direct-level authoring/release input required by the end-to-end flow before starting deferred BOM enhancements.
+
 ## TLDR
 
 P1.4a adds implementation-ready authoring of standalone, versioned bill-of-materials (BOM) drafts inside the opt-in `@open-mercato/manufacturing` package and its single `manufacturing` runtime module. A tenant- and organization-scoped BOM family targets one Catalog product and optionally one variant, owns at most one editable draft revision, and stores ordered direct component occurrences without deduplicating repeated items.
@@ -876,6 +878,8 @@ None.
 Implementation of the quantity-bearing P1.4a write paths remains gated by P1.0 acceptance, P1.0a, and the Catalog quantity/UoM contract. This does not block non-quantity Manufacturing work. No product code is authorized by this documentation task.
 
 ## Changelog
+
+- 2026-09-05: Reclassified P1.4a as definition input to the end-to-end MVP rather than a standalone Manufacturing MVP.
 
 - 2026-08-19: Created the combined P1.4 skeleton from owner-approved BOM decisions.
 - 2026-08-19: Expanded the combined draft after repository research and official vendor benchmarking.

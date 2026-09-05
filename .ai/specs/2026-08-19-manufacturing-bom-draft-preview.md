@@ -1,5 +1,7 @@
 # Manufacturing Bounded Multi-level BOM Draft Preview
 
+> **Post-MVP priority (2026-09-05):** P1.4b remains an approved read capability, but it is not on the active [`Manufacturing End-to-End MVP`](2026-09-05-manufacturing-end-to-end-mvp.md) critical path. Preserve this specification for the next stage; do not delay definition release, single-step orders, explicit material issue, output receipt, or compensating correction to deliver preview first.
+
 ## TLDR
 
 P1.4b adds a bounded, read-only multi-level preview of the editable BOM graph created by P1.4a. It resolves every `produce` occurrence variant-first with product fallback, keeps every repeated line as a distinct occurrence, treats every `stock` line as a leaf, calculates exact gross component requirements, and reports unresolved child BOMs as warnings.
@@ -629,6 +631,8 @@ None.
 Implementation remains gated by P1.0, P1.0a, the Catalog quantity/UoM contract, and P1.4a. No product code is authorized by this documentation task.
 
 ## Changelog
+
+- 2026-09-05: Moved P1.4b behind the end-to-end MVP while preserving it as follow-on work.
 
 - 2026-08-19: Created P1.4b after the combined P1.4 fresh-context review returned **SPLIT** and the roadmap owner accepted the authoring/preview boundary.
 - 2026-08-19: Defined draft-only resolution, occurrence identity, exact variable/fixed/yield calculation, repeatable-read consistency, all-or-error limits, API/UI, and evidence gates.

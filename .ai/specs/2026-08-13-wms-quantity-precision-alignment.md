@@ -1,5 +1,7 @@
 # WMS Quantity Precision and Profile Alignment
 
+> **Post-MVP priority (2026-09-05):** this P1.3b remediation remains valid roadmap work but does not block the active [`Manufacturing End-to-End MVP`](2026-09-05-manufacturing-end-to-end-mvp.md). The MVP changes no WMS schema or arithmetic and supports only quantities proven compatible with the current envelope.
+
 ## TLDR
 
 P1.3b aligns WMS storage and arithmetic with the exact normalized quantity produced by P1.3a. It widens WMS quantity capacity without narrowing existing values, replaces ledger-critical JavaScript-number arithmetic with the shared exact-decimal utility, and prevents new or changed WMS inventory profiles from disagreeing with the Catalog base unit.
@@ -198,6 +200,8 @@ Documentation validation uses `git diff --check` and `yarn agents:check-budget`.
 **Verdict:** Design complete as WMS-owned non-critical backlog, pending P1.3a and pre-implementation readiness audit; mandatory before stock-affecting production.
 
 ## Changelog
+
+- 2026-09-05: Marked P1.3b as post-MVP; the MVP does not change WMS precision or schema.
 
 - 2026-08-13: Created P1.3b from the audited WMS precision/profile portion of the original quantity proposal.
 - 2026-08-19: Clarified that P1.3b remains generic WMS precision work and does not add posting groups, consumer registrations, or production-specific enums; aligned governance with pending parent-roadmap acceptance.

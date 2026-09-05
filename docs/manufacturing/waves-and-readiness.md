@@ -2,13 +2,14 @@
 
 > A business-readable map of Manufacturing capabilities and a navigation dashboard for Wave 0 specification readiness.
 
-**Last verified:** 2026-08-29
+**Last verified:** 2026-09-05
 **Status:** Operational documentation dashboard. It is not a release schedule, implementation approval, delivery promise, or licensing commitment.
 
 ## How to read this document
 
-- **MVP is the outcome of Wave 0**, not a separate wave.
-- Wave 0 is governed by the accepted architecture baseline, its gates, and the P1 workstreams.
+- **MVP is a narrower vertical slice through Wave 0**, defined by the [end-to-end MVP](../../.ai/specs/2026-09-05-manufacturing-end-to-end-mvp.md).
+- The MVP changes only Manufacturing and consumes existing Catalog/WMS behavior. The remaining Wave 0 workstreams keep their boundaries as follow-on backlog.
+- Post-MVP priority is deliberately undecided. Maintainers choose it from real workflow blockers, repeat usage, partner/customer demand, business impact, delivery cost, and compatibility risk; wave or P1 numbering does not decide implementation order.
 - Waves 1–4 are a proposed business grouping of later capabilities already present in the product roadmap. The grouping is not yet a normative delivery order.
 - The normative architecture source is the accepted [Manufacturing product roadmap](../../.ai/specs/2026-08-13-manufacturing-product-roadmap.md). Detailed requirements belong to capability specifications, not this dashboard.
 - Placement and licensing are decided separately for each capability. A row in this OSS repository does not promise that capability under any particular license.
@@ -17,7 +18,8 @@
 
 | Wave | Business objective | Main capabilities | User outcome | Current standing |
 |---|---|---|---|---|
-| **MVP / Wave 0** | Run a safe, real discrete-production flow | External WMS Site/warehouse-role contract; exact quantities/UoM; versioned multi-level BOMs; simple sequential routings and Work Centers; production orders; issue, return, backflush, scrap, output receipt and reversal; explicit lot/serial input; status/expiry availability; facts, audit, API and bounded import/export | Define a product, release an order, consume material, receive output and reconstruct what happened | Formal first-core direction with Gate A/B/C readiness; implementation is unlocked per slice, not all at once |
+| **MVP** | Prove one production transaction end to end without refactoring other modules | Direct BOM; released snapshot; single-step order; existing WMS adjust/receive commands; full material issue; full output receipt; idempotent retry, facts and compensating correction | Define a product, release an order, consume direct material, receive output and recover from an error | Active first-release focus; current Catalog/WMS limits define the supported envelope |
+| **Wave 0 follow-on** | Complete the broader discrete core and platform foundations | Site roles; UoM/precision/evidence improvements; atomic posting groups; multi-level preview/execution; partials, returns, backflush, scrap; routing and Work Centers | Expand the MVP without changing its core ownership boundaries | Accepted architecture and decomposed backlog; not the first-release critical path |
 | **Wave 1 — material planning** | Reduce manual planning and material shortages | MRP, netting, pegging, proposals, explicit reservation requests, automatic child orders, planning exceptions, advanced numbering and a basic traceability view | See what must be made, bought or transferred and detect shortages earlier | Proposed grouping; capabilities exist in the roadmap, but wave scope and placement are not approved |
 | **Wave 2 — shop floor and optimization** | Improve throughput and reduce downtime | Finite scheduling, calendars, shop-floor execution, MES/data collection, scanning, edge/offline support, OEE, advanced genealogy, tooling and workforce constraints | Sequence work, capture trustworthy floor data and react to resource constraints | Proposed grouping; each capability requires its own specification and validation |
 | **Wave 3 — quality, cost and enterprise operation** | Control risk, compliance and profitability at scale | QMS, sampling, SPC, NCR/CAPA, regulated traceability, costing/WIP/variance, finance integration, PLM/ECO, document control, multi-site operation and enterprise controls | Control quality, cost and compliance across a larger organization | Proposed grouping; no delivery or packaging decision is implied |
@@ -102,6 +104,8 @@ Update this dashboard in the same change whenever any of the following occurs:
 Every status promotion must link its evidence. Do not mark a capability `Ready for implementation` merely because its architecture direction is accepted. Do not mark it `Implemented` without implementation and validation evidence. If this dashboard conflicts with a dedicated specification, correct the dashboard; if specifications conflict with the accepted normative roadmap, resolve the architecture conflict explicitly rather than hiding it here.
 
 ## Source priority
+
+The [Manufacturing end-to-end MVP](../../.ai/specs/2026-09-05-manufacturing-end-to-end-mvp.md) takes precedence for first-release scope and explicitly keeps Catalog and WMS unchanged. The priority list below governs the broader post-MVP architecture and capability contracts.
 
 1. [Manufacturing product roadmap](../../.ai/specs/2026-08-13-manufacturing-product-roadmap.md) — accepted normative architecture and readiness gates.
 2. [Wave 0 specification backlog](../../.ai/specs/2026-08-19-manufacturing-wave-0-specification-backlog.md) — owner-approved work-item decomposition, readiness definitions and tracker map.

@@ -1,5 +1,7 @@
 # WMS Sites and Warehouse Roles
 
+> **Post-MVP priority (2026-09-05):** this P1.2 foundation remains valid roadmap work but is not required by the active [`Manufacturing End-to-End MVP`](2026-09-05-manufacturing-end-to-end-mvp.md). The MVP selects existing WMS warehouses/locations and must not change WMS Site topology.
+
 ## TLDR
 
 Add a minimal, WMS-owned `Site` representing a stable factory context inside one tenant and organization. A site is not a tenant, organization, warehouse, generic enterprise location hierarchy, or standalone `sites` module. `SiteWarehouseRole` assigns one or more existing WMS warehouses to a site under a fixed production role and identifies exactly one default warehouse per configured role. Sites are created inactive. Activation requires eligible defaults for `raw_material` and `finished_goods`.
@@ -563,6 +565,8 @@ The following are separate capabilities, not unfinished work inside P1.2:
 **Design complete — readiness review pending.** The revised specification is internally coherent for P1.2. It enables an inactive-by-default Site with a narrow activation contract and does not claim to deliver advanced production numbering or shared active-Site warehouse semantics.
 
 ## Changelog
+
+- 2026-09-05: Marked P1.2 as post-MVP; the MVP reuses current warehouses/locations and does not change WMS.
 
 - 2026-08-13: Created the implementation specification for the minimal WMS-owned `Site` and warehouse-role model, replacing a premature standalone `sites` module proposal.
 - 2026-08-13: Review revision removed effective dating and timezone from Phase 1, made site identity non-deletable, allowed multiple warehouses per fixed role with one atomic default, normalized site codes, restricted assignments to active warehouses, removed business/API use of metadata, separated advanced number ranges into a follow-up capability, and completed API, transaction, undo, UI, testing, risk, and compliance contracts.

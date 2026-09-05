@@ -1,5 +1,9 @@
 # Manufacturing Wave 0 Specification Backlog
 
+> **Backlog role changed (2026-09-05):** [`Manufacturing End-to-End MVP`](2026-09-05-manufacturing-end-to-end-mvp.md) defines the active first-release scope. It uses P1.0a, P1.4a, and Manufacturing-owned profiles of P1.7/P1.8b/P1.9-P1.12 over current Catalog/WMS behavior. P1.1-P1.3, P1.4b-h, P1.5-P1.6, P1.8a, and their cross-module refactors remain intact as follow-on backlog.
+
+> Backlog order is not post-MVP priority. Once the MVP is in use, maintainers select the next capability from observed blockers, workarounds, adoption, business impact, and cross-module cost. Detailed specification work begins only after that selection.
+
 ## TLDR
 
 This planning specification turns the accepted Manufacturing roadmap into a spec-first backlog. It does not approve every implementation slice by itself. It defines which Wave 0 capabilities require a new specification, which existing specifications require readiness review, which work may proceed in parallel, and which dependency gates prevent a specification from being finalized or implemented.
@@ -399,6 +403,8 @@ Every child records its work-item ID, owner, planned artifact, upstream dependen
 **Internally coherent planning backlog, ready for owner review.** After approval, the first authoring batch and GitHub tracking structure may be created. No implementation is authorized by this document.
 
 ## Changelog
+
+- 2026-09-05: Reclassified this decomposition as follow-on backlog governed by evidence after the end-to-end MVP.
 
 - 2026-08-19: Created the Wave 0 specification backlog skeleton with P1.0a, Manufacturing adapter planning, readiness artifacts, and deferred P1.13.
 - 2026-08-19: Accepted one `packages/manufacturing` workspace package containing one opt-in `manufacturing` runtime module; hard dependency `catalog`, optional WMS/Resources/Planner, and entrypoint-only exports.

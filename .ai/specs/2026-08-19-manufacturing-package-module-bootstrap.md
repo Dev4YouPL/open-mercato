@@ -1,5 +1,7 @@
 # Manufacturing Package and Module Bootstrap
 
+> **MVP alignment (2026-09-05):** this bootstrap remains a required input to the active [`Manufacturing End-to-End MVP`](2026-09-05-manufacturing-end-to-end-mvp.md). It is enabling work, not a separately usable Manufacturing release; domain work should proceed toward the complete MVP flow after the bootstrap is proven.
+
 ## TLDR
 
 P1.0a creates the additive OSS workspace package `packages/manufacturing`, published as `@open-mercato/manufacturing`, with one opt-in runtime module named `manufacturing`. The module has one hard dependency, `catalog`; WMS, `resources`, and `planner` remain optional peers. The first release exposes only the package root and module discovery entrypoint and does not freeze domain constants or types.
@@ -314,6 +316,8 @@ None.
 **Fully compliant: Approved at specification level. Implementation remains gated by parent roadmap acceptance.**
 
 ## Changelog
+
+- 2026-09-05: Linked the bootstrap to the active end-to-end MVP and clarified that it is enabling work, not the product outcome.
 
 - 2026-08-19: Created the P1.0a skeleton and recorded activation, dependency, and export questions.
 - 2026-08-19: Resolved the design as one opt-in `manufacturing` module with hard `catalog` dependency, optional WMS/Resources/Planner peers, and root/module consumer entrypoints.

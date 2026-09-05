@@ -1,5 +1,7 @@
 # Catalog Quantity Normalization Contract
 
+> **Post-MVP priority (2026-09-05):** this P1.3a contract remains valid roadmap work but does not block the active [`Manufacturing End-to-End MVP`](2026-09-05-manufacturing-end-to-end-mvp.md). The MVP uses current Catalog/WMS inventory-unit behavior and rejects unsupported quantities instead of changing Catalog.
+
 ## TLDR
 
 P1.3a makes the existing Catalog UoM model authoritative and deterministic. It adds one Catalog-owned resolver over the existing base unit, product conversion, and rounding fields; moves exact decimal arithmetic into a pure shared utility; and makes Catalog pricing plus Sales normalization use the same result.
@@ -221,6 +223,8 @@ Implementation validation includes `yarn generate`, relevant shared/core unit te
 **Verdict:** Design complete, pending pre-implementation readiness audit.
 
 ## Changelog
+
+- 2026-09-05: Marked P1.3a as post-MVP; the MVP uses the current compatible inventory-unit envelope.
 
 - 2026-08-13: Created P1.3a from the audited Catalog/Sales portion of the original quantity/UoM/precision proposal.
 - 2026-08-19: Clarified P1.3a as the exact-quantity source for BOM base-output and component-line snapshots, including fixed/variable consumption and yield calculations owned by the Manufacturing definition contract.

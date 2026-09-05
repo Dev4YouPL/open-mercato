@@ -2,8 +2,8 @@
 
 > A single operational view of the Manufacturing programme. It links the product roadmap, delivery workstreams, capability specifications, and the relevant GitHub Issues and Pull Requests.
 
-**Last reviewed:** 2026-08-29
-**Programme status:** The product roadmap is the accepted baseline for staged Wave 0 delivery. Each slice proceeds only through a dedicated ready specification and its named safety gates.
+**Last reviewed:** 2026-09-05
+**Programme status:** The active first-release focus is the [end-to-end Manufacturing MVP](../../.ai/specs/2026-09-05-manufacturing-end-to-end-mvp.md). The broader Wave 0 roadmap remains the accepted architecture and follow-on backlog.
 
 ## How to use this document
 
@@ -16,13 +16,17 @@
 
 ## Direction in one sentence
 
-First establish safe foundations: plant identity, warehouse-role rules, exact quantity and unit handling, versioned manufacturing definitions, and a WMS posting contract. Only then build an executable production-order lifecycle.
+Deliver one narrow production result first: define and release a direct BOM, release a single-step order, issue materials with existing WMS adjustments, receive full output with existing WMS receive, and compensate errors from recorded evidence.
 
-The opt-in `manufacturing` module owns production intent, semantic commands, derived posting lines, and production history. WMS remains the owner of physical stock, reservations, lots, serials, and inventory movements through a generic atomic posting-group contract. Manufacturing must not create a competing inventory ledger, and WMS must not interpret Manufacturing definitions or calculate backflush.
+The MVP changes only Manufacturing. Catalog UoM behavior, WMS schema/precision, WMS Site modelling, and WMS commands remain untouched. The module calls existing `wms.inventory.adjust` and `wms.inventory.receive` commands and handles per-line retry/compensation itself; WMS remains authoritative for stock and movements. The generic atomic posting-group contract remains later target architecture.
+
+This sequencing maximizes business learning per unit of engineering effort. A BOM alone is not a production outcome, while the complete Wave 0 programme would change several domains before users validate the workflow. After MVP release, actual blockers and adoption evidence decide whether the next investment is multi-level production, routing, backflush, planning, traceability, a shared-platform improvement, or something else. The existing roadmap is the long-term option map, not a committed delivery queue.
 
 Catalog and UoM are an external contract boundary, not a Manufacturing delivery dependency. Catalog remains the owner of product, variant, and unit-of-measure identity. Manufacturing consumes its exact quantity/conversion contract only on quantity-bearing BOM, definition-release, and production-order paths. Bootstrap, Work Centers, routing drafts, the neutral fact ledger, and other non-quantity work may proceed without waiting for Catalog delivery.
 
 ## Current work overview
+
+The capability readiness table below is retained as the full programme backlog. Current product priority is the subset selected by the end-to-end MVP; readiness alone does not place a workstream on the first-release path.
 
 | ID | Workstream | Status | Can start now? | Dependencies | Next step |
 |---|---|---|---|---|---|
@@ -141,6 +145,7 @@ Active Manufacturing and foundation trackers are linked from the parent Issue an
 
 | Document | Role |
 |---|---|
+| [`2026-09-05-manufacturing-end-to-end-mvp.md`](../../.ai/specs/2026-09-05-manufacturing-end-to-end-mvp.md) | Active first-release scope: Manufacturing-only vertical slice over existing Catalog and WMS behavior |
 | [`2026-08-13-manufacturing-product-roadmap.md`](../../.ai/specs/2026-08-13-manufacturing-product-roadmap.md) | Accepted normative product roadmap, ownership model, architecture laws, and readiness gates |
 | [`2026-08-19-manufacturing-wave-0-specification-backlog.md`](../../.ai/specs/2026-08-19-manufacturing-wave-0-specification-backlog.md) | Owner-approved specification decomposition, readiness definitions, artifact plan and GitHub tracker structure |
 | [`waves-and-readiness.md`](waves-and-readiness.md) | Business capability waves and the evidence-linked Wave 0 specification-readiness dashboard |
