@@ -2222,6 +2222,7 @@ Standardized **zero-records** empty state for list views — pass it to a `DataT
 | Prop | Type | Notes |
 |---|---|---|
 | `entityName` | `string` | Plural label; builds the default title `No {entity} yet`. Falls back to a generic word. |
+| `entityNameGenitive` | `string` | Same label in the form the title needs after its negation word (Polish `Brak wersji roboczych BOM`, not `Brak Wersje robocze BOM`). Falls back to `entityName`. |
 | `title` / `description` | `string` | Override the generated copy. |
 | `createHref` | `string` | Renders a primary "create" **link** (real `<a>`). |
 | `onCreate` | `() => void` | Renders a primary "create" **button** (for dialog-based create). |
@@ -2231,6 +2232,7 @@ Standardized **zero-records** empty state for list views — pass it to a `DataT
 ### MUST rules
 
 - Reuse the list's **existing** create href + label + entity/title i18n keys — do not invent new copy per list.
+- Pass `entityNameGenitive` alongside `entityName` (and `filterAwareEmptyState.entityNamePluralGenitive` on the host `DataTable`). The generated sentences interpolate the label after a negation word, which case-inflecting locales decline — without it Polish reads `Brak Wersje robocze BOM`. Add one sibling i18n key per list (`<module>.<entity>.entityPluralGenitive`) and translate it to the same string as the nominative in languages without case inflection.
 - Omit `createHref`/`onCreate` for lists with no create flow (read-only/log/run/embedded sub-tables); `DataTable`'s standardized default already covers them — do NOT force a dead "Create" CTA.
 - Use `onCreate` (not `createHref`) when the list creates via a dialog.
 

@@ -31,6 +31,16 @@ describe('ListEmptyState', () => {
     expect(screen.getByText('No companies yet')).toBeInTheDocument()
   })
 
+  it('prefers the inflected label in the title when one is supplied', () => {
+    render(<ListEmptyState entityName="Wersje robocze BOM" entityNameGenitive="wersji roboczych BOM" />)
+    expect(screen.getByText('No wersji roboczych BOM yet')).toBeInTheDocument()
+  })
+
+  it('falls back to entityName when no inflected label is supplied', () => {
+    render(<ListEmptyState entityName="companies" entityNameGenitive={undefined} />)
+    expect(screen.getByText('No companies yet')).toBeInTheDocument()
+  })
+
   it('renders a create link (role=link) with href and label when createHref is set', () => {
     render(<ListEmptyState entityName="companies" createHref="/backend/customers/companies/create" createLabel="New company" />)
     const link = screen.getByRole('link', { name: /new company/i })
