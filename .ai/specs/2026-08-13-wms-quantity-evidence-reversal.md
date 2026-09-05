@@ -1,5 +1,7 @@
 # WMS Quantity Evidence and Correlated Reversal
 
+> **Post-MVP priority (2026-09-05):** this P1.3c remediation remains valid roadmap work but does not block the active [`Manufacturing End-to-End MVP`](2026-09-05-manufacturing-end-to-end-mvp.md). The MVP changes no WMS evidence/reversal contract and uses Manufacturing-owned correlation plus compensating calls to existing WMS commands.
+
 ## TLDR
 
 P1.3c adds immutable UoM evidence to UoM-aware WMS reservations and movements and makes reversal explicitly reference the original movement. A reversal copies the historical quantity evidence and negates the persisted normalized quantity; it never recalculates from current Catalog configuration.
@@ -220,9 +222,11 @@ Documentation validation uses `git diff --check` and `yarn agents:check-budget`.
 - No cross-module ORM relationship is introduced.
 - No new UI is required beyond existing detail/audit presentation of additive evidence.
 
-**Verdict:** Design complete as WMS-owned non-critical backlog, pending P1.3a/P1.3b and pre-implementation readiness audit; mandatory before stock-affecting production.
+**Verdict:** Design complete as WMS-owned non-critical backlog, pending P1.3a/P1.3b and pre-implementation readiness audit; mandatory before broader generic P1.11 reversal, but not before restricted MVP-X compensation.
 
 ## Changelog
+
+- 2026-09-05: Marked P1.3c as post-MVP; the MVP uses Manufacturing-owned correlation and compensating existing WMS calls.
 
 - 2026-08-13: Created P1.3c from the audited WMS evidence/reversal portion of the original quantity proposal.
 - 2026-08-19: Aligned P1.3c with the generic WMS posting-group boundary: Manufacturing semantics and line derivation remain in the future P1.8 adapter; aligned governance with pending parent-roadmap acceptance.
@@ -235,4 +239,4 @@ Documentation validation uses `git diff --check` and `yarn agents:check-budget`.
 - **Cache:** Passed; database remains authoritative for remainder.
 - **Commands:** Passed; append-only reversal is fully specified.
 - **Risks:** Passed.
-- **Verdict:** Design complete, pending parent-roadmap acceptance and readiness review; implementation remains gated.
+- **Verdict:** Design complete under the accepted parent roadmap, pending its own readiness review; implementation remains gated.

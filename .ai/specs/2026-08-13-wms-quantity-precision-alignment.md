@@ -1,5 +1,7 @@
 # WMS Quantity Precision and Profile Alignment
 
+> **Post-MVP priority (2026-09-05):** this P1.3b remediation remains valid roadmap work but does not block the active [`Manufacturing End-to-End MVP`](2026-09-05-manufacturing-end-to-end-mvp.md). The MVP changes no WMS quantity column or arithmetic and supports only quantities in the frozen current-unit envelope; MVP-X adds only a partial unique correlation index over existing movement columns for race-safe intent replay.
+
 ## TLDR
 
 P1.3b aligns WMS storage and arithmetic with the exact normalized quantity produced by P1.3a. It widens WMS quantity capacity without narrowing existing values, replaces ledger-critical JavaScript-number arithmetic with the shared exact-decimal utility, and prevents new or changed WMS inventory profiles from disagreeing with the Catalog base unit.
@@ -195,9 +197,12 @@ Documentation validation uses `git diff --check` and `yarn agents:check-budget`.
 - Commands, guards, tenant scope, OpenAPI, audit, idempotency, and cache mechanisms remain canonical.
 - No new UI except translated degraded-state feedback on the existing profile surface.
 
-**Verdict:** Design complete as WMS-owned non-critical backlog, pending P1.3a and pre-implementation readiness audit; mandatory before stock-affecting production.
+**Verdict:** Design complete as WMS-owned non-critical backlog, pending P1.3a and pre-implementation readiness audit; mandatory before broader P1.11 precision support, but not before the restricted MVP-X compatibility envelope.
 
 ## Changelog
+
+- 2026-09-05: Clarified that MVP-X leaves WMS quantity storage/arithmetic unchanged while adding only its race-safe production-correlation index.
+- 2026-09-05: Marked P1.3b as post-MVP; the MVP does not change WMS quantity precision, columns, or arithmetic.
 
 - 2026-08-13: Created P1.3b from the audited WMS precision/profile portion of the original quantity proposal.
 - 2026-08-19: Clarified that P1.3b remains generic WMS precision work and does not add posting groups, consumer registrations, or production-specific enums; aligned governance with pending parent-roadmap acceptance.
@@ -210,4 +215,4 @@ Documentation validation uses `git diff --check` and `yarn agents:check-budget`.
 - **Cache:** Passed.
 - **Commands:** Passed.
 - **Risks:** Passed.
-- **Verdict:** Design complete, pending parent-roadmap acceptance and readiness review; implementation remains gated.
+- **Verdict:** Design complete under the accepted parent roadmap, pending its own readiness review; implementation remains gated.

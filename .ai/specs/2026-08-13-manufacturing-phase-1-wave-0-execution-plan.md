@@ -1,10 +1,14 @@
 # Manufacturing Phase 1 / Wave 0 Execution Plan
 
+> **Delivery priority changed (2026-09-05):** the active first release is the narrower CRUD-first [`Manufacturing End-to-End MVP`](2026-09-05-manufacturing-end-to-end-mvp.md): extensible BOM/order records and one manually controlled stock-affecting flow. This plan and all P1 decompositions remain valid, but broader domain validation and work outside the MVP profiles are subsequent stages and must not expand the first-release critical path.
+
+> The purpose is to validate business value through a complete stock-affecting production flow before investing in broad foundations. After MVP evidence is reviewed, this plan is a menu of dependency-aware next steps rather than an automatic implementation sequence.
+
 ## TLDR
 
 This document turns the Manufacturing roadmap into an execution-oriented Phase 1 plan with staged readiness. It permits real draft BOM/routing CRUD before stock execution, identifies the smaller gate for releasing production orders, and reserves exact WMS prerequisites for stock-affecting execution.
 
-The plan deliberately allows early implementation of **manufacturing-definition drafts**: BOMs, optional sequential routings, operations, and work-centre applicability. Draft CRUD/API/UI does not alter physical stock. A draft cannot become an executable released order until the smaller release gate passes, and it cannot post material movements until exact WMS precision/evidence and the atomic posting contract pass.
+For the broader post-MVP Wave 0 profile, the plan allows early implementation of **manufacturing-definition drafts**: BOMs, optional sequential routings, operations, and work-centre applicability. Draft CRUD/API/UI does not alter physical stock. That broader profile cannot release an executable order until its release gate passes or post material movements until exact WMS precision/evidence and the atomic posting contract pass. The restricted MVP follows its dedicated MVP-D/MVP-O/MVP-X gates instead and uses the current-unit compatibility envelope plus the narrow guarded WMS posting port.
 
 The target composition is:
 
@@ -200,6 +204,9 @@ This document itself changes no contract. After the parent roadmap is accepted, 
 The WMS–Sales work is especially contract-sensitive: current sales-order event IDs, routes, commands, ACLs, widgets, and integrations may not be removed or renamed in one release. If they move to an optional integration boundary, the implementation spec must define a deprecation period, compatibility bridge, upgrade notes, and regression coverage.
 
 ## Changelog
+
+- 2026-09-05: Qualified the exact-precision and atomic-posting gates as broader post-MVP requirements; restricted MVP execution follows MVP-D/MVP-O/MVP-X.
+- 2026-09-05: Made the end-to-end MVP the active delivery path and retained broader Wave 0 sequencing as post-MVP guidance.
 
 - 2026-08-13: Created the Phase 1/Wave 0 execution plan from the proposed Manufacturing roadmap, separating early manufacturing-definition draft work from WMS-dependent execution work.
 - 2026-08-13: Assigned the minimal `Site` and current site-to-warehouse-role model to `wms`.

@@ -1,5 +1,7 @@
 # Manufacturing Bounded Multi-level BOM Draft Preview
 
+> **MVP alignment (2026-09-05):** the restricted bounded preview is part of MVP-D because the first user must be able to inspect the structure being released. Implement only the existing bounded tree needed by the manual MVP walkthrough; broader BOM workspace, comparison, where-used, collaboration, and document-control capabilities remain post-MVP. For this profile, exact propagation uses MVP-D's same-unit whole-number predicate and rejects results that require conversion, fractions, or rounding; the broader Catalog exact-quantity resolver remains the gate for general P1.4b behavior. MVP-D preview traverses explicitly selected released child revisions rather than P1.4b's active-draft child resolver.
+
 ## TLDR
 
 P1.4b adds a bounded, read-only multi-level preview of the editable BOM graph created by P1.4a. It resolves every `produce` occurrence variant-first with product fallback, keeps every repeated line as a distinct occurrence, treats every `stock` line as a leaf, calculates exact gross component requirements, and reports unresolved child BOMs as warnings.
@@ -8,7 +10,7 @@ The preview is evaluated from one tenant- and organization-scoped PostgreSQL `RE
 
 P1.4b adds no entity, migration, mutation, command, undo action, ACL feature, public package export, cache, or search projection. It is an independently deployable read capability over P1.4a and is not the release/execution explosion contract.
 
-**Specification status:** Full implementation-ready design. Product implementation remains gated by P1.0 acceptance, P1.0a, the Catalog exact quantity/UoM contract, and implemented P1.4a draft authoring/integrity.
+**Specification status:** Full implementation-ready design. General P1.4b remains gated by P1.0 acceptance, P1.0a, the Catalog exact quantity/UoM contract, and implemented P1.4a draft authoring/integrity. The restricted MVP preview instead follows the accepted MVP-D current-unit profile.
 
 **Tracker:** [Issue #5405](https://github.com/open-mercato/open-mercato/issues/5405), under [Wave 0 tracker #5386](https://github.com/open-mercato/open-mercato/issues/5386).
 
@@ -519,7 +521,7 @@ The synchronous path is justified only by the hard `2,000`-node/depth-`20` cap. 
 | Work item | Contract |
 |---|---|
 | P1.0a | One opt-in package/runtime module; Catalog only hard dependency; no public domain export. |
-| Catalog exact quantity/UoM contract | Exact decimal multiply/divide/round and immutable line/revision evidence. |
+| Catalog exact quantity/UoM contract | Exact decimal multiply/divide/round and immutable line/revision evidence for general P1.4b; MVP-D supplies only its bounded current-unit exact-decimal profile. |
 | P1.4a | Blocking source schema, scoped readers, target resolution, occurrence/order semantics, cycle prevention, ACL/events. |
 | P1.5 | Preview contains no operation/routing reference; a later additive field needs explicit display semantics. |
 | P1.6 | No Work Center/resource/calendar dependency, data, or capacity calculation. |
@@ -624,11 +626,14 @@ None.
 
 ### Verdict
 
-**Fully compliant at specification level.** Approved as implementation-ready subject to P1.0 acceptance, ready P1.0a, the Catalog quantity/UoM contract, and P1.4a prerequisites.
+**Fully compliant at specification level.** General P1.4b is approved as implementation-ready subject to P1.0 acceptance, ready P1.0a, the Catalog quantity/UoM contract, and P1.4a prerequisites. The restricted MVP-D preview instead follows its selected-released-child and same-unit integer profile.
 
-Implementation remains gated by P1.0, P1.0a, the Catalog quantity/UoM contract, and P1.4a. No product code is authorized by this documentation task.
+General P1.4b implementation remains gated by P1.0, P1.0a, the Catalog quantity/UoM contract, and P1.4a. Restricted MVP-D follows its own stated gates. No product code is authorized by this documentation task.
 
 ## Changelog
+
+- 2026-09-05: Added the restricted MVP-D same-unit integer propagation and selected-released-child profile while retaining the Catalog-resolver gate for general P1.4b behavior.
+- 2026-09-05: Aligned the restricted bounded preview with MVP-D while keeping broader BOM workspace capabilities post-MVP.
 
 - 2026-08-19: Created P1.4b after the combined P1.4 fresh-context review returned **SPLIT** and the roadmap owner accepted the authoring/preview boundary.
 - 2026-08-19: Defined draft-only resolution, occurrence identity, exact variable/fixed/yield calculation, repeatable-read consistency, all-or-error limits, API/UI, and evidence gates.

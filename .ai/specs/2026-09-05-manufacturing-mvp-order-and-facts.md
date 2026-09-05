@@ -1,0 +1,97 @@
+# Manufacturing MVP Order and Facts
+
+## TLDR
+
+This proposed child specification narrows P1.9 and P1.10 to a single-step production order, immutable execution snapshot, and append-only fact/intention ledger for the [Manufacturing End-to-End MVP](2026-09-05-manufacturing-end-to-end-mvp.md).
+
+**Status:** Proposed MVP child contract — maintainer review and implementation-readiness audit pending.
+
+## Overview
+
+MVP-O owns production intent and durable Manufacturing evidence without performing physical inventory writes itself. It is independently mergeable behind the opt-in module after MVP-D is accepted.
+
+This child is an extensible CRUD-first order model with the smallest state and evidence surface required by one manual production flow. It is not a complete production-control domain model. New order types, operations, partials, policies, genealogy, and automated orchestration remain additive follow-on decisions driven by observed usage.
+
+## Problem Statement
+
+The broad P1.9/P1.10 model includes routing, partial confirmation, scrap, and Site-aware behavior. The narrow MVP needs a smaller lifecycle whose terminal states remain consistent with compensating stock evidence.
+
+## Proposed Solution
+
+Define one single-step order aggregate plus append-only intents and facts. The order retains the full multi-level definition snapshot for traceability and gross-requirement visibility but executes only the direct occurrences of its top-level revision. Physical writes remain delegated to MVP-X through a typed port.
+
+The first release validates only rules needed to keep the supported happy path understandable and inventory-safe. It must not anticipate every legal transition or production exception with a configurable state machine; unsupported actions fail clearly and remain candidates for later product learning.
+
+## Scope
+
+- Create a draft order for one released multi-level definition and requested output quantity, with an optional explicit parent-order reference for manually coordinated subassembly production.
+- Select existing material/output warehouse and location IDs without introducing Site.
+- Release an immutable execution snapshot containing the complete selected occurrence tree, selected revision IDs, scaled gross requirements, the top-level direct execution set, output quantity, current inventory-unit evidence, definition identity, and readable warehouse/location snapshots.
+- Track issue intent per BOM occurrence and issue-attempt number, one receipt intent per order receipt attempt, and one correction intent per original WMS movement. A fully compensated material set closes its issue attempt; a later issue creates a new attempt and new intent UUIDs rather than replaying corrected movements.
+- Persist append-only accepted, failed, and corrected facts with correlation, idempotency key, recorded/occurred timestamps, WMS movement ID, and original-fact link.
+
+Routing, operations, partial quantities, backflush, scrap, `complete_short`, recursive descendant execution inside one order, automatic child-order creation, MRP, phantom flattening, reservations, costing, and lot/serial execution are excluded.
+
+## Lifecycle
+
+```text
+draft -> released -> in_progress -> completed
+   \       \-> cancelled          \-> correction_pending -> in_progress/released
+    \-> cancelled
+in_progress -> cancellation_pending -> cancelled
+completed -> cancellation_pending -> cancelled
+```
+
+- `released` requires a valid immutable execution snapshot.
+- The first accepted issue moves the order to `in_progress`.
+- Receipt is forbidden until every required direct occurrence in the current issue attempt has an accepted, uncompensated issue fact. `completed` requires that complete material set plus one accepted, uncompensated full-output receipt.
+- Before any lifecycle mutation, Manufacturing serializes the order and reconciles every pending stock intent through the WMS correlation lookup. The transition uses reconciled evidence, so an order with a WMS-committed but locally unrecorded movement cannot take the stock-free cancellation path or begin a conflicting action.
+- Cancellation after any stock effect remains `cancellation_pending` until every uncompensated posting is compensated; failures remain visible and retryable. Cancellation after receipt compensates output first and begins material compensation only after output compensation succeeds.
+- Correcting the only output receipt moves `completed` through `correction_pending` to `in_progress` and permits a new receipt intent.
+- Material correction is forbidden while an uncompensated output receipt exists. Once output is absent or compensated, the operator may compensate an issue attempt line by line, but no replacement issue or receipt is allowed while that attempt is partially compensated. Correcting the complete issued set returns the order to `released`; a later full issue uses a new issue-attempt number and new intents for every direct occurrence.
+
+Every transition is a command with optimistic locking and an explicit allowed-source-state matrix. Facts are append-only and never rewritten by correction.
+
+## Data, API, and UI
+
+Orders are tenant/organization scoped, user-editable, soft-deletable only while draft, and carry `updated_at`. Facts and intents are append-only scoped rows. Cross-module definition and WMS references use scalar IDs plus snapshots.
+
+Authenticated, feature-guarded APIs cover order list/create/read/update, release, issue orchestration entry, receive orchestration entry, cancel, correct, and fact/evidence read. Issue is the only transition that starts work; the MVP has no separate start endpoint. Action routes use zod, `metadata`, `openApi`, mutation guards, optimistic-lock headers, commands, and stable errors.
+
+Backend page roots remain server components. Client islands are limited to the order `DataTable`, `CrudForm`, action confirmations, and evidence timeline. The implementation spec must provide the concrete `"use client"` ledger, zero heavy page-root dependencies, hydration smoke coverage, and key transition tests.
+
+## Architecture
+
+Manufacturing owns state transitions, snapshots, intent fingerprints, facts, authorization, and reconciliation decisions. It stores scalar released-definition, optional parent-order, and WMS movement IDs. A `produce` occurrence is issued to its parent as stocked subassembly inventory; its descendant raw materials belong to a separately created order. WMS owns balances and movements; the order aggregate advances only from persisted accepted facts.
+
+## Idempotency and recovery
+
+Each logical action first persists its intent and input fingerprint. Repeating the same key and fingerprint returns the original outcome; reusing the key with different input fails as incompatible replay. Before every lifecycle mutation or retry, pending intents are reconciled against the WMS posting port under the order's serialization boundary; no new state transition or physical stock work begins until reconciliation completes.
+
+## Testing and readiness
+
+Coverage must prove lifecycle transitions and forbidden transitions, `correction_pending -> released`, immutable multi-level snapshots, direct-occurrence execution boundaries, optional parent-order scope validation, no implicit child-order creation, stale versions, scope isolation, intent cardinality per issue attempt, same-key replay, concurrent identical and incompatible replay, pending-intent reconciliation before every transition, cancellation denial/reclassification across the WMS-commit/local-save crash window, receipt denial before complete issue, replacement-issue and receipt denial during partial issue-attempt compensation, re-issue with new intents after full-attempt compensation, material-correction denial while output remains, output-first cancellation after receipt, cancellation before stock effects, after issue, and after receipt, mixed correction state transitions, append-only evidence, disabled WMS/module behavior, API/OpenAPI, and list/detail/action UI paths.
+
+This child becomes implementation-ready only after the definition-release child is accepted and its own exact model/API/ACL/event/command contracts pass readiness review. Site, routing, Work Centers, generic posting groups, and broader P1.10 behavior are not MVP prerequisites.
+
+## Migration and Backward Compatibility
+
+All order, intent, and fact surfaces are additive. The implementation specification must freeze stable IDs and schemas, include additive migrations and snapshots, and classify every public surface under `BACKWARD_COMPATIBILITY.md`.
+
+## Risks & Impact Review
+
+- **Terminal state disagrees with net stock evidence:** mitigation is fact-derived transition invariants and non-terminal pending correction/cancellation states.
+- **Duplicate intent changes quantity or target:** mitigation is persisted fingerprint comparison and deterministic incompatible-replay rejection.
+- **Master data changes reinterpret history:** mitigation is immutable definition, quantity, warehouse, and location snapshots.
+
+## Final Compliance Report
+
+The contract preserves tenant/organization isolation, append-only history, optimistic locking, command state transitions, scalar cross-module references, canonical API/UI patterns, and deterministic retry requirements. It remains non-compliant for implementation until exact schemas, transition/error matrices, ACL/event IDs, frontend ledger, migrations, and readiness evidence are reviewed.
+
+## Changelog
+
+- 2026-09-05: Required pending-intent reconciliation before every lifecycle mutation, added correction-to-released, and ordered completed cancellation output-first.
+- 2026-09-05: Required complete issue before receipt, attempt-scoped issue intents, safe mixed correction ordering, cancellation after receipt, and issue as the sole start transition.
+- 2026-09-05: Clarified MVP-O as an extensible CRUD-first order model rather than a complete production-control state or policy engine.
+- 2026-09-05: Created the proposed single-step order and append-only facts child contract for the end-to-end MVP.
+- 2026-09-05: Added full multi-level execution snapshots and optional explicit parent-order references while retaining direct-occurrence execution per order.
