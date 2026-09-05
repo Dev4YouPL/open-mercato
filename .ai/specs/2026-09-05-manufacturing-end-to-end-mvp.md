@@ -216,7 +216,7 @@ Manufacturing production order + execution snapshot
 ```text
 BOM definition: draft -> released
 Production order: draft -> released -> in_progress -> completed
-                    \-> cancelled     \-> correction_pending -> in_progress
+                    \-> cancelled     \-> correction_pending -> in_progress/released
                     in_progress/completed -> cancellation_pending -> cancelled
 ```
 
@@ -297,7 +297,7 @@ The MVP is implemented as testable internal increments but released as one outco
 
 1. Add the narrow typed WMS posting port and implement the Manufacturing adapter over it; the port delegates to current `wms.inventory.adjust` and `wms.inventory.receive` commands behind WMS guards.
 2. Implement explicit per-line issue, full receipt, deterministic retries, and compensating correction.
-3. Test and document partial-failure behavior without changing WMS.
+3. Test and document partial-failure behavior without adding atomic posting groups or changing WMS quantity columns or arithmetic.
 
 ### Increment 4 - acceptance and OSS release
 
