@@ -287,3 +287,110 @@ export class ManufacturingBomLine {
   @Property({ name: 'deleted_at', type: Date, nullable: true })
   deletedAt?: Date | null
 }
+
+type WorkCenterOptionalProps = 'createdAt' | 'updatedAt' | 'deletedAt'
+
+@Entity({ tableName: 'manufacturing_work_centers' })
+@Index({ name: 'manufacturing_work_centers_scope_idx', properties: ['tenantId', 'organizationId'] })
+@Index({
+  name: 'manufacturing_work_centers_scope_unique_idx',
+  expression:
+    'create unique index "manufacturing_work_centers_scope_unique_idx" on "manufacturing_work_centers" ("id", "tenant_id", "organization_id")',
+})
+@Index({
+  name: 'manufacturing_work_centers_code_unique_idx',
+  expression:
+    'create unique index "manufacturing_work_centers_code_unique_idx" on "manufacturing_work_centers" ("tenant_id", "organization_id", lower("code")) where "deleted_at" is null',
+})
+@Index({
+  name: 'manufacturing_work_centers_list_idx',
+  expression:
+    'create index "manufacturing_work_centers_list_idx" on "manufacturing_work_centers" ("tenant_id", "organization_id", "code", "id") where "deleted_at" is null',
+})
+@Check({ name: 'manufacturing_work_centers_code_len_chk', expression: 'char_length("code") between 1 and 100' })
+@Check({ name: 'manufacturing_work_centers_name_len_chk', expression: 'char_length("name") between 1 and 200' })
+@Check({
+  name: 'manufacturing_work_centers_description_len_chk',
+  expression: '"description" is null or char_length("description") <= 8000',
+})
+export class ManufacturingWorkCenter {
+  [OptionalProps]?: WorkCenterOptionalProps | 'description' | 'isActive'
+
+  @PrimaryKey({ type: 'uuid', defaultRaw: 'gen_random_uuid()' })
+  id!: string
+
+  @Property({ name: 'organization_id', type: 'uuid' })
+  organizationId!: string
+
+  @Property({ name: 'tenant_id', type: 'uuid' })
+  tenantId!: string
+
+  @Property({ type: 'text' })
+  code!: string
+
+  @Property({ type: 'text' })
+  name!: string
+
+  @Property({ type: 'text', nullable: true })
+  description?: string | null
+
+  @Property({ name: 'is_active', type: 'boolean', default: true })
+  isActive: boolean = true
+
+  @Property({ name: 'created_at', type: Date, onCreate: () => new Date() })
+  createdAt: Date = new Date()
+
+  /**
+   * Optimistic-lock version for the whole aggregate, membership included.
+   * Bumped monotonically by the commands (lib/bom/version.ts) with no
+   * `onUpdate` hook, so a membership-only change still advances the version the
+   * client compared against.
+   */
+  @Property({ name: 'updated_at', type: Date })
+  updatedAt: Date = new Date()
+
+  @Property({ name: 'deleted_at', type: Date, nullable: true })
+  deletedAt?: Date | null
+}
+
+@Entity({ tableName: 'manufacturing_work_center_resources' })
+@Index({
+  name: 'manufacturing_work_center_resources_unique_idx',
+  expression:
+    'create unique index "manufacturing_work_center_resources_unique_idx" on "manufacturing_work_center_resources" ("tenant_id", "organization_id", "work_center_id", "resource_id")',
+})
+export class ManufacturingWorkCenterResource {
+  [OptionalProps]?: 'createdAt' | 'updatedAt'
+
+  @PrimaryKey({ type: 'uuid', defaultRaw: 'gen_random_uuid()' })
+  id!: string
+
+  /**
+   * Owning aggregate. The membership row's scope must equal its parent's; that
+   * invariant is enforced by the scoped command write path (there is no
+   * composite scoped FK here) and pinned by a regression test.
+   */
+  @ManyToOne(() => ManufacturingWorkCenter, { fieldName: 'work_center_id', deleteRule: 'restrict' })
+  workCenter!: ManufacturingWorkCenter
+
+  @Property({ name: 'organization_id', type: 'uuid' })
+  organizationId!: string
+
+  @Property({ name: 'tenant_id', type: 'uuid' })
+  tenantId!: string
+
+  /**
+   * Scalar id of a `resources` resource. Deliberately a plain uuid column with
+   * no database foreign key and no ORM relation: Manufacturing must not create
+   * a cross-module ORM relationship, and a disabled or deleted resource must
+   * not cascade into Work Centre history.
+   */
+  @Property({ name: 'resource_id', type: 'uuid' })
+  resourceId!: string
+
+  @Property({ name: 'created_at', type: Date, onCreate: () => new Date() })
+  createdAt: Date = new Date()
+
+  @Property({ name: 'updated_at', type: Date, onUpdate: () => new Date() })
+  updatedAt: Date = new Date()
+}

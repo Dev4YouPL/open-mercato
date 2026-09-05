@@ -120,12 +120,16 @@ const EXPECTED_API_ROUTES = [
   '/manufacturing/boms/[bomId]/lines',
   '/manufacturing/boms/[bomId]/lines/[lineId]',
   '/manufacturing/boms/[bomId]/lines/[lineId]/reorder',
+  '/manufacturing/work-centers',
 ]
 
 const EXPECTED_BACKEND_ROUTES = [
   '/backend/manufacturing/boms',
   '/backend/manufacturing/boms/create',
   '/backend/manufacturing/boms/[id]',
+  '/backend/manufacturing/work-centers',
+  '/backend/manufacturing/work-centers/create',
+  '/backend/manufacturing/work-centers/[id]',
 ]
 
 function extractApiPaths(output: string): string[] {

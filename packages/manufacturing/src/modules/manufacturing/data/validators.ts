@@ -96,3 +96,52 @@ export type UpdateBomInput = z.infer<typeof updateBomSchema>
 export type BomLineInput = z.infer<typeof bomLineInputSchema>
 export type BomLinePatchInput = z.infer<typeof bomLinePatchSchema>
 export type ReorderLineInput = z.infer<typeof reorderLineSchema>
+
+export const workCenterCodeSchema = z.string().trim().min(1).max(100)
+export const workCenterNameSchema = z.string().trim().min(1).max(200)
+export const workCenterDescriptionSchema = z.string().trim().max(8000).nullable().optional()
+
+/**
+ * Membership input. The 100-item bound is enforced after de-duplication by
+ * `normalizeAndAssertResourceIds`, so an over-limit request answers with the
+ * stable `resource_membership_limit_exceeded` code rather than a generic zod
+ * error; the generous ceiling here only stops unbounded payloads.
+ */
+export const workCenterResourceIdsSchema = z.array(z.string().uuid()).max(1000)
+
+export const createWorkCenterSchema = z.object({
+  code: workCenterCodeSchema,
+  name: workCenterNameSchema,
+  description: workCenterDescriptionSchema,
+  isActive: z.boolean().optional(),
+  resourceIds: workCenterResourceIdsSchema.optional(),
+})
+
+export const updateWorkCenterSchema = z.object({
+  id: z.string().uuid(),
+  code: workCenterCodeSchema.optional(),
+  name: workCenterNameSchema.optional(),
+  description: workCenterDescriptionSchema,
+  isActive: z.boolean().optional(),
+  resourceIds: workCenterResourceIdsSchema.optional(),
+})
+
+export const deleteWorkCenterSchema = z.object({
+  id: z.string().uuid(),
+})
+
+export const listWorkCentersQuerySchema = z
+  .object({
+    page: z.coerce.number().min(1).default(1),
+    pageSize: z.coerce.number().min(1).max(100).default(50),
+    search: z.string().optional(),
+    ids: z.string().optional(),
+    isActive: z.string().optional(),
+    sortField: z.string().optional(),
+    sortDir: z.enum(['asc', 'desc']).optional(),
+  })
+  .passthrough()
+
+export type CreateWorkCenterInput = z.infer<typeof createWorkCenterSchema>
+export type UpdateWorkCenterInput = z.infer<typeof updateWorkCenterSchema>
+export type DeleteWorkCenterInput = z.infer<typeof deleteWorkCenterSchema>
