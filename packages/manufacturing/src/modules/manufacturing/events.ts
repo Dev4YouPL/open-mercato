@@ -32,6 +32,27 @@ const events = [
     category: 'crud',
     clientBroadcast: true,
   },
+  {
+    id: 'manufacturing.work_center.created',
+    label: 'Work Centre Created',
+    entity: 'work_center',
+    category: 'crud',
+    clientBroadcast: true,
+  },
+  {
+    id: 'manufacturing.work_center.updated',
+    label: 'Work Centre Updated',
+    entity: 'work_center',
+    category: 'crud',
+    clientBroadcast: true,
+  },
+  {
+    id: 'manufacturing.work_center.deleted',
+    label: 'Work Centre Deleted',
+    entity: 'work_center',
+    category: 'crud',
+    clientBroadcast: true,
+  },
 ] as const
 
 export const eventsConfig = createModuleEvents({ moduleId: 'manufacturing', events })
