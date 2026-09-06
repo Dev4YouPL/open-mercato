@@ -207,3 +207,18 @@ that failure, including Manufacturing. The scoped code/DS review found and fixed
 issue: search no longer collapses the keyset pager to a single page. The PR-wide review still carries
 the previously reported integration-level asks for live PostgreSQL concurrency/atomicity coverage, Playwright
 authoring coverage, and the graph benchmark; Phase 6 does not claim those older PR-wide gaps are closed.
+
+### Phase 7: Address Pawel S static review (2026-09-06 resume)
+
+The user explicitly requests implementation of all 25 findings in the 2026-09-05 review
+(https://github.com/Dev4YouPL/open-mercato/pull/6#issuecomment-5552766011), plus the
+associated undo/redo and integration verification. Existing completed phases remain intact.
+The resume starts from 7cae0b5b7; the last UI implementation commit e6883ce52 is reachable.
+No architecture replacement, dependency addition, migration application to a developer database,
+branch-history rewrite, or changes to the lower PRs in the stack are planned.
+
+- [ ] 7.1 Repair and regression-test command undo/redo, decimal/UoM evidence, custom fields and Catalog restore guards (#3–7, #15).
+- [ ] 7.2 Repair and regression-test organization resolution, persistent events, validation, cursors, response data and error/OpenAPI contracts (#1, #12–14, #16–18).
+- [ ] 7.3 Repair and regression-test organization switching, minimal form updates, conflict recovery, pagination and extension/picker contracts (#2, #8–11, #19–25).
+- [ ] 7.4 Verify PostgreSQL transactions/concurrency and BOM authoring integration flows in an isolated environment; record exact evidence and any blockers.
+- [ ] 7.5 Run the configured full validation gate, authoritative review/autofix, and publish the review response on this PR.
