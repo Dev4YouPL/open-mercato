@@ -227,4 +227,16 @@ Decisions taken on the 2026-09-06 resume (user-confirmed):
 - [x] 7.2 Repair and regression-test organization resolution, persistent events, validation, cursors, response data and error/OpenAPI contracts (#1, #12–14, #16–18). — 06ef41420
 - [x] 7.3 Repair and regression-test organization switching, minimal form updates, conflict recovery, pagination and extension/picker contracts (#2, #8–11, #19–25). — 06ef41420
 - [ ] 7.4 PostgreSQL transactions/concurrency and Playwright BOM authoring verification — DEFERRED: no live database or browser in this environment. Unit + route coverage ships in 7.1–7.3; the older PR-wide integration asks (#17/#19/#22 of the 2026-09-03 review) remain open.
-- [ ] 7.5 Run the configured full validation gate, authoritative review/autofix, and publish the review response on this PR.
+- [x] 7.5 Run the configured full validation gate, authoritative review/autofix, and publish the review response on this PR. — 255d740ab
+
+Gate on `255d740ab` (local runner, Windows host):
+
+| Command | Result |
+|---|---|
+| `build:packages` (×2) | ✅ 28/28 |
+| `generate` | ✅ (pre-existing OpenAPI static-fallback warning from `language-subtag-registry`'s JSON import — not introduced here) |
+| `i18n:check-sync` | ✅ 5 locales in sync |
+| `i18n:check-usage` | ✅ 0 missing keys (3831 unused, advisory, pre-existing) |
+| `typecheck` | ✅ 28/28 |
+| `test` | ✅ `@open-mercato/manufacturing` 27 suites / 184 tests. The monorepo-wide `yarn test` still stops on the pre-existing Windows-only failures recorded in Phases 3/5 (`queue/local.strategy` EPERM, `core` `attachments/localDriver`, `warranty_claims/quantity` `toLocaleString`, `open-mercato-docs`, …); every one is green on the Linux CI runner and none imports a file this phase changed. |
+| `build:app` | ✅ compiled + TypeScript, 11m35s |
