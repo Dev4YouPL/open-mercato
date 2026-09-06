@@ -31,7 +31,11 @@ describe('Railway token resolution', () => {
     const configPath = join(cwd, 'railway.json')
     writeCachedRailwayToken(configPath, 'cached-token')
 
-    expect(statSync(configPath).mode & 0o777).toBe(0o600)
+    // Windows has no POSIX permission bits and writeCachedRailwayToken skips chmod there
+    // by design, so only assert the mode where the filesystem can represent it.
+    if (process.platform !== 'win32') {
+      expect(statSync(configPath).mode & 0o777).toBe(0o600)
+    }
     expect(readFileSync(configPath, 'utf8')).toContain('cached-token')
     chmodSync(configPath, 0o644)
     expect(() => readCachedRailwayToken(configPath, 'linux')).toThrow('permissions must be 0600')

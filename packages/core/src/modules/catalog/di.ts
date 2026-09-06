@@ -1,10 +1,13 @@
 import { asFunction, asValue } from 'awilix'
+import type { EntityManager } from '@mikro-orm/postgresql'
 import type { EventBus } from '@open-mercato/events'
 import type { AppContainer } from '@open-mercato/shared/lib/di/container'
 import { DefaultCatalogPricingService } from './services/catalogPricingService'
+import { createCatalogQuantityNormalizationService } from './services/quantityNormalizationService'
 import { CatalogProduct, CatalogProductPrice } from './data/entities'
 
 type AppCradle = AppContainer['cradle'] & {
+  em: EntityManager
   eventBus?: EventBus | null
 }
 
@@ -14,6 +17,11 @@ export function register(container: AppContainer) {
       return new DefaultCatalogPricingService(eventBus ?? null)
     })
       .singleton()
+      .proxy(),
+    catalogQuantityNormalizationService: asFunction(({ em }: AppCradle) => {
+      return createCatalogQuantityNormalizationService({ em })
+    })
+      .scoped()
       .proxy(),
     CatalogProduct: asValue(CatalogProduct),
     CatalogProductPrice: asValue(CatalogProductPrice),

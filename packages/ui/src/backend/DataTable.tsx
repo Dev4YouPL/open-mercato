@@ -446,6 +446,11 @@ export type DataTableProps<T extends RowData> = {
   filterAwareEmptyState?: {
     active: boolean
     entityNamePlural: string
+    /**
+     * Optional inflected form of `entityNamePlural` for the no-match and
+     * no-search-result sentences. See `FilteredEmptyResults`.
+     */
+    entityNamePluralGenitive?: string
     canRemoveLast: boolean
     onClearAll: () => void
     onRemoveLast: () => void
@@ -3610,6 +3615,7 @@ export function DataTable<T extends RowData>({
                     {filterAwareEmptyState?.active ? (
                       <FilteredEmptyResults
                         entityNamePlural={filterAwareEmptyState.entityNamePlural}
+                        entityNamePluralGenitive={filterAwareEmptyState.entityNamePluralGenitive}
                         canRemoveLast={filterAwareEmptyState.canRemoveLast}
                         onClearAll={filterAwareEmptyState.onClearAll}
                         onRemoveLast={filterAwareEmptyState.onRemoveLast}
@@ -3619,6 +3625,7 @@ export function DataTable<T extends RowData>({
                       <SearchEmptyResults
                         query={searchValue.trim()}
                         entityNamePlural={filterAwareEmptyState?.entityNamePlural}
+                        entityNamePluralGenitive={filterAwareEmptyState?.entityNamePluralGenitive}
                         onClearSearch={() => onSearchChange('')}
                       />
                     ) : emptyState && typeof emptyState !== 'string' ? (

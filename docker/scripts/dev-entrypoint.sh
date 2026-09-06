@@ -27,6 +27,11 @@ seed_prebuilt() {
     cp -a "$PREBUILT/node_modules/." /app/node_modules/ || return 0
     date > /app/node_modules/.prebuilt-seeded
   fi
+  # Warm-start subset only: this list mirrors the `/opt/prebuilt/dist/*` COPY lines in the
+  # Dockerfile dev stage, and both intentionally cover the heavy packages rather than every
+  # workspace (channel-*, enterprise, gateway-stripe, manufacturing, storage-s3, sync-akeneo,
+  # telemetry and webhooks are all absent). Omission costs nothing: the loop is guarded, and
+  # run_setup below always runs `yarn build:packages`, which builds every package anyway.
   for pkg in core shared ui cli cache content checkout events onboarding queue search scheduler ai-assistant create-app documents; do
     src="$PREBUILT/dist/$pkg"
     dst="/app/packages/$pkg/dist"

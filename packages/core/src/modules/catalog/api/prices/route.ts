@@ -8,9 +8,7 @@ import {
 } from "@open-mercato/shared/lib/crud/custom-fields";
 import { resolveTranslations } from "@open-mercato/shared/lib/i18n/server";
 import {
-  CatalogProduct,
   CatalogProductPrice,
-  CatalogProductUnitConversion,
   CatalogProductVariant,
 } from "../../data/entities";
 import { priceCreateSchema, priceUpdateSchema } from "../../data/validators";
@@ -24,9 +22,10 @@ import {
 } from "../openapi";
 import { toUnitLookupKey } from "../../lib/unitCodes";
 import {
-  findWithDecryption,
-  findOneWithDecryption,
-} from "@open-mercato/shared/lib/encryption/find";
+  QuantityNormalizationError,
+  type CatalogQuantityNormalizationService,
+} from '../../services/quantityNormalizationService'
+import { findOneWithDecryption } from "@open-mercato/shared/lib/encryption/find";
 import { createLogger } from '@open-mercato/shared/lib/logger'
 
 const logger = createLogger('catalog')
@@ -69,6 +68,7 @@ export const metadata = routeMetadata;
 
 async function resolveNormalizedQuantityForFilter(params: {
   em: EntityManager;
+  normalizationService: CatalogQuantityNormalizationService;
   organizationId: string | null;
   tenantId: string | null;
   productId?: string;
@@ -102,42 +102,30 @@ async function resolveNormalizedQuantityForFilter(params: {
     }
   }
   if (!targetProductId) return quantity;
-  const product = await findOneWithDecryption(
-    params.em,
-    CatalogProduct,
-    {
-      id: targetProductId,
-      organizationId: params.organizationId,
+  let snapshot;
+  try {
+    snapshot = await params.normalizationService.resolve({
       tenantId: params.tenantId,
-      deletedAt: null,
-    },
-    { fields: ["id", "defaultUnit", "uomRoundingScale"] },
-  );
-  if (!product) return quantity;
-  const baseUnitKey = toUnitLookupKey(product.defaultUnit);
-  if (!baseUnitKey || baseUnitKey === quantityUnitKey) return quantity;
-  const conversions = await findWithDecryption(
-    params.em,
-    CatalogProductUnitConversion,
-    {
-      product: product.id,
       organizationId: params.organizationId,
-      tenantId: params.tenantId,
-      isActive: true,
-      deletedAt: null,
-    },
-    { fields: ["id", "unitCode", "toBaseFactor"] },
-  );
-  const conversion = conversions.find(
-    (entry) => toUnitLookupKey(entry.unitCode) === quantityUnitKey,
-  );
-  if (!conversion) return quantity;
-  const factor = Number(conversion.toBaseFactor);
-  if (!Number.isFinite(factor) || factor <= 0) return quantity;
-  const rawNormalized = quantity * factor;
-  const scale = Number(product.uomRoundingScale ?? 4);
-  const pow = Math.pow(10, scale);
-  const normalized = Math.round(rawNormalized * pow) / pow;
+      productId: targetProductId,
+      productVariantId: params.variantId ?? null,
+      enteredQuantity: String(quantity),
+      enteredUnitCode: params.quantityUnit ?? null,
+    });
+  } catch (err) {
+    // A quantity filter is a convenience, not a contract: a product without a
+    // default unit or without a conversion for the requested one has always
+    // fallen back to the entered quantity here. Only normalization-domain
+    // failures degrade; an infrastructure failure still propagates.
+    if (!(err instanceof QuantityNormalizationError)) throw err;
+    logger.debug('catalog.prices quantity normalization skipped', {
+      productId: targetProductId,
+      unit: params.quantityUnit ?? null,
+      code: err.code,
+    });
+    return quantity;
+  }
+  const normalized = Number(snapshot.normalizedQuantity);
   return Number.isFinite(normalized) && normalized > 0 ? normalized : quantity;
 }
 
@@ -228,6 +216,7 @@ const crud = makeCrudRoute({
       const organizationId =
         ctx.selectedOrganizationId ?? ctx.auth?.orgId ?? null;
       const em = ctx.container.resolve("em") as EntityManager;
+      const normalizationService = ctx.container.resolve<CatalogQuantityNormalizationService>('catalogQuantityNormalizationService');
       try {
         const cfFilters = await buildCustomFieldFiltersFromQuery({
           entityIds: [E.catalog.catalog_product_price],
@@ -247,6 +236,7 @@ const crud = makeCrudRoute({
       ) {
         await resolveNormalizedQuantityForFilter({
           em,
+          normalizationService,
           organizationId,
           tenantId,
           productId: query.productId,
@@ -284,8 +274,10 @@ const crud = makeCrudRoute({
       if (!organizationId || !tenantId) return;
 
       const em = ctx.container.resolve("em") as EntityManager;
+      const normalizationService = ctx.container.resolve<CatalogQuantityNormalizationService>('catalogQuantityNormalizationService');
       const normalizedQuantity = await resolveNormalizedQuantityForFilter({
         em,
+        normalizationService,
         organizationId,
         tenantId,
         productId: query.productId,

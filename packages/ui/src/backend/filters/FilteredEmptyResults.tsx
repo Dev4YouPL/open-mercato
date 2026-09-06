@@ -6,6 +6,14 @@ import { useT } from '@open-mercato/shared/lib/i18n/context'
 
 export type FilteredEmptyResultsProps = {
   entityNamePlural: string
+  /**
+   * The same label in the form the titles need after their negation word
+   * ("No {entity} match…" → Polish "Brak wersji roboczych BOM"). Case
+   * inflecting languages need a different word there; the rest translate this
+   * key to the same string as `entityNamePlural`. Falls back to
+   * `entityNamePlural`.
+   */
+  entityNamePluralGenitive?: string
   canRemoveLast: boolean
   onClearAll: () => void
   onRemoveLast: () => void
@@ -17,12 +25,13 @@ export type FilteredEmptyResultsProps = {
   onClearSearch?: () => void
 }
 
-export function FilteredEmptyResults({ entityNamePlural, canRemoveLast, onClearAll, onRemoveLast, onClearSearch }: FilteredEmptyResultsProps) {
+export function FilteredEmptyResults({ entityNamePlural, entityNamePluralGenitive, canRemoveLast, onClearAll, onRemoveLast, onClearSearch }: FilteredEmptyResultsProps) {
   const t = useT()
   const searchActive = typeof onClearSearch === 'function'
+  const entity = entityNamePluralGenitive ?? entityNamePlural
   const title = searchActive
-    ? t('ui.advancedFilter.empty.noMatchesSearchFilters', 'No {entity} match your search and filters', { entity: entityNamePlural })
-    : t('ui.advancedFilter.empty.noMatches', 'No {entity} match these filters', { entity: entityNamePlural })
+    ? t('ui.advancedFilter.empty.noMatchesSearchFilters', 'No {entity} match your search and filters', { entity })
+    : t('ui.advancedFilter.empty.noMatches', 'No {entity} match these filters', { entity })
   const description = searchActive
     ? t('ui.advancedFilter.empty.tryRemovingSearchFilters', 'Try a different search, remove a filter, or clear everything to see everyone.')
     : t('ui.advancedFilter.empty.tryRemoving', 'Try removing the most restrictive filter, or clear all filters to see everyone.')

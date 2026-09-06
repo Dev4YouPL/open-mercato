@@ -13,7 +13,6 @@ import {
   CatalogProductCategory,
   CatalogProductCategoryAssignment,
   CatalogProductPrice,
-  CatalogProductUnitConversion,
   CatalogProductVariant,
   CatalogProductTagAssignment,
 } from "../../data/entities";
@@ -40,6 +39,7 @@ import {
   type PriceRow,
 } from "../../lib/pricing";
 import type { CatalogPricingService } from "../../services/catalogPricingService";
+import type { CatalogQuantityNormalizationService } from '../../services/quantityNormalizationService';
 import { fieldsetCodeRegex } from "@open-mercato/core/modules/entities/data/validators";
 import { SalesChannel } from "@open-mercato/core/modules/sales/data/entities";
 import {
@@ -614,44 +614,9 @@ async function decorateProductsAfterList(
     const requestQuantityUnitKey = toUnitLookupKey(
       ctx.query.quantityUnit,
     );
-    const conversionsByProduct = new Map<string, Map<string, number>>();
     const conversionOrganizationId =
       ctx.selectedOrganizationId ?? ctx.auth?.orgId ?? null;
     const conversionTenantId = ctx.auth?.tenantId ?? null;
-    if (
-      requestQuantityUnitKey &&
-      productIds.length &&
-      conversionOrganizationId &&
-      conversionTenantId
-    ) {
-      const conversionRows = await findWithDecryption(
-        em,
-        CatalogProductUnitConversion,
-        {
-          product: { $in: productIds },
-          organizationId: conversionOrganizationId,
-          tenantId: conversionTenantId,
-          deletedAt: null,
-          isActive: true,
-        },
-        { fields: ["id", "product", "unitCode", "toBaseFactor"] },
-        { organizationId: conversionOrganizationId, tenantId: conversionTenantId },
-      );
-      for (const row of conversionRows) {
-        const productId =
-          typeof row.product === "string"
-            ? row.product
-            : (row.product?.id ?? null);
-        const unitKey = toUnitLookupKey(row.unitCode);
-        const factor = Number(row.toBaseFactor);
-        if (!productId || !unitKey || !Number.isFinite(factor) || factor <= 0)
-          continue;
-        const bucket =
-          conversionsByProduct.get(productId) ?? new Map<string, number>();
-        bucket.set(unitKey, factor);
-        conversionsByProduct.set(productId, bucket);
-      }
-    }
 
     const channelFilterIds = parseIdList(ctx.query.channelIds);
     const channelContext =
@@ -661,6 +626,35 @@ async function decorateProductsAfterList(
     const pricingService = ctx.container.resolve<CatalogPricingService>(
       "catalogPricingService",
     );
+    const normalizationService = ctx.container.resolve<CatalogQuantityNormalizationService>(
+      'catalogQuantityNormalizationService',
+    );
+    const normalizedQuantityByProduct = new Map<string, number>();
+    if (requestQuantityUnitKey && conversionOrganizationId && conversionTenantId) {
+      const outcomes = await normalizationService.resolveManySettled(
+        productIds.map((productId) => ({
+          tenantId: conversionTenantId,
+          organizationId: conversionOrganizationId,
+          productId,
+          enteredQuantity: String(pricingContext.quantity),
+          enteredUnitCode: String(ctx.query.quantityUnit),
+        })),
+      );
+      for (const outcome of outcomes) {
+        if (!outcome.ok) {
+          logger.debug('catalog.products quantity normalization skipped', {
+            productId: outcome.productId,
+            unit: requestQuantityUnitKey,
+            code: outcome.code,
+          });
+          continue;
+        }
+        const normalizedQuantity = Number(outcome.snapshot.normalizedQuantity);
+        if (Number.isFinite(normalizedQuantity) && normalizedQuantity > 0) {
+          normalizedQuantityByProduct.set(outcome.snapshot.productId, normalizedQuantity);
+        }
+      }
+    }
 
     const pricingEntries: Array<{ rows: PriceRow[]; context: PricingContext } | null> = [];
     for (const item of items) {
@@ -691,22 +685,7 @@ async function decorateProductsAfterList(
         continue;
       }
       const priceCandidates = pricesByProduct.get(id) ?? [];
-      const normalizedQuantityForPricing = (() => {
-        if (!requestQuantityUnitKey) return pricingContext.quantity;
-        const baseUnit = toUnitLookupKey(item.default_unit);
-        if (!baseUnit || requestQuantityUnitKey === baseUnit)
-          return pricingContext.quantity;
-        const productConversions = conversionsByProduct.get(id);
-        const factor = productConversions?.get(requestQuantityUnitKey) ?? null;
-        if (!factor || !Number.isFinite(factor) || factor <= 0) {
-          logger.debug('catalog.products invalid conversion factor', { productId: id, unit: requestQuantityUnitKey, factor });
-          return pricingContext.quantity;
-        }
-        const normalized = pricingContext.quantity * factor;
-        return Number.isFinite(normalized) && normalized > 0
-          ? normalized
-          : pricingContext.quantity;
-      })();
+      const normalizedQuantityForPricing = normalizedQuantityByProduct.get(id) ?? pricingContext.quantity;
       const channelScopedContext =
         pricingContext.channelId || channelIds.length !== 1
           ? pricingContext

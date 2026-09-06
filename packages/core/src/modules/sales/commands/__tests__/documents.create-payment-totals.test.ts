@@ -1,6 +1,7 @@
 /** @jest-environment node */
 
 import { asValue, createContainer, InjectionMode } from 'awilix'
+import { createCatalogQuantityNormalizationService } from '../../../catalog/services/quantityNormalizationService'
 import { commandRegistry } from '@open-mercato/shared/lib/commands/registry'
 import type { CommandRuntimeContext } from '@open-mercato/shared/lib/commands/types'
 import {
@@ -121,6 +122,9 @@ function buildHarness() {
         return { number }
       },
     }),
+    catalogQuantityNormalizationService: asValue(
+      createCatalogQuantityNormalizationService({ em: em as never }),
+    ),
   })
 
   const ctx: CommandRuntimeContext = {
