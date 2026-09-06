@@ -14,6 +14,19 @@ describe('FilteredEmptyResults', () => {
     expect(screen.getByText(/no people match these filters/i)).toBeInTheDocument()
   })
 
+  it('prefers the inflected label in the title when one is supplied', () => {
+    render(
+      <FilteredEmptyResults
+        entityNamePlural="Wersje robocze BOM"
+        entityNamePluralGenitive="wersji roboczych BOM"
+        canRemoveLast
+        onClearAll={() => {}}
+        onRemoveLast={() => {}}
+      />,
+    )
+    expect(screen.getByText(/no wersji roboczych BOM match these filters/i)).toBeInTheDocument()
+  })
+
   it('calls onClearAll on Clear button click', () => {
     const onClearAll = jest.fn()
     render(<FilteredEmptyResults entityNamePlural="people" canRemoveLast onClearAll={onClearAll} onRemoveLast={() => {}} />)

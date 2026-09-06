@@ -9,6 +9,15 @@ import { useT } from '@open-mercato/shared/lib/i18n/context'
 export type ListEmptyStateProps = {
   /** Plural entity label, e.g. "companies". Used to build the default title. */
   entityName?: string
+  /**
+   * The same label in the form the generated title needs after its negation or
+   * quantity word ("No {entity} yet" → Polish "Brak wersji roboczych"). Case
+   * inflecting languages need a different word there than the subject form;
+   * languages without case inflection translate this key to the same string as
+   * `entityName`, so one extra i18n key per list keeps every locale
+   * grammatical. Falls back to `entityName` when omitted.
+   */
+  entityNameGenitive?: string
   /** Overrides the generated title. */
   title?: string
   /** Overrides the generated description. */
@@ -31,6 +40,7 @@ export type ListEmptyStateProps = {
  */
 export function ListEmptyState({
   entityName,
+  entityNameGenitive,
   title,
   description,
   createHref,
@@ -39,7 +49,9 @@ export function ListEmptyState({
   icon,
 }: ListEmptyStateProps) {
   const t = useT()
-  const entity = entityName ?? t('ui.dataTable.empty.genericEntity', 'records')
+  // The generic fallback is already written in the form the title needs, so a
+  // caller that supplies neither form still reads correctly in every locale.
+  const entity = entityNameGenitive ?? entityName ?? t('ui.dataTable.empty.genericEntity', 'records')
   const resolvedTitle = title ?? t('ui.dataTable.empty.title', 'No {entity} yet', { entity })
   const resolvedDescription = description ?? t('ui.dataTable.empty.description', 'Items you add will show up here.')
   const resolvedCreateLabel = createLabel ?? t('ui.dataTable.empty.create', 'Create')
