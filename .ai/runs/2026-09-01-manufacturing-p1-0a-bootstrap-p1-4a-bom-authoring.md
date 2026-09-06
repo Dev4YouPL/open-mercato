@@ -211,14 +211,20 @@ authoring coverage, and the graph benchmark; Phase 6 does not claim those older 
 ### Phase 7: Address Pawel S static review (2026-09-06 resume)
 
 The user explicitly requests implementation of all 25 findings in the 2026-09-05 review
-(https://github.com/Dev4YouPL/open-mercato/pull/6#issuecomment-5552766011), plus the
-associated undo/redo and integration verification. Existing completed phases remain intact.
-The resume starts from 7cae0b5b7; the last UI implementation commit e6883ce52 is reachable.
-No architecture replacement, dependency addition, migration application to a developer database,
-branch-history rewrite, or changes to the lower PRs in the stack are planned.
+(https://github.com/Dev4YouPL/open-mercato/pull/6#issuecomment-5552766011). Existing completed
+phases remain intact. The resume starts from 7cae0b5b7.
 
-- [ ] 7.1 Repair and regression-test command undo/redo, decimal/UoM evidence, custom fields and Catalog restore guards (#3–7, #15).
-- [ ] 7.2 Repair and regression-test organization resolution, persistent events, validation, cursors, response data and error/OpenAPI contracts (#1, #12–14, #16–18).
-- [ ] 7.3 Repair and regression-test organization switching, minimal form updates, conflict recovery, pagination and extension/picker contracts (#2, #8–11, #19–25).
-- [ ] 7.4 Verify PostgreSQL transactions/concurrency and BOM authoring integration flows in an isolated environment; record exact evidence and any blockers.
+Decisions taken on the 2026-09-06 resume (user-confirmed):
+- Finding #1/#2 — resolve the BOM route organization through the Directory
+  `resolveOrganizationScopeForRequest` primitive. This adds one sanctioned
+  `@open-mercato/core/modules/directory/utils/organizationScope` import to the
+  package; the `metadata.test.ts` no-core guard is narrowed to allow only that
+  specifier (every other core / business-module import stays forbidden).
+- The older review's integration gaps (live PostgreSQL concurrency/atomicity,
+  Playwright authoring, O(V+E) benchmark) stay deferred — no DB/browser here.
+
+- [x] 7.1 Repair and regression-test command undo/redo, decimal/UoM evidence, custom fields and Catalog restore guards (#3–7, #15). — 06ef41420
+- [x] 7.2 Repair and regression-test organization resolution, persistent events, validation, cursors, response data and error/OpenAPI contracts (#1, #12–14, #16–18). — 06ef41420
+- [x] 7.3 Repair and regression-test organization switching, minimal form updates, conflict recovery, pagination and extension/picker contracts (#2, #8–11, #19–25). — 06ef41420
+- [ ] 7.4 PostgreSQL transactions/concurrency and Playwright BOM authoring verification — DEFERRED: no live database or browser in this environment. Unit + route coverage ships in 7.1–7.3; the older PR-wide integration asks (#17/#19/#22 of the 2026-09-03 review) remain open.
 - [ ] 7.5 Run the configured full validation gate, authoritative review/autofix, and publish the review response on this PR.
