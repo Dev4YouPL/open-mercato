@@ -44,6 +44,9 @@ describe('BOM editor — outer big tile', () => {
     bomHeaderFormClientMock.mockClear()
   })
 
+  // The runtime `import('../BomEditorClient')` below pulls the whole backend
+  // detail/editor graph through ts-jest with no warm cache, which can exceed the
+  // 5s default on a cold cross-platform CI runner.
   it('wraps the header form and the lines editor in one shared card, and opts the header form out of its own wrapper', async () => {
     const detail = {
       id: 'bom-1',
@@ -77,5 +80,5 @@ describe('BOM editor — outer big tile', () => {
     // The header form must not also render its own wrapping card here, or the
     // header section would sit inside a nested double border.
     expect(header.getAttribute('data-wrap-in-card')).toBe('false')
-  })
+  }, 30000)
 })

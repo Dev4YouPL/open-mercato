@@ -55,6 +55,16 @@ function readErrorCode(err: unknown): string | null {
   return null
 }
 
+function readErrorField(err: unknown): string | null {
+  if (!err || typeof err !== 'object') return null
+  const candidate = err as { field?: unknown; details?: { field?: unknown } }
+  if (typeof candidate.field === 'string') return candidate.field
+  if (candidate.details && typeof candidate.details === 'object' && typeof candidate.details.field === 'string') {
+    return candidate.details.field
+  }
+  return null
+}
+
 /**
  * Maps a stable `bom.*` domain code coming back from the guarded endpoints onto
  * a translated, field-scoped `CrudForm` error. API codes stay language-neutral;
@@ -65,8 +75,11 @@ export function toBomFormError(err: unknown, translate: BomErrorTranslator, fiel
   if (!code) return err
   const entry = MESSAGE_KEYS[code]
   const message = translate(entry.key, entry.fallback)
-  const details = typeof err === 'object' && err !== null && 'details' in err ? err.details : null
-  const isYieldError = code === 'bom.quantity_invalid' && typeof details === 'object' && details !== null && 'field' in details && details.field === 'yieldFactor'
+  // `BomDomainError` serialises its `details` at the top level of the body
+  // (`{ error, code, field }`), and `raiseCrudError` spreads the body onto the
+  // thrown error — so the offending field is `err.field`, with `err.details`
+  // kept only as a defensive fallback.
+  const isYieldError = code === 'bom.quantity_invalid' && readErrorField(err) === 'yieldFactor'
   const fieldId = isYieldError ? fieldIds.yieldFactor : entry.field ? fieldIds[entry.field] : undefined
   return createCrudFormError(message, fieldId ? { [fieldId]: message } : undefined, { status: 422 })
 }

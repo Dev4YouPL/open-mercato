@@ -44,6 +44,28 @@ describe('toBomFormError', () => {
     expect(Object.keys(variant.fieldErrors ?? {})).toEqual(['variantId'])
   })
 
+  it('routes a bom.quantity_invalid raised for yieldFactor to the yield field, not quantity', () => {
+    const lineFieldIds = { unit: 'quantityUnitCode', quantity: 'quantityValue', yieldFactor: 'yieldFactor' }
+    const mapped = toBomFormError(
+      buildApiError({ error: 'bom.quantity_invalid', code: 'bom.quantity_invalid', field: 'yieldFactor' }),
+      translate,
+      lineFieldIds,
+    ) as Error & { fieldErrors?: Record<string, string> }
+
+    expect(Object.keys(mapped.fieldErrors ?? {})).toEqual(['yieldFactor'])
+  })
+
+  it('still scopes a quantity-field bom.quantity_invalid to the quantity input', () => {
+    const lineFieldIds = { unit: 'quantityUnitCode', quantity: 'quantityValue', yieldFactor: 'yieldFactor' }
+    const mapped = toBomFormError(
+      buildApiError({ error: 'bom.quantity_invalid', code: 'bom.quantity_invalid' }),
+      translate,
+      lineFieldIds,
+    ) as Error & { fieldErrors?: Record<string, string> }
+
+    expect(Object.keys(mapped.fieldErrors ?? {})).toEqual(['quantityValue'])
+  })
+
   it('keeps form-level codes without a field scope', () => {
     const mapped = toBomFormError(
       buildApiError({ error: 'bom.cycle_detected', code: 'bom.cycle_detected' }),

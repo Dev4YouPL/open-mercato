@@ -27,6 +27,20 @@ beforeEach(() => {
   apiCallMock.mockReset()
 })
 
+describe('Catalog lookup failures', () => {
+  it('rejects instead of returning an empty list when Catalog answers non-2xx', async () => {
+    apiCallMock.mockResolvedValue({ ok: false, status: 500, result: { error: 'boom' } })
+
+    await expect(loadProductOptions('sig')).rejects.toThrow()
+  })
+
+  it('rejects a variant lookup the same way so the picker can surface the failure', async () => {
+    apiCallMock.mockResolvedValue({ ok: false, status: 403, result: { error: 'forbidden' } })
+
+    await expect(loadVariantOptions('product-1', 'x')).rejects.toThrow()
+  })
+})
+
 describe('loadVariantOptions', () => {
   it('labels variants from name/sku instead of falling back to the raw uuid', async () => {
     respondPerUrl({
