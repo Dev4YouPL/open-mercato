@@ -1,6 +1,8 @@
 "use client"
 
 import * as React from "react"
+import { useOrganizationScopeVersion } from "@open-mercato/shared/lib/frontend/useOrganizationScope"
+
 import { apiCall } from "@open-mercato/ui/backend/utils/apiCall"
 import { hasAllFeatures } from "@open-mercato/shared/lib/auth/featureMatch"
 
@@ -20,10 +22,14 @@ export type BomPermissions = {
  * fails closed while loading or on error.
  */
 export function useBomPermissions(): BomPermissions {
+  const scopeVersion = useOrganizationScopeVersion()
+  const [loadedScope, setLoadedScope] = React.useState(scopeVersion)
   const [permissions, setPermissions] = React.useState<BomPermissions>({ canManage: false, isLoading: true })
 
   React.useEffect(() => {
     let cancelled = false
+    setPermissions({ canManage: false, isLoading: true })
+    setLoadedScope(scopeVersion)
     void (async () => {
       try {
         const res = await apiCall<{ granted?: string[] }>("/api/auth/feature-check", {
@@ -33,7 +39,7 @@ export function useBomPermissions(): BomPermissions {
         })
         if (cancelled) return
         setPermissions({
-          canManage: hasAllFeatures([MANAGE_FEATURE], res.result?.granted ?? []),
+          canManage: res.ok && hasAllFeatures([MANAGE_FEATURE], res.result?.granted ?? []),
           isLoading: false,
         })
       } catch {
@@ -41,7 +47,7 @@ export function useBomPermissions(): BomPermissions {
       }
     })()
     return () => { cancelled = true }
-  }, [])
+  }, [scopeVersion])
 
-  return permissions
+  return loadedScope === scopeVersion ? permissions : { canManage: false, isLoading: true }
 }

@@ -10,14 +10,29 @@ export const decimalStringSchema = z
   .regex(DECIMAL_STRING_PATTERN, '[internal] Value must be a canonical base-10 decimal string')
 
 export const positiveDecimalStringSchema = decimalStringSchema.refine(
-  (value) => !value.startsWith('-') && value !== '0',
+  (value) => !value.startsWith('-') && /[1-9]/.test(value),
   '[internal] Value must be a positive decimal string',
+)
+
+export function fitsBomDecimal(value: string, scale: number): boolean {
+  const [integer, fraction = ''] = value.replace(/^-/, '').split('.')
+  return integer.replace(/^0+/, '').length <= 18 - scale && fraction.replace(/0+$/, '').length <= scale
+}
+
+export const bomQuantitySchema = positiveDecimalStringSchema.refine(
+  (value) => fitsBomDecimal(value, 6),
+  '[internal] Quantity exceeds numeric(18,6) precision',
+)
+
+export const bomYieldFactorSchema = positiveDecimalStringSchema.refine(
+  (value) => fitsBomDecimal(value, 12) && Number(value) <= 1,
+  '[internal] Yield factor must fit numeric(18,12) and be at most one',
 )
 
 export const unitCodeSchema = z.string().trim().min(1).max(50)
 
 export const quantityInputSchema = z.object({
-  value: positiveDecimalStringSchema,
+  value: bomQuantitySchema,
   unitCode: unitCodeSchema.nullable().optional(),
 })
 
@@ -33,7 +48,7 @@ export const bomLineInputSchema = z.object({
   component: bomTargetInputSchema,
   quantity: quantityInputSchema,
   consumptionBasis: consumptionBasisSchema.optional(),
-  yieldFactor: positiveDecimalStringSchema.optional(),
+  yieldFactor: bomYieldFactorSchema.optional(),
   supplyMode: supplyModeSchema.optional(),
 })
 
@@ -41,7 +56,7 @@ export const bomLinePatchSchema = z.object({
   component: bomTargetInputSchema.optional(),
   quantity: quantityInputSchema.optional(),
   consumptionBasis: consumptionBasisSchema.optional(),
-  yieldFactor: positiveDecimalStringSchema.optional(),
+  yieldFactor: bomYieldFactorSchema.optional(),
   supplyMode: supplyModeSchema.optional(),
 })
 

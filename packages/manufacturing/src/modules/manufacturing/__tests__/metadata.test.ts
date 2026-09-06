@@ -58,10 +58,18 @@ describe('manufacturing module boundaries', () => {
     }
   })
 
-  it('imports no optional peer module and no core package', () => {
+  it('imports no optional peer module and no core business module', () => {
+    // The only sanctioned core import is the Directory organization-scope
+    // resolver — the same platform primitive `makeCrudRoute` builds on. Every
+    // other `@open-mercato/core/...` specifier (catalog, sales, auth, …) would
+    // couple this package to a business module and is still forbidden.
+    const ALLOWED_CORE_IMPORT = '@open-mercato/core/modules/directory/utils/organizationScope'
     for (const file of listSourceFiles(packageSrcRoot)) {
       const source = fs.readFileSync(file, 'utf8')
-      expect(source).not.toMatch(/@open-mercato\/core/)
+      const coreImports = source.match(/@open-mercato\/core[^"'`\s]*/g) ?? []
+      for (const specifier of coreImports) {
+        expect(specifier).toBe(ALLOWED_CORE_IMPORT)
+      }
       for (const moduleId of OPTIONAL_PEER_MODULE_IDS) {
         expect(source).not.toMatch(new RegExp(`modules/${moduleId}(/|'|")`))
       }

@@ -13,7 +13,7 @@ import { createCrud, updateCrud } from "@open-mercato/ui/backend/utils/crud"
 import { collectCustomFieldValues } from "@open-mercato/ui/backend/utils/customFieldValues"
 import { flash } from "@open-mercato/ui/backend/FlashMessages"
 import { useT } from "@open-mercato/shared/lib/i18n/context"
-import { ProductPicker, UnitPicker, VariantPicker, applyProductSelection } from "./BomCatalogPickers"
+import { ProductPicker, UnitPicker, VariantPicker, useProductSelection } from "./BomCatalogPickers"
 import { formatDecimalForDisplay } from "./bomFormatting"
 import { toBomFormError } from "./bomFormErrors"
 import { useBomPermissions } from "./useBomPermissions"
@@ -21,6 +21,11 @@ import { BOM_ENTITY_ID } from "../lib/bom/entity-ids"
 import { extensionPoints } from "../extension-points"
 
 type BomHeaderFormValues = {
+  id?: string
+  bomId?: string
+  revisionId?: string
+  updatedAt?: string
+  revisionUpdatedAt?: string
   productId: string | null
   variantId: string | null
   revisionLabel: string | null
@@ -30,6 +35,7 @@ type BomHeaderFormValues = {
 
 export type BomHeaderFormInitial = {
   bomId: string
+  revisionId?: string
   updatedAt: string
   productId: string
   variantId: string | null
@@ -45,6 +51,7 @@ const PRODUCT_SCOPED_FIELDS = { variant: "variantId", unit: "baseOutputUnitCode"
 
 export function BomHeaderFormClient({ initial, onSaved, wrapInCard = true }: { initial?: BomHeaderFormInitial; onSaved?: () => void; wrapInCard?: boolean }) {
   const t = useT()
+  const { selectProduct, cancelDefault } = useProductSelection()
   const router = useRouter()
   const isEdit = Boolean(initial?.bomId)
   const { canManage } = useBomPermissions()
@@ -71,8 +78,8 @@ export function BomHeaderFormClient({ initial, onSaved, wrapInCard = true }: { i
           value={value}
           seed={productSeed}
           onChange={(next) => {
+            selectProduct(next, value, setFormValue, PRODUCT_SCOPED_FIELDS)
             setValue(next)
-            applyProductSelection(next, setFormValue, PRODUCT_SCOPED_FIELDS)
           }}
         />
       ),
@@ -116,11 +123,11 @@ export function BomHeaderFormClient({ initial, onSaved, wrapInCard = true }: { i
         <UnitPicker
           value={value}
           productId={typeof values?.productId === "string" ? values.productId : null}
-          onChange={setValue}
+          onChange={(next) => { cancelDefault(); setValue(next) }}
         />
       ),
     },
-  ], [productSeed, t, variantSeed])
+  ], [cancelDefault, productSeed, selectProduct, t, variantSeed])
 
   const groups = React.useMemo<CrudFormGroup[]>(() => [
     {
@@ -145,6 +152,11 @@ export function BomHeaderFormClient({ initial, onSaved, wrapInCard = true }: { i
     }
     return {
       ...customFieldValues,
+      id: initial?.bomId,
+      bomId: initial?.bomId,
+      revisionId: initial?.revisionId,
+      updatedAt: initial?.updatedAt,
+      revisionUpdatedAt: initial?.updatedAt,
       productId: initial?.productId ?? null,
       variantId: initial?.variantId ?? null,
       revisionLabel: initial?.revisionLabel ?? null,
@@ -182,8 +194,11 @@ export function BomHeaderFormClient({ initial, onSaved, wrapInCard = true }: { i
         try {
           if (isEdit && initial) {
             await updateCrud(`manufacturing/boms/${initial.bomId}`, {
-              target,
-              draft: { revisionLabel: values.revisionLabel || null, baseOutput },
+              ...(values.productId !== initial.productId || (values.variantId || null) !== initial.variantId ? { target } : {}),
+              draft: {
+                revisionLabel: values.revisionLabel || null,
+                ...(formatDecimalForDisplay(values.baseOutputValue) !== formatDecimalForDisplay(initial.baseOutputValue) || values.baseOutputUnitCode !== initial.baseOutputUnitCode ? { baseOutput } : {}),
+              },
               ...(hasCustomFields ? { customFields } : {}),
             })
             flash(t("manufacturing.boms.form.saveSuccess", "BOM header saved"), "success")

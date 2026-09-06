@@ -7,6 +7,7 @@ export type BomErrorTranslator = (key: string, fallback: string) => string
 export type BomErrorFieldIds = {
   unit?: string
   quantity?: string
+  yieldFactor?: string
   variant?: string
   product?: string
 }
@@ -64,6 +65,8 @@ export function toBomFormError(err: unknown, translate: BomErrorTranslator, fiel
   if (!code) return err
   const entry = MESSAGE_KEYS[code]
   const message = translate(entry.key, entry.fallback)
-  const fieldId = entry.field ? fieldIds[entry.field] : undefined
+  const details = typeof err === 'object' && err !== null && 'details' in err ? err.details : null
+  const isYieldError = code === 'bom.quantity_invalid' && typeof details === 'object' && details !== null && 'field' in details && details.field === 'yieldFactor'
+  const fieldId = isYieldError ? fieldIds.yieldFactor : entry.field ? fieldIds[entry.field] : undefined
   return createCrudFormError(message, fieldId ? { [fieldId]: message } : undefined, { status: 422 })
 }

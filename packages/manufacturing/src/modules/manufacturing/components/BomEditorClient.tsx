@@ -1,6 +1,8 @@
 "use client"
 
 import * as React from "react"
+import { useOrganizationScopeVersion } from "@open-mercato/shared/lib/frontend/useOrganizationScope"
+
 import { PageHeader } from "@open-mercato/ui/backend/Page"
 import { LoadingMessage, ErrorMessage, RecordNotFoundState } from "@open-mercato/ui/backend/detail"
 import { StatusBadge } from "@open-mercato/ui/primitives/status-badge"
@@ -30,6 +32,11 @@ type BomDetail = {
 }
 
 export function BomEditorClient({ bomId }: { bomId: string }) {
+  const scopeVersion = useOrganizationScopeVersion()
+  return <BomEditorClientScoped key={scopeVersion} bomId={bomId} />
+}
+
+function BomEditorClientScoped({ bomId }: { bomId: string }) {
   const t = useT()
   const [detail, setDetail] = React.useState<BomDetail | null>(null)
   const [isLoading, setIsLoading] = React.useState(true)
@@ -69,7 +76,7 @@ export function BomEditorClient({ bomId }: { bomId: string }) {
     return () => { cancelled = true }
   }, [bomId, reloadToken, t])
 
-  if (isLoading) return <LoadingMessage label={t("manufacturing.boms.editor.loading", "Loading BOM draft…")} />
+  if (isLoading && !detail) return <LoadingMessage label={t("manufacturing.boms.editor.loading", "Loading BOM draft…")} />
   if (notFound) {
     return (
       <RecordNotFoundState
@@ -90,6 +97,7 @@ export function BomEditorClient({ bomId }: { bomId: string }) {
 
   const initial: BomHeaderFormInitial = {
     bomId: detail.id,
+    revisionId: detail.activeDraft.id,
     updatedAt: detail.activeDraft.updatedAt,
     productId: detail.target.productId,
     variantId: detail.target.variantId,

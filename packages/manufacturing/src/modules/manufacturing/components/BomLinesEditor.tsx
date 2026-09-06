@@ -59,6 +59,7 @@ type LinesResponse = {
     resolution: { state: string }
     updatedAt: string
   }>
+  snapshotUpdatedAt?: string
   nextCursor?: string | null
   hasMore?: boolean
 }
@@ -104,6 +105,7 @@ export function BomLinesEditor({
   const t = useT()
   const { confirm, ConfirmDialogElement } = useConfirmDialog()
   const { canManage } = useBomPermissions()
+  const [snapshotUpdatedAt, setSnapshotUpdatedAt] = React.useState(revisionUpdatedAt)
   const [rows, setRows] = React.useState<BomLineRow[]>([])
   const [isLoading, setIsLoading] = React.useState(true)
   const [cursorStack, setCursorStack] = React.useState<Array<string | undefined>>([undefined])
@@ -128,6 +130,7 @@ export function BomLinesEditor({
 
   React.useEffect(() => {
     resetCursors()
+    setSnapshotUpdatedAt(revisionUpdatedAt)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [revisionUpdatedAt])
 
@@ -153,6 +156,7 @@ export function BomLinesEditor({
       // Every page but the last is exactly `PAGE_SIZE` long, so the page index
       // is enough to turn the in-page order into an absolute occurrence number.
       const firstOrdinal = cursorIndex * PAGE_SIZE + 1
+      if (payload.snapshotUpdatedAt) setSnapshotUpdatedAt(payload.snapshotUpdatedAt)
       setRows((payload.items ?? []).map((item, index) => mapLine(item, firstOrdinal + index)))
       setNextCursor(payload.nextCursor ?? null)
       setHasMore(Boolean(payload.hasMore))
@@ -180,7 +184,7 @@ export function BomLinesEditor({
             `/api/manufacturing/boms/${bomId}/lines/${row.id}/reorder`,
             {
               method: "POST",
-              headers: { ...buildOptimisticLockHeader(revisionUpdatedAt), "content-type": "application/json" },
+              headers: { ...buildOptimisticLockHeader(snapshotUpdatedAt), "content-type": "application/json" },
               body: JSON.stringify({ direction }),
             },
           )
@@ -195,7 +199,7 @@ export function BomLinesEditor({
         onAggregateChange()
       }
     }
-  }, [bomId, handleAfterMutation, mutationContextId, onAggregateChange, retryLastMutation, revisionUpdatedAt, runMutation, t])
+  }, [bomId, handleAfterMutation, mutationContextId, onAggregateChange, retryLastMutation, snapshotUpdatedAt, runMutation, t])
 
   const handleDelete = React.useCallback(async (row: BomLineRow) => {
     const confirmed = await confirm({
@@ -218,7 +222,7 @@ export function BomLinesEditor({
       await runMutation({
         operation: () => apiCallOrThrow(`/api/manufacturing/boms/${bomId}/lines/${row.id}`, {
           method: "DELETE",
-          headers: buildOptimisticLockHeader(revisionUpdatedAt),
+          headers: buildOptimisticLockHeader(snapshotUpdatedAt),
         }),
         context: { formId: mutationContextId, resourceKind: "manufacturing.bom_line", resourceId: row.id, retryLastMutation },
       })
@@ -231,7 +235,7 @@ export function BomLinesEditor({
         onAggregateChange()
       }
     }
-  }, [bomId, confirm, handleAfterMutation, mutationContextId, onAggregateChange, retryLastMutation, revisionUpdatedAt, runMutation, t])
+  }, [bomId, confirm, handleAfterMutation, mutationContextId, onAggregateChange, retryLastMutation, snapshotUpdatedAt, runMutation, t])
 
   const firstPosition = rows.length ? Math.min(...rows.map((row) => row.position)) : null
   const lastPosition = rows.length ? Math.max(...rows.map((row) => row.position)) : null
@@ -313,9 +317,12 @@ export function BomLinesEditor({
     },
   ], [t])
 
+  const dialogInitial = React.useMemo(() => dialogState?.mode === "edit" ? toFormValues(dialogState.line) : undefined, [dialogState])
+
   return (
     <div>
       <DataTable<BomLineRow>
+        injectionContext={{ bomId, revisionId, revisionUpdatedAt: snapshotUpdatedAt, canManage, rows, page: cursorIndex + 1 }}
         extensionTableId={extensionPoints.hosts.bomLinesTable.tableId}
         perspective={{ tableId: extensionPoints.hosts.bomLinesTable.tableId }}
         columnChooser={{ auto: true }}
@@ -337,7 +344,7 @@ export function BomLinesEditor({
               type="button"
               variant="ghost"
               aria-label={t("manufacturing.boms.lines.actions.moveUp", "Move up")}
-              disabled={row.position === firstPosition}
+              disabled={cursorIndex === 0 && row.position === firstPosition}
               onClick={() => handleMove(row, "up")}
             >
               <ArrowUp />
@@ -346,7 +353,7 @@ export function BomLinesEditor({
               type="button"
               variant="ghost"
               aria-label={t("manufacturing.boms.lines.actions.moveDown", "Move down")}
-              disabled={row.position === lastPosition}
+              disabled={!hasMore && row.position === lastPosition}
               onClick={() => handleMove(row, "down")}
             >
               <ArrowDown />
@@ -383,8 +390,9 @@ export function BomLinesEditor({
       {dialogState ? (
         <BomLineDialog
           bomId={bomId}
-          revisionUpdatedAt={revisionUpdatedAt}
-          initial={dialogState.mode === "edit" ? toFormValues(dialogState.line) : undefined}
+          revisionId={revisionId}
+          revisionUpdatedAt={snapshotUpdatedAt}
+          initial={dialogInitial}
           position={dialogState.mode === "edit" ? dialogState.line.ordinal : undefined}
           componentSeed={dialogState.mode === "edit" ? toComponentSeed(dialogState.line) : undefined}
           variantSeed={dialogState.mode === "edit" ? toVariantSeed(dialogState.line) : undefined}
@@ -393,10 +401,7 @@ export function BomLinesEditor({
             setDialogState(null)
             handleAfterMutation()
           }}
-          onConflict={() => {
-            setDialogState(null)
-            onAggregateChange()
-          }}
+          onConflict={reloadLines}
         />
       ) : null}
       {ConfirmDialogElement}

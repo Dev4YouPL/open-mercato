@@ -7,13 +7,19 @@ import { CrudForm, type CrudField, type CrudCustomFieldRenderProps } from "@open
 import type { ComboboxOption } from "@open-mercato/ui/backend/inputs"
 import { createCrud, updateCrud } from "@open-mercato/ui/backend/utils/crud"
 import { buildOptimisticLockHeader, extractOptimisticLockConflict } from "@open-mercato/ui/backend/utils/optimisticLock"
+import { surfaceRecordConflict } from "@open-mercato/ui/backend/conflicts"
+import { formatDecimalForDisplay } from "./bomFormatting"
 import { flash } from "@open-mercato/ui/backend/FlashMessages"
 import { useT } from "@open-mercato/shared/lib/i18n/context"
-import { ProductPicker, UnitPicker, VariantPicker, applyProductSelection } from "./BomCatalogPickers"
+import { ProductPicker, UnitPicker, VariantPicker, useProductSelection } from "./BomCatalogPickers"
 import { toBomFormError } from "./bomFormErrors"
 import { extensionPoints } from "../extension-points"
 
 export type BomLineFormValues = {
+  id?: string
+  bomId?: string
+  revisionId?: string
+  revisionUpdatedAt?: string
   lineId?: string
   componentProductId: string | null
   componentVariantId: string | null
@@ -28,6 +34,7 @@ const PRODUCT_SCOPED_FIELDS = { variant: "componentVariantId", unit: "quantityUn
 
 export function BomLineDialog({
   bomId,
+  revisionId,
   revisionUpdatedAt,
   initial,
   position,
@@ -38,6 +45,7 @@ export function BomLineDialog({
   onConflict,
 }: {
   bomId: string
+  revisionId: string
   revisionUpdatedAt: string
   initial?: BomLineFormValues
   position?: number
@@ -48,6 +56,7 @@ export function BomLineDialog({
   onConflict: () => void
 }) {
   const t = useT()
+  const { selectProduct, cancelDefault } = useProductSelection()
   const isEdit = Boolean(initial?.lineId)
   const dialogContentRef = React.useRef<HTMLDivElement>(null)
 
@@ -57,8 +66,8 @@ export function BomLineDialog({
     try {
       if (isEdit && initial?.lineId) {
         await updateCrud(`manufacturing/boms/${bomId}/lines/${initial.lineId}`, {
-          component,
-          quantity,
+          ...(values.componentProductId !== initial.componentProductId || values.componentVariantId !== initial.componentVariantId ? { component } : {}),
+          ...(formatDecimalForDisplay(values.quantityValue) !== formatDecimalForDisplay(initial.quantityValue) || values.quantityUnitCode !== initial.quantityUnitCode ? { quantity } : {}),
           consumptionBasis: values.consumptionBasis,
           yieldFactor: values.yieldFactor,
           supplyMode: values.supplyMode,
@@ -76,13 +85,14 @@ export function BomLineDialog({
       onSaved()
     } catch (err) {
       if (extractOptimisticLockConflict(err)) {
-        flash(t("manufacturing.boms.lines.conflict", "Someone else changed this draft — refreshing"), "warning")
+        surfaceRecordConflict(extractOptimisticLockConflict(err), t)
         onConflict()
-        return
+        throw err
       }
       throw toBomFormError(err, t, {
         unit: "quantityUnitCode",
         quantity: "quantityValue",
+        yieldFactor: "yieldFactor",
         variant: "componentVariantId",
         product: "componentProductId",
       })
@@ -101,8 +111,8 @@ export function BomLineDialog({
           value={value}
           seed={componentSeed}
           onChange={(next) => {
+            selectProduct(next, value, setFormValue, PRODUCT_SCOPED_FIELDS)
             setValue(next)
-            applyProductSelection(next, setFormValue, PRODUCT_SCOPED_FIELDS)
           }}
         />
       ),
@@ -131,7 +141,7 @@ export function BomLineDialog({
         <UnitPicker
           value={value}
           productId={typeof values?.componentProductId === "string" ? values.componentProductId : null}
-          onChange={setValue}
+          onChange={(next) => { cancelDefault(); setValue(next) }}
         />
       ),
     },
@@ -166,9 +176,9 @@ export function BomLineDialog({
         { value: "produce", label: t("manufacturing.boms.lines.supply.produce", "Produce") },
       ],
     },
-  ], [componentSeed, t, variantSeed])
+  ], [cancelDefault, componentSeed, selectProduct, t, variantSeed])
 
-  const initialValues = React.useMemo<Partial<BomLineFormValues>>(() => initial ?? {
+  const initialValues = React.useMemo<Partial<BomLineFormValues>>(() => ({ ...(initial ?? {
     componentProductId: null,
     componentVariantId: null,
     quantityValue: "1",
@@ -176,7 +186,7 @@ export function BomLineDialog({
     consumptionBasis: "variable",
     yieldFactor: "1",
     supplyMode: "stock",
-  }, [initial])
+  }), id: initial?.lineId, bomId, revisionId, revisionUpdatedAt }), [initial, bomId, revisionId, revisionUpdatedAt])
 
   const submitEmbeddedForm = React.useCallback(() => {
     const form = dialogContentRef.current?.querySelector("form")
@@ -206,6 +216,7 @@ export function BomLineDialog({
           embedded
           fields={fields}
           initialValues={initialValues}
+          optimisticLockUpdatedAt={revisionUpdatedAt}
           submitLabel={isEdit ? t("manufacturing.boms.lines.save", "Save") : t("manufacturing.boms.lines.add", "Add")}
           onSubmit={handleSubmit}
         />

@@ -44,7 +44,7 @@ beforeEach(() => {
 
 describe('useBomPermissions', () => {
   it('asks the platform feature-check endpoint for the manage feature exactly once', async () => {
-    apiCallMock.mockResolvedValue({ result: { granted: [MANAGE] } })
+    apiCallMock.mockResolvedValue({ ok: true, result: { granted: [MANAGE] } })
 
     const { findByText } = renderProbe()
     await findByText('manage')
@@ -63,12 +63,12 @@ describe('useBomPermissions', () => {
     const { states, findByText } = renderProbe()
 
     expect(states[0]).toEqual({ canManage: false, isLoading: true })
-    await act(async () => { release({ result: { granted: [MANAGE] } }) })
+    await act(async () => { release({ ok: true, result: { granted: [MANAGE] } }) })
     await findByText('manage')
   })
 
   it('honours a wildcard grant rather than requiring the literal feature string', async () => {
-    apiCallMock.mockResolvedValue({ result: { granted: ['manufacturing.*'] } })
+    apiCallMock.mockResolvedValue({ ok: true, result: { granted: ['manufacturing.*'] } })
 
     const { findByText } = renderProbe()
 
@@ -76,7 +76,7 @@ describe('useBomPermissions', () => {
   })
 
   it('denies management when only the view feature is granted', async () => {
-    apiCallMock.mockResolvedValue({ result: { granted: ['manufacturing.bom.view'] } })
+    apiCallMock.mockResolvedValue({ ok: true, result: { granted: ['manufacturing.bom.view'] } })
 
     const { findByText } = renderProbe()
 
@@ -84,7 +84,7 @@ describe('useBomPermissions', () => {
   })
 
   it('denies management when an unrelated module wildcard is granted', async () => {
-    apiCallMock.mockResolvedValue({ result: { granted: ['catalog.*'] } })
+    apiCallMock.mockResolvedValue({ ok: true, result: { granted: ['catalog.*'] } })
 
     const { findByText } = renderProbe()
 
@@ -115,7 +115,7 @@ describe('useBomPermissions', () => {
     const { unmount, states } = renderProbe()
     const renderCountAtUnmount = states.length
     unmount()
-    await act(async () => { release({ result: { granted: [MANAGE] } }) })
+    await act(async () => { release({ ok: true, result: { granted: [MANAGE] } }) })
 
     await waitFor(() => expect(states).toHaveLength(renderCountAtUnmount))
     expect(errorSpy).not.toHaveBeenCalled()

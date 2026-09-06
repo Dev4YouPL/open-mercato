@@ -31,6 +31,7 @@ describe('emitBomEvent', () => {
     await emitBomEvent('manufacturing.bom_line.created', { ...PAYLOAD, lineId: 'cccccccc-3333-4333-8333-cccccccccccc' })
 
     expect(emit).toHaveBeenCalledTimes(1)
+    expect((emit.mock.calls[0] as unknown[])[2]).toMatchObject({ persistent: true })
     const [eventId, payload] = emit.mock.calls[0] as unknown as [string, Record<string, unknown>]
     expect(eventId).toBe('manufacturing.bom_line.created')
     expect(payload).toMatchObject({ ...PAYLOAD, lineId: 'cccccccc-3333-4333-8333-cccccccccccc' })

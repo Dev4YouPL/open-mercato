@@ -185,3 +185,5 @@ export const optimisticLockConflictSchema = z.object({
   currentUpdatedAt: isoTimestampSchema,
   expectedUpdatedAt: isoTimestampSchema,
 })
+
+export const bomConflictSchema = z.union([optimisticLockConflictSchema, bomDomainErrorSchema])

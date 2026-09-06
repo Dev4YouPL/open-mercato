@@ -26,7 +26,7 @@ export type BomEventPayload = {
  */
 export async function emitBomEvent(eventId: ManufacturingEventId, payload: BomEventPayload): Promise<void> {
   try {
-    await emitManufacturingEvent(eventId, payload)
+    await emitManufacturingEvent(eventId, payload, { persistent: true })
   } catch (error) {
     logger.error('Manufacturing event emission failed after commit', {
       eventId,

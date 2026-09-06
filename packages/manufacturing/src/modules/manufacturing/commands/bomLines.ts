@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util'
 import { randomUUID } from 'node:crypto'
 import type { EntityManager } from '@mikro-orm/postgresql'
 import { registerCommand } from '@open-mercato/shared/lib/commands'
@@ -5,7 +6,7 @@ import type { CommandHandler } from '@open-mercato/shared/lib/commands'
 import { extractUndoPayload } from '@open-mercato/shared/lib/commands/undo'
 import { ManufacturingBom, ManufacturingBomLine, ManufacturingBomRevision } from '../data/entities'
 import { requireBomScope, withBomTransaction } from '../lib/bom/command-context'
-import { resolveBomQuantity, type BomQuantityNormalizationSnapshot } from '../lib/bom/quantity'
+import { assertBomCatalogTargetActive, resolveBomQuantity, type BomQuantityNormalizationSnapshot } from '../lib/bom/quantity'
 import { assertNoCandidateCycle } from '../lib/bom/graph-service'
 import { emitBomEvent } from '../lib/bom/emit'
 import { resolveComponentTarget } from '../lib/bom/target-resolution'
@@ -111,14 +112,16 @@ async function assertLineCycleSafe(
 function assertRecordedLineState(line: ManufacturingBomLine, expected: LineSnapshot): void {
   const current = snapshotOfLine(line)
   const changed =
+    current.revisionId !== expected.revisionId ||
+    !isDeepStrictEqual(current.uomSnapshot, expected.uomSnapshot) ||
     current.componentProductId !== expected.componentProductId ||
     current.componentVariantId !== expected.componentVariantId ||
-    current.enteredQuantity !== expected.enteredQuantity ||
+    compareDecimals(current.enteredQuantity, expected.enteredQuantity) !== 0 ||
     current.enteredUnitCode !== expected.enteredUnitCode ||
-    current.normalizedQuantity !== expected.normalizedQuantity ||
+    compareDecimals(current.normalizedQuantity, expected.normalizedQuantity) !== 0 ||
     current.normalizedUnitCode !== expected.normalizedUnitCode ||
     current.consumptionBasis !== expected.consumptionBasis ||
-    current.yieldFactor !== expected.yieldFactor ||
+    compareDecimals(current.yieldFactor, expected.yieldFactor) !== 0 ||
     current.supplyMode !== expected.supplyMode ||
     current.position !== expected.position
   if (changed) throw new BomDomainError('bom.version_conflict', { reason: 'undo_state_changed' })
@@ -351,6 +354,9 @@ const updateLineCommand: CommandHandler<UpdateLineCommandInput, LineResult & { b
       const revision = await em.findOne(ManufacturingBomRevision, { id: line.revision.id, ...scope })
       const bom = revision ? await em.findOne(ManufacturingBom, { id: revision.bom.id, ...scope }) : null
       if (!revision || !bom) return null
+      if (before.componentProductId !== after.componentProductId || before.componentVariantId !== after.componentVariantId || !isDeepStrictEqual(before.uomSnapshot, after.uomSnapshot)) {
+      await assertBomCatalogTargetActive({ container: ctx.container, ...scope, productId: before.componentProductId, variantId: before.componentVariantId })
+      }
       await assertLineCycleSafe(em, scope, bom.id, before.supplyMode, before.componentProductId, before.componentVariantId)
       line.componentProductId = before.componentProductId
       line.componentVariantId = before.componentVariantId
@@ -427,13 +433,14 @@ const deleteLineCommand: CommandHandler<DeleteLineCommandInput, { lineId: string
     const scope = { tenantId: logEntry.tenantId, organizationId: logEntry.organizationId }
     const recreated = await withBomTransaction(ctx, scope, async (em) => {
       const line = await em.findOne(ManufacturingBomLine, { id: before.lineId, ...scope }, { populate: ['revision', 'revision.bom'] as never })
-      if (!line || !line.deletedAt) return null
+      if (!line || !line.deletedAt) throw new BomDomainError('bom.version_conflict')
       assertRecordedLineState(line, before)
       const revision = await em.findOne(ManufacturingBomRevision, { id: line.revision.id, ...scope })
       const bom = revision ? await em.findOne(ManufacturingBom, { id: revision.bom.id, ...scope }) : null
       if (!revision || !bom) return null
       const conflict = await em.findOne(ManufacturingBomLine, { revision: revision.id, position: before.position, deletedAt: null, id: { $ne: line.id } } as never)
       if (conflict) throw new BomDomainError('bom.position_exhausted')
+      await assertBomCatalogTargetActive({ container: ctx.container, ...scope, productId: before.componentProductId, variantId: before.componentVariantId })
       await assertLineCycleSafe(em, scope, bom.id, before.supplyMode, before.componentProductId, before.componentVariantId)
       line.deletedAt = null
       const now = touchAggregate(bom, revision)
@@ -535,8 +542,9 @@ const reorderLineCommand: CommandHandler<ReorderLineCommandInput, ReorderResult>
     const swapped = await withBomTransaction(ctx, scope, async (em) => {
       const line = await em.findOne(ManufacturingBomLine, { id: payload.lineId, ...scope, deletedAt: null }, { populate: ['revision', 'revision.bom'] as never })
       const adjacent = await em.findOne(ManufacturingBomLine, { id: payload.adjacentLineId, ...scope, deletedAt: null })
-      if (!line || !adjacent) return null
-      if (String(line.position) !== String(payload.adjacentPosition) || String(adjacent.position) !== String(payload.linePosition)) {
+      if (!line || !adjacent) throw new BomDomainError('bom.version_conflict')
+      if (line.revision.id !== adjacent.revision.id) throw new BomDomainError('bom.version_conflict')
+      if (String(line.position) !== String(payload.linePosition) || String(adjacent.position) !== String(payload.adjacentPosition)) {
         throw new BomDomainError('bom.version_conflict', { reason: 'undo_state_changed' })
       }
       const revision = await em.findOne(ManufacturingBomRevision, { id: line.revision.id, ...scope })
@@ -559,6 +567,61 @@ const reorderLineCommand: CommandHandler<ReorderLineCommandInput, ReorderResult>
       })
     }
   },
+}
+
+createLineCommand.redo = async ({ input, logEntry, ctx }) => {
+  const after = extractUndoPayload<{ after: LineSnapshot }>(logEntry)?.after
+  if (!after) throw new BomDomainError('bom.version_conflict')
+  const scope = requireBomScope(ctx, input)
+  return withBomTransaction(ctx, scope, async (em) => {
+    await loadActiveDraftLocked(em, scope, input.bomId)
+    await deleteLineCommand.undo!({ input: { ...input, lineId: after.lineId }, ctx: { ...ctx, transactionalEm: em }, logEntry: { ...logEntry, commandPayload: { undo: { before: after } } } })
+    const line = await em.findOne(ManufacturingBomLine, { id: after.lineId, ...scope, deletedAt: null })
+    if (!line) throw new BomDomainError('bom.version_conflict')
+    const { revision } = await loadActiveDraftLocked(em, scope, input.bomId)
+    return { line, revision }
+  })
+}
+
+updateLineCommand.redo = async ({ input, logEntry, ctx }) => {
+  const payload = extractUndoPayload<{ before: LineSnapshot; after: LineSnapshot }>(logEntry)
+  if (!payload?.before || !payload.after) throw new BomDomainError('bom.version_conflict')
+  const scope = requireBomScope(ctx, input)
+  return withBomTransaction(ctx, scope, async (em) => {
+    await loadActiveDraftLocked(em, scope, input.bomId)
+    await updateLineCommand.undo!({ input, ctx: { ...ctx, transactionalEm: em }, logEntry: { ...logEntry, commandPayload: { undo: { before: payload.after, after: payload.before } } } })
+    const line = await em.findOne(ManufacturingBomLine, { id: payload.after.lineId, ...scope, deletedAt: null })
+    if (!line) throw new BomDomainError('bom.version_conflict')
+    const { revision } = await loadActiveDraftLocked(em, scope, input.bomId)
+    return { line, revision, before: payload.before }
+  })
+}
+
+deleteLineCommand.redo = async ({ input, logEntry, ctx }) => {
+  const before = extractUndoPayload<{ before: LineSnapshot }>(logEntry)?.before
+  if (!before) throw new BomDomainError('bom.version_conflict')
+  const scope = requireBomScope(ctx, input)
+  return withBomTransaction(ctx, scope, async (em) => {
+    const { revision } = await loadActiveDraftLocked(em, scope, input.bomId)
+    const line = await em.findOne(ManufacturingBomLine, { id: before.lineId, ...scope, deletedAt: null })
+    if (!line) throw new BomDomainError('bom.version_conflict')
+    assertRecordedLineState(line, before)
+    return deleteLineCommand.execute({ ...input, expectedUpdatedAt: revision.updatedAt.toISOString() }, { ...ctx, transactionalEm: em })
+  })
+}
+
+reorderLineCommand.redo = async ({ input, logEntry, ctx }) => {
+  const payload = extractUndoPayload<{ lineId: string; adjacentLineId: string; linePosition: string; adjacentPosition: string }>(logEntry)
+  if (!payload) throw new BomDomainError('bom.version_conflict')
+  const scope = requireBomScope(ctx, input)
+  return withBomTransaction(ctx, scope, async (em) => {
+    const { revision } = await loadActiveDraftLocked(em, scope, input.bomId)
+    await reorderLineCommand.undo!({ input, ctx: { ...ctx, transactionalEm: em }, logEntry: { ...logEntry, commandPayload: { undo: { ...payload, linePosition: payload.adjacentPosition, adjacentPosition: payload.linePosition } } } })
+    const line = await em.findOne(ManufacturingBomLine, { id: payload.lineId, ...scope, deletedAt: null })
+    const adjacentLine = await em.findOne(ManufacturingBomLine, { id: payload.adjacentLineId, ...scope, deletedAt: null })
+    if (!line || !adjacentLine) throw new BomDomainError('bom.version_conflict')
+    return { line, adjacentLine, revision, changed: true }
+  })
 }
 
 registerCommand(createLineCommand)

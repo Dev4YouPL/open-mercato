@@ -6,7 +6,7 @@ import { reorderLineSchema } from '../../../../../../data/validators'
 import {
   bomLineReorderResultSchema,
   bomDomainErrorSchema,
-  optimisticLockConflictSchema,
+  bomConflictSchema,
   expectedVersionHeaderSchema,
   validationErrorSchema,
 } from '../../../../../openapi'
@@ -104,7 +104,7 @@ export const openApi: OpenApiRouteDoc = {
         { status: 401, description: 'Unauthenticated caller.' },
         { status: 403, description: 'Caller lacks manufacturing.bom.manage.' },
         { status: 404, description: 'Line not found.' },
-        { status: 409, description: 'Stale expected-version token or exhausted position space.', schema: optimisticLockConflictSchema },
+        { status: 409, description: 'Stale expected-version token or exhausted position space.', schema: bomConflictSchema },
         { status: 422, description: 'A mutation guard rejected the write.', schema: bomDomainErrorSchema },
       ],
     },

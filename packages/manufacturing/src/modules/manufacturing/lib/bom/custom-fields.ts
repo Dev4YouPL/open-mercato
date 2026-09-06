@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from 'node:util'
+import { BomDomainError } from './errors'
 import type { EntityManager } from '@mikro-orm/postgresql'
 import type { DataEngine } from '@open-mercato/shared/lib/data/engine'
 import type { CommandRuntimeContext } from '@open-mercato/shared/lib/commands'
@@ -59,7 +61,27 @@ export async function restoreBomCustomFields(
   before: CustomFieldSnapshot | undefined,
   after: CustomFieldSnapshot | undefined,
 ): Promise<void> {
+  await assertBomCustomFieldsUnchanged(ctx, scope, bomId, before, after)
   const reset = buildCustomFieldResetMap(before, after)
+  for (const key of Object.keys(reset)) {
+    if (isDeepStrictEqual(before?.[key] ?? null, after?.[key] ?? null)) delete reset[key]
+  }
   if (!Object.keys(reset).length) return
   await writeBomCustomFields(ctx, scope, bomId, reset)
+}
+
+export async function assertBomCustomFieldsUnchanged(
+  ctx: CommandRuntimeContext,
+  scope: BomScope,
+  bomId: string,
+  before: CustomFieldSnapshot | undefined,
+  after: CustomFieldSnapshot | undefined,
+): Promise<void> {
+  const keys = [...new Set([...Object.keys(before ?? {}), ...Object.keys(after ?? {})])]
+    .filter((key) => !isDeepStrictEqual(before?.[key] ?? null, after?.[key] ?? null))
+  if (!keys.length) return
+  const current = await readBomCustomFields(ctx.transactionalEm ?? ctx.container.resolve<EntityManager>('em').fork(), scope, bomId)
+  if (keys.some((key) => !isDeepStrictEqual(current[key] ?? null, after?.[key] ?? null))) {
+    throw new BomDomainError('bom.version_conflict', { reason: 'custom_fields_changed' })
+  }
 }

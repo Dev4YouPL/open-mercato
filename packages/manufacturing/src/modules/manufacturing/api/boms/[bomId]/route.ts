@@ -9,7 +9,7 @@ import {
   bomMutationResultSchema,
   bomDeleteResultSchema,
   bomDomainErrorSchema,
-  optimisticLockConflictSchema,
+  bomConflictSchema,
   expectedVersionHeaderSchema,
   validationErrorSchema,
 } from '../../openapi'
@@ -24,7 +24,7 @@ import {
   operationHeaders,
   toErrorResponse,
 } from '../../../lib/bom/route-context'
-import { toBomDetailDto, toBomMutationResultDto } from '../../../lib/bom/dto'
+import { toBomDetailDto } from '../../../lib/bom/dto'
 import { loadCatalogLabels } from '../../../lib/bom/catalog-enrichment'
 import { readBomCustomFields } from '../../../lib/bom/custom-fields'
 
@@ -101,7 +101,16 @@ export async function PUT(req: Request, routeContext: RouteContext): Promise<Res
       { input, ctx },
     )
     await runBomMutationGuardCallbacks(guard.callbacks, guardInput)
-    return Response.json(toBomMutationResultDto(result.bom, result.revision), { headers: operationHeaders(logEntry) })
+    const em = ctx.container.resolve<EntityManager>('em')
+    const summaries = await loadDirectLineSummaries(em, { tenantId, organizationId, revisionIds: [result.revision.id] })
+    const labels = await loadCatalogLabels(ctx.container, { tenantId, organizationId }, [
+      { productId: result.bom.productId, variantId: result.bom.variantId ?? null },
+    ])
+    const customFields = await readBomCustomFields(em, { tenantId, organizationId }, result.bom.id)
+    return Response.json({
+      bom: toBomDetailDto(result.bom, result.revision, summaries.get(result.revision.id) ?? emptyDirectLineSummary, labels, customFields),
+      updatedAt: result.revision.updatedAt.toISOString(),
+    }, { headers: operationHeaders(logEntry) })
   } catch (error) {
     return toErrorResponse(error)
   }
@@ -167,7 +176,7 @@ export const openApi: OpenApiRouteDoc = {
         { status: 401, description: 'Unauthenticated caller.' },
         { status: 403, description: 'Caller lacks manufacturing.bom.manage.' },
         { status: 404, description: 'BOM not found.' },
-        { status: 409, description: 'Stale expected-version token, target conflict, or cycle detected.', schema: optimisticLockConflictSchema },
+        { status: 409, description: 'Stale expected-version token, target conflict, or cycle detected.', schema: bomConflictSchema },
         { status: 422, description: 'Invalid quantity/UoM evidence, or a mutation guard rejected the write.', schema: bomDomainErrorSchema },
       ],
     },
@@ -181,7 +190,7 @@ export const openApi: OpenApiRouteDoc = {
         { status: 401, description: 'Unauthenticated caller.' },
         { status: 403, description: 'Caller lacks manufacturing.bom.manage.' },
         { status: 404, description: 'BOM not found.' },
-        { status: 409, description: 'Stale expected-version token.', schema: optimisticLockConflictSchema },
+        { status: 409, description: 'Stale expected-version token.', schema: bomConflictSchema },
       ],
     },
   },

@@ -1,5 +1,5 @@
 import { getAuthFromRequest, type AuthContext } from '@open-mercato/shared/lib/auth/server'
-import { organizationScopeRequiredResponse, resolveActiveOrganizationId } from '@open-mercato/shared/lib/auth/organizationScope'
+import { resolveOrganizationScopeForRequest } from '@open-mercato/core/modules/directory/utils/organizationScope'
 import { createRequestContainer } from '@open-mercato/shared/lib/di/container'
 import type { CommandBus, CommandRuntimeContext } from '@open-mercato/shared/lib/commands'
 import type { z } from 'zod'
@@ -26,24 +26,52 @@ export type BomRequestContext = {
 }
 
 /**
+ * 400 for an authenticated BOM caller whose organization scope cannot be
+ * pinned to exactly one concrete organization: nothing selected / "all
+ * organizations", a stale or inaccessible explicit selection, or a
+ * cross-tenant selection. BOM authoring always writes under one organization,
+ * so — unlike a read-only list — there is no safe fallback. Deliberately 400,
+ * not 401: the session is valid, so refreshing it would loop (`apiFetch`).
+ */
+function organizationSelectionInvalidResponse(): Response {
+  return Response.json(
+    {
+      error: 'Select an organization to access this resource',
+      code: 'organization_selection_invalid',
+    },
+    { status: 400 },
+  )
+}
+
+/**
  * Resolves auth + a concrete organization scope for a manufacturing BOM
- * route. Deliberately built on the shared-package auth/DI primitives only,
- * so this package's zero-core-import boundary holds for API routes, not
- * only for commands.
+ * route. Scope resolution goes through the Directory resolver
+ * (`resolveOrganizationScopeForRequest`) — the same primitive `makeCrudRoute`
+ * and `warranty_claims` use — so the selected-organization cookie is honoured
+ * and a stale, ambiguous ("all organizations") or cross-tenant selection fails
+ * loud instead of silently targeting the actor's home organization.
  */
 export async function resolveBomRequestContext(req: Request): Promise<BomRequestContext | Response> {
   const auth = await getAuthFromRequest(req)
   if (!auth || !auth.tenantId) {
     return Response.json({ error: 'Unauthorized' }, { status: 401 })
   }
-  const organizationId = resolveActiveOrganizationId(auth)
-  if (!organizationId) return organizationScopeRequiredResponse()
-
   const container = await createRequestContainer()
+  let organizationScope: Awaited<ReturnType<typeof resolveOrganizationScopeForRequest>> | null = null
+  try {
+    organizationScope = await resolveOrganizationScopeForRequest({ container, auth, request: req })
+  } catch {
+    organizationScope = null
+  }
+  const organizationId = organizationScope?.selectedId ?? null
+  const scopeTenantId = organizationScope?.tenantId ?? auth.tenantId
+  if (!organizationId || organizationScope?.selectionRejected || scopeTenantId !== auth.tenantId) {
+    return organizationSelectionInvalidResponse()
+  }
   const ctx: CommandRuntimeContext = {
     container,
     auth,
-    organizationScope: null,
+    organizationScope,
     selectedOrganizationId: organizationId,
     organizationIds: [organizationId],
     request: req,

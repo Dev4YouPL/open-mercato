@@ -15,6 +15,7 @@ function readTrimmedString(source: Record<string, unknown>, key: string): string
 
 async function fetchCatalogItems(url: string): Promise<Array<Record<string, unknown>>> {
   const response = await apiCall<CatalogListResponse>(url, undefined, { fallback: { items: [] } })
+  if (!response.ok) throw new Error("[internal] Catalog lookup failed", { cause: response.result })
   const items = response.result?.items
   return Array.isArray(items) ? items : []
 }

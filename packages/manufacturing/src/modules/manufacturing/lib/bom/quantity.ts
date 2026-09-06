@@ -1,5 +1,7 @@
 import type { AwilixContainer } from 'awilix'
-import { mapQuantityNormalizationError } from './errors'
+import type { QueryEngine } from '@open-mercato/shared/lib/query/types'
+import { bomQuantitySchema } from '../../data/validators'
+import { BomDomainError, mapQuantityNormalizationError } from './errors'
 
 /**
  * Structural mirror of Catalog's frozen P1.3a
@@ -67,6 +69,9 @@ export async function resolveBomQuantity(params: {
       enteredQuantity: params.quantity.value,
       enteredUnitCode: params.quantity.unitCode ?? null,
     })
+    if (!bomQuantitySchema.safeParse(snapshot.enteredQuantity).success || !bomQuantitySchema.safeParse(snapshot.normalizedQuantity).success) {
+      throw new BomDomainError('bom.quantity_invalid')
+    }
     return {
       enteredQuantity: snapshot.enteredQuantity,
       enteredUnitCode: snapshot.enteredUnitCode,
@@ -77,4 +82,28 @@ export async function resolveBomQuantity(params: {
   } catch (error) {
     throw mapQuantityNormalizationError(error)
   }
+}
+
+export async function assertBomCatalogTargetActive(params: {
+  container: AwilixContainer
+  tenantId: string
+  organizationId: string
+  productId: string
+  variantId?: string | null
+}): Promise<void> {
+  const queryEngine = params.container.resolve<QueryEngine>('queryEngine')
+  const scope = { tenantId: params.tenantId, organizationId: params.organizationId, page: { page: 1, pageSize: 1 } }
+  const products = await queryEngine.query('catalog:catalog_product', {
+    ...scope,
+    fields: ['id'],
+    filters: { id: params.productId, deleted_at: null },
+  })
+  if (!products.items.length) throw new BomDomainError('bom.variant_product_mismatch')
+  if (!params.variantId) return
+  const variants = await queryEngine.query('catalog:catalog_product_variant', {
+    ...scope,
+    fields: ['id'],
+    filters: { id: params.variantId, product_id: params.productId, deleted_at: null, is_active: true },
+  })
+  if (!variants.items.length) throw new BomDomainError('bom.variant_product_mismatch')
 }

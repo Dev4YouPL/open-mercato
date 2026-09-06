@@ -4,7 +4,7 @@ const MAX_CURSOR_BYTES = 512
 
 const bomCursorSchema = z.object({
   v: z.literal(1),
-  updatedAt: z.string(),
+  updatedAt: z.string().datetime({ offset: true }),
   id: z.string().uuid(),
   tenantId: z.string().uuid(),
   organizationId: z.string().uuid(),
@@ -15,11 +15,11 @@ export type BomCursor = z.infer<typeof bomCursorSchema>
 
 const lineCursorSchema = z.object({
   v: z.literal(1),
-  position: z.string(),
+  position: z.string().regex(/^\d{1,19}$/).refine((value) => BigInt(value) <= 9223372036854775807n),
   id: z.string().uuid(),
   bomId: z.string().uuid(),
   revisionId: z.string().uuid(),
-  revisionUpdatedAt: z.string(),
+  revisionUpdatedAt: z.string().datetime({ offset: true }),
   tenantId: z.string().uuid(),
   organizationId: z.string().uuid(),
   pageSize: z.number().int().min(1).max(100),

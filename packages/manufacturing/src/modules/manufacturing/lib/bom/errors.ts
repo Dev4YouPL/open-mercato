@@ -1,3 +1,4 @@
+import { CrudHttpError } from '@open-mercato/shared/lib/crud/errors'
 import {
   OPTIMISTIC_LOCK_CONFLICT_CODE,
   OPTIMISTIC_LOCK_CONFLICT_ERROR,
@@ -26,16 +27,14 @@ const STATUS_BY_CODE: Record<BomDomainErrorCode, number> = {
   'bom.cursor_invalid': 400,
 }
 
-export class BomDomainError extends Error {
+export class BomDomainError extends CrudHttpError {
   readonly code: BomDomainErrorCode
-  readonly status: number
   readonly details?: Record<string, unknown>
 
   constructor(code: BomDomainErrorCode, details?: Record<string, unknown>) {
-    super(`[internal] ${code}`)
+    super(STATUS_BY_CODE[code], { error: code, code, ...details })
     this.name = 'BomDomainError'
     this.code = code
-    this.status = STATUS_BY_CODE[code]
     this.details = details
   }
 }
@@ -63,7 +62,7 @@ export function mapQuantityNormalizationError(error: unknown): BomDomainError {
  * `extractOptimisticLockConflict` and the shared conflict banner recognise.
  * `bom.version_conflict` stays reserved for a stale direct-line cursor.
  */
-export class BomOptimisticLockConflictError extends Error {
+export class BomOptimisticLockConflictError extends CrudHttpError {
   readonly status = 409
   readonly body: {
     error: typeof OPTIMISTIC_LOCK_CONFLICT_ERROR
@@ -73,7 +72,7 @@ export class BomOptimisticLockConflictError extends Error {
   }
 
   constructor(currentUpdatedAt: string, expectedUpdatedAt: string) {
-    super('[internal] optimistic_lock_conflict')
+    super(409, { error: OPTIMISTIC_LOCK_CONFLICT_ERROR, code: OPTIMISTIC_LOCK_CONFLICT_CODE, currentUpdatedAt, expectedUpdatedAt })
     this.name = 'BomOptimisticLockConflictError'
     this.body = {
       error: OPTIMISTIC_LOCK_CONFLICT_ERROR,

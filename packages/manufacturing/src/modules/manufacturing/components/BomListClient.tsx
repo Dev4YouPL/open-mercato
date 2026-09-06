@@ -1,6 +1,8 @@
 "use client"
 
 import * as React from "react"
+import { useOrganizationScopeVersion } from "@open-mercato/shared/lib/frontend/useOrganizationScope"
+
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { DataTable } from "@open-mercato/ui/backend/DataTable"
@@ -69,6 +71,11 @@ function readFilterId(values: FilterValues, key: string): string | null {
 }
 
 export function BomListClient({ extensionTableId }: { extensionTableId: string }) {
+  const scopeVersion = useOrganizationScopeVersion()
+  return <BomListClientScoped key={scopeVersion} extensionTableId={extensionTableId} />
+}
+
+function BomListClientScoped({ extensionTableId }: { extensionTableId: string }) {
   const t = useT()
   const router = useRouter()
   const { confirm, ConfirmDialogElement } = useConfirmDialog()
@@ -282,6 +289,7 @@ export function BomListClient({ extensionTableId }: { extensionTableId: string }
       ) : (
         <>
           <DataTable<BomListRow>
+            injectionContext={{ canManage, rows, page: cursorIndex + 1 }}
             extensionTableId={extensionTableId}
             perspective={{ tableId: extensionTableId }}
             columnChooser={{ auto: true }}

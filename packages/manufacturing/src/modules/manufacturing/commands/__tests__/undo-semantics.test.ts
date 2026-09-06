@@ -3,6 +3,15 @@ import { ManufacturingBom, ManufacturingBomLine, ManufacturingBomRevision } from
 const assertNoCandidateCycle = jest.fn(async () => {})
 const restoreBomCustomFields = jest.fn(async () => {})
 
+jest.mock('../../lib/bom/quantity', () => ({ assertBomCatalogTargetActive: jest.fn(async () => {}) }))
+jest.mock('../../lib/bom/position', () => ({
+  swapLinePositions: jest.fn(async (_em: unknown, { line, adjacent }: { line: Record<string, unknown>; adjacent: Record<string, unknown> }) => {
+    const position = line.position
+    line.position = adjacent.position
+    adjacent.position = position
+  }),
+}))
+
 jest.mock('../../lib/bom/locking', () => ({
   acquireBomGraphLock: jest.fn(async () => {}),
 }))
@@ -11,6 +20,7 @@ jest.mock('../../lib/bom/graph-service', () => ({
 }))
 jest.mock('../../lib/bom/custom-fields', () => ({
   BOM_ENTITY_ID: 'manufacturing:manufacturing_bom',
+  assertBomCustomFieldsUnchanged: jest.fn(async () => {}),
   readBomCustomFields: jest.fn(async () => ({})),
   writeBomCustomFields: jest.fn(async () => {}),
   restoreBomCustomFields: (...args: unknown[]) => restoreBomCustomFields(...(args as [])),
@@ -142,6 +152,7 @@ function makeContext(store: Store) {
       return (
         table.find((row) => {
           if (typeof where.id === 'string' && row.id !== where.id) return false
+          if (where.id && typeof where.id === 'object' && '$ne' in where.id && row.id === where.id.$ne) return false
           if (typeof where.bom === 'string' && (row.bom as AnyRecord | undefined)?.id !== where.bom) return false
           if (typeof where.revision === 'string' && (row.revision as AnyRecord | undefined)?.id !== where.revision) return false
           if (where.deletedAt === null && row.deletedAt !== null) return false
@@ -344,5 +355,55 @@ describe('manufacturing.bom.delete undo', () => {
     expect(bom.deletedAt).toBeNull()
     expect(line.deletedAt).toBeNull()
     expect(assertNoCandidateCycle).toHaveBeenCalled()
+  })
+})
+
+describe('review regressions: semantic replay', () => {
+  it('accepts PostgreSQL padded decimal strings on undo', async () => {
+    const after = snapshotFrom(lineRow())
+    const line = lineRow({ enteredQuantity: '2.000000', normalizedQuantity: '2.000000', yieldFactor: '1.000000000000' })
+    const { ctx } = makeContext({ boms: [bomRow()], revisions: [revisionRow()], lines: [line] })
+    await createLineCommand.undo!({ input: {} as never, ctx, logEntry: logEntryFor({ after }) as never })
+    expect(line.deletedAt).toBeInstanceOf(Date)
+  })
+
+  it('refuses changed UoM evidence even when quantities are unchanged', async () => {
+    const after = snapshotFrom(lineRow())
+    const line = lineRow({ uomSnapshot: { version: 1, source: { resolvedAt: 'later' } } })
+    const { ctx } = makeContext({ boms: [bomRow()], revisions: [revisionRow()], lines: [line] })
+    await expect(createLineCommand.undo!({ input: {} as never, ctx, logEntry: logEntryFor({ after }) as never })).rejects.toMatchObject({ code: 'bom.version_conflict' })
+  })
+
+  it('undoes and redoes the recorded pair without a fresh browser token', async () => {
+    const line = lineRow({ position: '2048' })
+    const adjacent = lineRow({ id: ADJACENT_ID, position: '1024' })
+    const { ctx } = makeContext({ boms: [bomRow()], revisions: [revisionRow()], lines: [line, adjacent] })
+    const logEntry = logEntryFor({ lineId: LINE_ID, adjacentLineId: ADJACENT_ID, linePosition: '2048', adjacentPosition: '1024' }) as never
+    const input = { ...SCOPE, bomId: BOM_ID, lineId: LINE_ID, direction: 'down' as const, expectedUpdatedAt: '2020-01-01T00:00:00.000Z' }
+    await reorderLineCommand.undo!({ input, ctx, logEntry })
+    expect(line.position).toBe('1024')
+    await reorderLineCommand.redo!({ input, ctx, logEntry })
+    expect(line.position).toBe('2048')
+  })
+
+  it('restores the same occurrence ID on create redo', async () => {
+    const line = lineRow()
+    const { ctx } = makeContext({ boms: [bomRow()], revisions: [revisionRow()], lines: [line] })
+    const logEntry = logEntryFor({ after: snapshotFrom(line) }) as never
+    await createLineCommand.undo!({ input: {} as never, ctx, logEntry })
+    const result = await createLineCommand.redo!({ input: { ...SCOPE, bomId: BOM_ID } as never, ctx, logEntry })
+    expect(result.line.id).toBe(LINE_ID)
+    expect(line.deletedAt).toBeNull()
+  })
+
+  it('replays a line update from snapshots after undo advances the version', async () => {
+    const line = lineRow({ enteredQuantity: '5', normalizedQuantity: '5' })
+    const before = snapshotFrom(lineRow())
+    const { ctx } = makeContext({ boms: [bomRow()], revisions: [revisionRow()], lines: [line] })
+    const logEntry = logEntryFor({ before, after: snapshotFrom(line) }) as never
+    const input = { ...SCOPE, bomId: BOM_ID, lineId: LINE_ID, expectedUpdatedAt: '2020-01-01T00:00:00.000Z' }
+    await updateLineCommand.undo!({ input, ctx, logEntry })
+    await updateLineCommand.redo!({ input, ctx, logEntry })
+    expect(line.enteredQuantity).toBe('5')
   })
 })
