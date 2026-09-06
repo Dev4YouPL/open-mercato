@@ -1,6 +1,6 @@
 import { getAuthFromRequest, type AuthContext } from '@open-mercato/shared/lib/auth/server'
-import { resolveOrganizationScopeForRequest } from '@open-mercato/core/modules/directory/utils/organizationScope'
 import { createRequestContainer } from '@open-mercato/shared/lib/di/container'
+import type { OrganizationScopeService } from '@open-mercato/shared/lib/auth/principal-service'
 import type { CommandBus, CommandRuntimeContext } from '@open-mercato/shared/lib/commands'
 import type { z } from 'zod'
 import {
@@ -45,11 +45,11 @@ function organizationSelectionInvalidResponse(): Response {
 
 /**
  * Resolves auth + a concrete organization scope for a manufacturing BOM
- * route. Scope resolution goes through the Directory resolver
- * (`resolveOrganizationScopeForRequest`) — the same primitive `makeCrudRoute`
- * and `warranty_claims` use — so the selected-organization cookie is honoured
- * and a stale, ambiguous ("all organizations") or cross-tenant selection fails
- * loud instead of silently targeting the actor's home organization.
+ * route. Scope resolution goes through Directory's public DI boundary, so the
+ * selected-organization cookie is honoured and a stale, ambiguous ("all
+ * organizations") or cross-tenant selection fails loud instead of silently
+ * targeting the actor's home organization. A tenant with exactly one active
+ * organization is the sole safe implicit-selection exception.
  */
 export async function resolveBomRequestContext(req: Request): Promise<BomRequestContext | Response> {
   const auth = await getAuthFromRequest(req)
@@ -57,9 +57,10 @@ export async function resolveBomRequestContext(req: Request): Promise<BomRequest
     return Response.json({ error: 'Unauthorized' }, { status: 401 })
   }
   const container = await createRequestContainer()
-  let organizationScope: Awaited<ReturnType<typeof resolveOrganizationScopeForRequest>> | null = null
+  let organizationScope: Awaited<ReturnType<OrganizationScopeService['resolveConcreteForRequest']>> | null = null
   try {
-    organizationScope = await resolveOrganizationScopeForRequest({ container, auth, request: req })
+    const organizationScopeService = container.resolve<OrganizationScopeService>('organizationScopeService')
+    organizationScope = await organizationScopeService.resolveConcreteForRequest({ auth, request: req })
   } catch {
     organizationScope = null
   }

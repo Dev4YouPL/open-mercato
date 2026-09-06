@@ -5,6 +5,7 @@ import type {
   OrganizationScopeRequest,
 } from '@open-mercato/shared/lib/auth/principal-service'
 import type { AuthContext } from '@open-mercato/shared/lib/auth/server'
+import { Organization } from '@open-mercato/core/modules/directory/data/entities'
 import { resolveOrganizationScope, resolveOrganizationScopeForRequest } from '../utils/organizationScope'
 
 type OrganizationScopeRbac = {
@@ -81,5 +82,33 @@ export class DefaultOrganizationScopeService implements OrganizationScopeService
       selectedId: input.selectedId,
       tenantId: input.tenantId,
     })
+  }
+
+  async resolveConcreteForRequest(input: {
+    auth: AuthContext | null | undefined
+    request?: OrganizationScopeRequest
+    selectedId?: string | null
+    tenantId?: string | null
+  }) {
+    const scope = await this.resolveForRequest(input)
+    if (scope.selectedId || scope.selectionRejected || !scope.tenantId) return scope
+
+    if (scope.filterIds?.length === 1) {
+      const [organizationId] = scope.filterIds
+      return { ...scope, selectedId: organizationId }
+    }
+
+    // Unrestricted users receive `filterIds: null`. Picking a home org here
+    // would silently target the wrong organization in a multi-org tenant, so
+    // only choose when the tenant itself has exactly one active organization.
+    if (scope.filterIds !== null) return scope
+    const organizations = await this.em.find(
+      Organization,
+      { tenant: scope.tenantId, deletedAt: null },
+      { fields: ['id'], limit: 2 },
+    )
+    if (organizations.length !== 1) return scope
+    const organizationId = String(organizations[0].id)
+    return { ...scope, selectedId: organizationId, filterIds: [organizationId] }
   }
 }

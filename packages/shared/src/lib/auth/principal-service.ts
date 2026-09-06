@@ -107,4 +107,14 @@ export interface OrganizationScopeService {
     selectedId?: string | null
     tenantId?: string | null
   }): Promise<OrganizationScope>
+  /**
+   * Resolves a write-safe organization selection. An implicit selection is
+   * made only when the effective scope contains exactly one organization.
+   */
+  resolveConcreteForRequest(input: {
+    auth: AuthContext | null | undefined
+    request?: OrganizationScopeRequest
+    selectedId?: string | null
+    tenantId?: string | null
+  }): Promise<OrganizationScope>
 }
