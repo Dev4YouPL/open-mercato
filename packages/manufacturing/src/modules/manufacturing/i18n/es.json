@@ -1,4 +1,5 @@
 {
+  "manufacturing.boms.catalog.lookupError": "No se pudieron cargar las opciones del catálogo. Inténtalo de nuevo.",
   "manufacturing.boms.create.title": "Nuevo borrador de lista de materiales",
   "manufacturing.boms.editor.backToList": "Volver a los borradores de LDM",
   "manufacturing.boms.editor.baseOutput": "Salida base: {value} {unit} ({normalized} {baseUnit})",

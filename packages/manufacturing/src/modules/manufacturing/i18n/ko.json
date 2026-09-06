@@ -1,4 +1,5 @@
 {
+  "manufacturing.boms.catalog.lookupError": "카탈로그 옵션을 불러오지 못했습니다. 다시 시도하세요.",
   "manufacturing.boms.create.title": "새 BOM 초안",
   "manufacturing.boms.editor.backToList": "BOM 초안 목록으로 돌아가기",
   "manufacturing.boms.editor.baseOutput": "기준 산출량: {value} {unit} ({normalized} {baseUnit})",

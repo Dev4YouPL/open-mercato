@@ -1,4 +1,5 @@
 {
+  "manufacturing.boms.catalog.lookupError": "Could not load Catalog options. Try again.",
   "manufacturing.boms.create.title": "New BOM draft",
   "manufacturing.boms.editor.backToList": "Back to BOM drafts",
   "manufacturing.boms.editor.baseOutput": "Base output: {value} {unit} ({normalized} {baseUnit})",

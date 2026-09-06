@@ -1,4 +1,5 @@
 {
+  "manufacturing.boms.catalog.lookupError": "Nie udało się wczytać opcji z Katalogu. Spróbuj ponownie.",
   "manufacturing.boms.create.title": "Nowa wersja robocza BOM",
   "manufacturing.boms.editor.backToList": "Wróć do wersji roboczych BOM",
   "manufacturing.boms.editor.baseOutput": "Ilość wyjściowa bazowa: {value} {unit} ({normalized} {baseUnit})",

@@ -106,7 +106,7 @@ function useCatalogLookupFeedback() {
     try {
       return await lookup()
     } catch (error) {
-      flash(t("ui.error", "Something went wrong"), "error")
+      flash(t("manufacturing.boms.catalog.lookupError", "Could not load Catalog options. Try again."), "error")
       throw error
     }
   }, [t])

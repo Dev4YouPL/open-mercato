@@ -1,4 +1,5 @@
 {
+  "manufacturing.boms.catalog.lookupError": "Katalogoptionen konnten nicht geladen werden. Bitte erneut versuchen.",
   "manufacturing.boms.create.title": "Neuer Stücklistenentwurf",
   "manufacturing.boms.editor.backToList": "Zurück zu den Stücklistenentwürfen",
   "manufacturing.boms.editor.baseOutput": "Basisausbringung: {value} {unit} ({normalized} {baseUnit})",
