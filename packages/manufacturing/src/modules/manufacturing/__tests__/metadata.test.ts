@@ -14,7 +14,11 @@ function listSourceFiles(dir: string): string[] {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const entryPath = path.join(dir, entry.name)
     if (entry.isDirectory()) {
-      if (entry.name === '__tests__') continue
+      // Test material, excluded from the published bundle by build.mjs. The
+      // Playwright specs deliberately use the core integration helpers and name
+      // peer packages in profile manifests; the guard below protects the runtime
+      // code that actually ships.
+      if (entry.name === '__tests__' || entry.name === '__integration__') continue
       files.push(...listSourceFiles(entryPath))
     } else if (/\.tsx?$/.test(entry.name)) {
       files.push(entryPath)
@@ -41,11 +45,16 @@ describe('manufacturing module metadata', () => {
     }
   })
 
-  it('grants BOM access to default administrator roles', () => {
-    const bomFeatures = ['manufacturing.bom.view', 'manufacturing.bom.manage']
+  it('grants BOM and Work Centre access to default administrator roles', () => {
+    const adminFeatures = [
+      'manufacturing.bom.view',
+      'manufacturing.bom.manage',
+      'manufacturing.work_center.view',
+      'manufacturing.work_center.manage',
+    ]
 
-    expect(setup.defaultRoleFeatures?.admin).toEqual(bomFeatures)
-    expect(setup.defaultRoleFeatures?.superadmin).toEqual(bomFeatures)
+    expect(setup.defaultRoleFeatures?.admin).toEqual(adminFeatures)
+    expect(setup.defaultRoleFeatures?.superadmin).toEqual(adminFeatures)
   })
 })
 
