@@ -3,6 +3,7 @@ import type { AwilixContainer } from 'awilix'
 import type { CustomFieldDefinition } from '@open-mercato/shared/modules/entities'
 import type { CommandBus, CommandRuntimeContext } from '@open-mercato/shared/lib/commands'
 import type { ModuleSetupConfig } from '@open-mercato/shared/modules/setup'
+import { loadCustomFieldValues } from '@open-mercato/shared/lib/crud/custom-fields'
 import { ensureCustomFieldDefinitions } from '@open-mercato/core/modules/entities/lib/field-definitions'
 import {
   CustomerAddress,
@@ -10,7 +11,7 @@ import {
   CustomerTag,
   CustomerTagAssignment,
 } from '@open-mercato/core/modules/customers/data/entities'
-import { findOneWithDecryption } from '@open-mercato/shared/lib/encryption/find'
+import { findOneWithDecryption, findWithDecryption } from '@open-mercato/shared/lib/encryption/find'
 import { E } from '#generated/entities.ids.generated'
 
 const SUPPLIER_TAG_SLUG = 'dostawca'
@@ -71,7 +72,7 @@ const companySeeds: CompanySeed[] = [
     industry: 'Industrial manufacturing',
     sizeBucket: '51-200',
     description: 'Przykładowy dostawca komponentów przemysłowych.',
-    primaryEmail: 'kontakt@supplier-one.example.com',
+    primaryEmail: 'supplier@hackon-om-wro.cloud',
     primaryPhone: '+48 22 555 0101',
     address: {
       addressLine1: 'ul. Przemysłowa 10',
@@ -90,7 +91,7 @@ const companySeeds: CompanySeed[] = [
     industry: 'Packaging',
     sizeBucket: '11-50',
     description: 'Przykładowy dostawca opakowań i materiałów wysyłkowych.',
-    primaryEmail: 'hello@supplier-two.example.com',
+    primaryEmail: 'supplier2@hackon-om-wro.cloud',
     primaryPhone: '+48 71 555 0202',
     address: {
       addressLine1: 'ul. Logistyczna 24',
@@ -226,16 +227,18 @@ async function ensureSupplierCompany(
   tagId: string,
   seed: CompanySeed,
 ): Promise<void> {
-  const existing = await findOneWithDecryption(
+  const existingCompanies = await findWithDecryption(
     em,
     CustomerCompanyProfile,
     {
-      domain: seed.domain,
       tenantId: scope.tenantId,
       organizationId: scope.organizationId,
     },
     { populate: ['entity'] },
     scope,
+  )
+  const existing = existingCompanies.find(
+    (company) => company.domain === seed.domain && company.entity?.deletedAt == null,
   )
 
   const entityId = existing?.entity?.id ?? (await executeCommand<{ entityId: string }>(container, scope, 'customers.companies.create', {
@@ -278,6 +281,43 @@ async function ensureSupplierCompany(
   await ensureSupplierAddress(em, container, scope, entityId, seed)
 }
 
+async function ensureExistingCustomerTypes(
+  em: EntityManager,
+  container: AwilixContainer,
+  scope: SeedScope,
+): Promise<void> {
+  const companies = await findWithDecryption(
+    em,
+    CustomerCompanyProfile,
+    {
+      tenantId: scope.tenantId,
+      organizationId: scope.organizationId,
+    },
+    { populate: ['entity'] },
+    scope,
+  )
+  const customerCompanies = companies.filter(
+    (company) => company.entity?.deletedAt == null && company.entity?.lifecycleStage === 'customer',
+  )
+  if (!customerCompanies.length) return
+
+  const customValues = await loadCustomFieldValues({
+    em,
+    entityId: E.customers.customer_company_profile,
+    recordIds: customerCompanies.map((company) => company.id),
+    tenantIdByRecord: Object.fromEntries(customerCompanies.map((company) => [company.id, company.tenantId])),
+    organizationIdByRecord: Object.fromEntries(customerCompanies.map((company) => [company.id, company.organizationId])),
+  })
+
+  for (const company of customerCompanies) {
+    if (customValues[company.id]?.[`cf_${SUPPLIER_FIELD_KEY}`] !== undefined) continue
+    await executeCommand(container, scope, 'customers.companies.update', {
+      id: company.entity!.id,
+      [`cf_${SUPPLIER_FIELD_KEY}`]: 'customer',
+    })
+  }
+}
+
 export async function seedSupplierExamples(
   em: EntityManager,
   container: AwilixContainer,
@@ -287,6 +327,7 @@ export async function seedSupplierExamples(
   for (const seed of companySeeds) {
     await ensureSupplierCompany(em, container, scope, tagId, seed)
   }
+  await ensureExistingCustomerTypes(em, container, scope)
 }
 
 export const setup: ModuleSetupConfig = {

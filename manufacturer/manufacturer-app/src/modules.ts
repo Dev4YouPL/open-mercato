@@ -7,6 +7,9 @@ export type ModuleEntry = { id: string; from?: '@open-mercato/core' | '@app' | s
 
 export const enabledModules: ModuleEntry[] = [
   { id: 'auth', from: '@open-mercato/core' },
+  // Required by the enterprise agent_orchestrator: its agentTokenService issues
+  // and verifies ApiKey-backed tokens for agent runs.
+  { id: 'api_keys', from: '@open-mercato/core' },
   { id: 'directory', from: '@open-mercato/core' },
   { id: 'configs', from: '@open-mercato/core' },
   { id: 'entities', from: '@open-mercato/core' },
@@ -15,11 +18,20 @@ export const enabledModules: ModuleEntry[] = [
   { id: 'audit_logs', from: '@open-mercato/core' },
   { id: 'notifications', from: '@open-mercato/core' },
   { id: 'dashboards', from: '@open-mercato/core' },
+  // Condition/rule engine the workflows module loads in its setup, validators
+  // and branching editors; must be enabled alongside `workflows`.
+  { id: 'business_rules', from: '@open-mercato/core' },
+  // Durable execution for supply-case processes: waits, timeouts and resumes
+  // (.ai/specs/2026-09-18-supplier-email-agent-workflow.md).
+  { id: 'workflows', from: '@open-mercato/core' },
   { id: 'events', from: '@open-mercato/events' },
   { id: 'search', from: '@open-mercato/search' },
   { id: 'attachments', from: '@open-mercato/core' },
   { id: 'customers', from: '@open-mercato/core' },
   { id: 'supplier_examples', from: '@app' },
+  // Supply exception cases (.ai/specs/2026-09-18-supply-cases-local-json-store.md).
+  // Ships a local JSON-backed store until the ORM entities land.
+  { id: 'supply_cases', from: '@app' },
   { id: 'messages', from: '@open-mercato/core' },
   { id: 'dictionaries', from: '@open-mercato/core' },
   { id: 'feature_toggles', from: '@open-mercato/core' },
