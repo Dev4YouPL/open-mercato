@@ -1,0 +1,687 @@
+/** @jest-environment node */
+jest.mock('#generated/entities.ids.generated', () => ({
+  E: {
+    attachments: { attachment: 'attachments:attachment' },
+    catalog: { catalog_product: 'catalog:catalog_product' },
+  },
+}))
+
+const partitions = [
+  { id: 'p-private', code: 'privateAttachments', title: 'Private', isPublic: false, storageDriver: 'local', requiresOcr: true },
+  { id: 'p-products', code: 'productsMedia', title: 'Products', isPublic: true, storageDriver: 'local', requiresOcr: false },
+]
+
+const defaultFindOneImpl = async (entity: any, where: any) => {
+  if (entity?.name === 'AttachmentPartition') {
+    return partitions.find((p) => p.code === where?.code) ?? null
+  }
+  if (entity?.name === 'CustomFieldDef') {
+    return { configJson: { maxAttachmentSizeMb: 0.001, acceptExtensions: ['pdf', 'docx'] } }
+  }
+  return null
+}
+
+function buildUsageKysely(totalSize: number) {
+  const selectChain: any = {
+    select: jest.fn(() => selectChain),
+    where: jest.fn(() => selectChain),
+    executeTakeFirst: jest.fn(async () => ({ total_size: totalSize })),
+    execute: jest.fn(async () => []),
+  }
+  return {
+    selectFrom: jest.fn(() => selectChain),
+  }
+}
+
+const mockEm = {
+  findOne: jest.fn(defaultFindOneImpl),
+  create: jest.fn((_cls: any, data: any) => ({ ...data })),
+  getRepository: jest.fn(() => ({
+    findAll: jest.fn(async () => partitions),
+    create: jest.fn((data: any) => data),
+  })),
+  persist: jest.fn(function persist(this: any) { return this }),
+  remove: jest.fn(function remove(this: any) { return this }),
+  flush: jest.fn(async () => {}),
+  transactional: jest.fn(async (work: (tx: any) => unknown) => work(mockEm)),
+  find: jest.fn(),
+  count: jest.fn(async () => 0),
+  getKysely: jest.fn(() => buildUsageKysely(0)),
+}
+
+const defaultFindOneImplementation = mockEm.findOne.getMockImplementation()
+
+const mockDataEngine = {
+  setCustomFields: jest.fn(async () => {}),
+  markOrmEntityChange: jest.fn(),
+  flushOrmEntityChanges: jest.fn(async () => {}),
+}
+
+let mockAttachmentQuotaService: any = null
+const mockAttachmentQuotaRecoveryScheduler = jest.fn(async () => {})
+
+jest.mock('@open-mercato/shared/lib/di/container', () => ({
+  createRequestContainer: async () => ({
+    resolve: (k: string) => {
+      if (k === 'em') return mockEm
+      if (k === 'dataEngine') return mockDataEngine
+      if (k === 'attachmentQuotaService') return mockAttachmentQuotaService
+      if (k === 'attachmentQuotaRecoveryScheduler') return mockAttachmentQuotaRecoveryScheduler
+      return null
+    },
+  }),
+}))
+
+const defaultAuth = () => ({ orgId: 'org', tenantId: 't1', roles: ['admin'] })
+const mockGetAuthFromRequest = jest.fn(defaultAuth)
+jest.mock('@open-mercato/shared/lib/auth/server', () => ({ getAuthFromRequest: (...args: unknown[]) => mockGetAuthFromRequest(...args) }))
+
+// The route derives the active org from the selected-organization scope, not the
+// raw auth.orgId (#3765). Default the helper to the auth home org so existing
+// tests are unaffected; individual tests override it to a selected org.
+const mockResolveAttachmentOrganizationId = jest.fn(async (_container: unknown, auth: any) => auth?.orgId ?? null)
+jest.mock('@open-mercato/core/modules/attachments/lib/requestScope', () => ({
+  resolveAttachmentOrganizationId: (...args: unknown[]) => mockResolveAttachmentOrganizationId(...args),
+}))
+
+jest.mock('@open-mercato/shared/lib/i18n/server', () => ({
+  resolveTranslations: jest.fn(async () => ({
+    t: (_key: string, fallback: string) => fallback,
+    translate: (_key: string, fallback: string) => fallback,
+  })),
+}))
+
+// Avoid touching disk
+import { promises as fsp } from 'fs'
+jest.spyOn(fsp, 'mkdir').mockResolvedValue(undefined as any)
+jest.spyOn(fsp, 'writeFile').mockResolvedValue(undefined as any)
+jest.spyOn(fsp, 'rm').mockResolvedValue(undefined as any)
+
+jest.mock('@open-mercato/core/modules/attachments/lib/textExtraction', () => ({
+  extractAttachmentContent: jest.fn(),
+}))
+const mockExtractAttachmentContent = jest.requireMock('@open-mercato/core/modules/attachments/lib/textExtraction')
+  .extractAttachmentContent as jest.Mock
+
+jest.mock('@open-mercato/core/modules/attachments/lib/ocrQueue', () => ({
+  requestOcrProcessing: jest.fn(async () => {}),
+}))
+const mockRequestOcrProcessing = jest.requireMock('@open-mercato/core/modules/attachments/lib/ocrQueue')
+  .requestOcrProcessing as jest.Mock
+
+// Avoid loading MikroORM decorators in tests
+jest.mock('@open-mercato/core/modules/attachments/data/entities', () => ({
+  Attachment: class Attachment {},
+  AttachmentPartition: class AttachmentPartition {},
+}))
+
+function fdWith(file: File, extra: Record<string, string> = {}) {
+  const fd = new FormData()
+  fd.set('entityId', 'example:todo')
+  fd.set('recordId', 'r1')
+  fd.set('fieldKey', 'attachments')
+  for (const [k, v] of Object.entries(extra)) fd.set(k, v)
+  fd.set('file', file)
+  return fd
+}
+
+async function loadHandlers() {
+  return import('@open-mercato/core/modules/attachments/api/route')
+}
+
+describe('attachments API', () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+    mockGetAuthFromRequest.mockReset()
+    mockGetAuthFromRequest.mockImplementation(defaultAuth)
+    mockResolveAttachmentOrganizationId.mockReset()
+    mockResolveAttachmentOrganizationId.mockImplementation(async (_container: unknown, auth: any) => auth?.orgId ?? null)
+    mockEm.findOne.mockReset()
+    mockEm.findOne.mockImplementation(defaultFindOneImpl)
+    mockEm.find.mockReset()
+    mockEm.find.mockResolvedValue([])
+    mockEm.count.mockReset()
+    mockEm.count.mockResolvedValue(0)
+    mockExtractAttachmentContent.mockReset()
+    delete process.env.OM_DEFAULT_ATTACHMENT_OCR_ENABLED
+    delete process.env.OM_ATTACHMENT_MAX_UPLOAD_MB
+    delete process.env.OM_ATTACHMENT_TENANT_QUOTA_MB
+    delete process.env.OPENMERCATO_DEFAULT_ATTACHMENT_OCR_ENABLED
+    delete process.env.OPENMERCATO_ATTACHMENT_MAX_UPLOAD_MB
+    delete process.env.OPENMERCATO_ATTACHMENT_TENANT_QUOTA_MB
+    mockEm.getKysely.mockReturnValue(buildUsageKysely(0))
+    mockAttachmentQuotaService = null
+    mockAttachmentQuotaRecoveryScheduler.mockClear()
+    mockRequestOcrProcessing.mockReset()
+    mockRequestOcrProcessing.mockImplementation(async () => {})
+    delete process.env.OPENMERCATO_DEFAULT_ATTACHMENT_OCR_ENABLED
+    delete process.env.OPENAI_API_KEY
+  })
+
+  it('rejects disallowed extension', async () => {
+    const { POST: upload } = await loadHandlers()
+    const file = new File([new Uint8Array([1,2,3])], 'img.png', { type: 'image/png' })
+    const req = new Request('http://x/api/attachments', { method: 'POST', body: fdWith(file) as any })
+    const res = await upload(req)
+    expect(res.status).toBe(400)
+    const j = await res.json()
+    expect(j.error).toMatch(/not allowed/i)
+  })
+
+  it('rejects uploads whose filename has a dangerous double extension like .pdf.exe', async () => {
+    const { POST: upload } = await loadHandlers()
+    const file = new File([new Uint8Array([1, 2, 3])], 'faktura.pdf.exe', { type: 'application/pdf' })
+    const req = new Request('http://x/api/attachments', { method: 'POST', body: fdWith(file, { fieldKey: '' }) as any })
+    const res = await upload(req)
+    expect(res.status).toBe(400)
+    const payload = await res.json()
+    expect(payload.error).toMatch(/executable/i)
+  })
+
+  it('rejects uploads whose final extension is a known executable type', async () => {
+    const { POST: upload } = await loadHandlers()
+    const file = new File([new Uint8Array([1, 2, 3])], 'installer.msi', { type: 'application/octet-stream' })
+    const req = new Request('http://x/api/attachments', { method: 'POST', body: fdWith(file, { fieldKey: '' }) as any })
+    const res = await upload(req)
+    expect(res.status).toBe(400)
+    const payload = await res.json()
+    expect(payload.error).toMatch(/executable/i)
+  })
+
+  it('rejects active content uploads even when the client claims a safe image mime type', async () => {
+    const { POST: upload } = await loadHandlers()
+    const file = new File(
+      [Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>', 'utf8')],
+      'avatar.jpg',
+      { type: 'image/jpeg' },
+    )
+    const req = new Request('http://x/api/attachments', { method: 'POST', body: fdWith(file, { fieldKey: '' }) as any })
+    const res = await upload(req)
+    expect(res.status).toBe(400)
+    const payload = await res.json()
+    expect(payload.error).toMatch(/active content/i)
+  })
+
+  it('accepts allowed small pdf', async () => {
+    const { POST: upload } = await loadHandlers()
+    const file = new File([new Uint8Array([1,2,3])], 'doc.pdf', { type: 'application/pdf' })
+    const req = new Request('http://x/api/attachments', {
+      method: 'POST',
+      body: fdWith(file, { customFields: JSON.stringify({ altText: 'Product spec' }) }) as any,
+    })
+    const res = await upload(req)
+    expect(res.status).toBe(200)
+    const j = await res.json()
+    expect(j?.ok).toBe(true)
+    expect(j?.item?.customFields).toEqual({ altText: 'Product spec' })
+    const payload = mockEm.create.mock.calls[mockEm.create.mock.calls.length - 1]?.[1]
+    expect(payload?.storageMetadata?.assignments).toEqual([{ type: 'example:todo', id: 'r1' }])
+    expect(mockDataEngine.setCustomFields).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entityId: expect.any(String),
+        recordId: expect.any(String),
+        values: { altText: 'Product spec' },
+      }),
+    )
+  })
+
+  it('fails with 500 and skips side effects when custom-field persistence throws', async () => {
+    mockDataEngine.setCustomFields.mockRejectedValueOnce(new Error('cf write failed'))
+    const { POST: upload } = await loadHandlers()
+    const file = new File([new Uint8Array([1,2,3])], 'doc.pdf', { type: 'application/pdf' })
+    const req = new Request('http://x/api/attachments', {
+      method: 'POST',
+      body: fdWith(file, { customFields: JSON.stringify({ altText: 'Product spec' }) }) as any,
+    })
+    const res = await upload(req)
+    expect(res.status).toBe(500)
+    // The attachment row and its custom fields are written inside one transaction
+    // so a custom-field failure aborts the whole unit and never emits a created event.
+    expect(mockEm.transactional).toHaveBeenCalled()
+    expect(mockDataEngine.markOrmEntityChange).not.toHaveBeenCalled()
+    expect(fsp.rm).toHaveBeenCalled()
+  })
+
+  it('fails closed before storage when quota accounting is unavailable', async () => {
+    mockAttachmentQuotaService = {
+      recoverExpired: jest.fn(async () => {}),
+      reserve: jest.fn(async () => {
+        throw Object.assign(new Error('quota accounting unavailable'), { code: 'quota_accounting_unavailable' })
+      }),
+    }
+    const { POST: upload } = await loadHandlers()
+    const file = new File([new Uint8Array([1, 2, 3])], 'doc.pdf', { type: 'application/pdf' })
+    const res = await upload(new Request('http://x/api/attachments', {
+      method: 'POST',
+      body: fdWith(file) as any,
+    }))
+
+    expect(res.status).toBe(500)
+    expect(fsp.writeFile).not.toHaveBeenCalled()
+  })
+
+  it('maps a concurrent quota rejection to 413 while the first upload remains active', async () => {
+    let pendingBytes = 0
+    mockAttachmentQuotaService = {
+      recoverExpired: jest.fn(async () => {}),
+      reserve: jest.fn(async ({ bytes }: { bytes: number }) => {
+        if (pendingBytes + bytes > 3) {
+          throw Object.assign(new Error('quota exceeded'), { code: 'quota_exceeded' })
+        }
+        pendingBytes += bytes
+        return {
+          id: `reservation-${pendingBytes}`,
+          leaseToken: `lease-${pendingBytes}`,
+          expiresAt: new Date(Date.now() + 60_000),
+        }
+      }),
+      markStored: jest.fn(async () => {}),
+      completeAttachment: jest.fn(async () => { pendingBytes = 0 }),
+      release: jest.fn(async () => { pendingBytes = 0 }),
+    }
+
+    let releaseFirstWrite!: () => void
+    const firstWriteStarted = new Promise<void>((resolve) => {
+      ;(fsp.writeFile as jest.Mock).mockImplementationOnce(async () => {
+        resolve()
+        await new Promise<void>((release) => { releaseFirstWrite = release })
+      })
+    })
+    const { POST: upload } = await loadHandlers()
+    const makeRequest = () => new Request('http://x/api/attachments', {
+      method: 'POST',
+      body: fdWith(new File([new Uint8Array([1, 2, 3])], 'doc.pdf', { type: 'application/pdf' })) as any,
+    })
+
+    const first = upload(makeRequest())
+    await firstWriteStarted
+    const second = upload(makeRequest())
+    const secondResponse = await second
+    releaseFirstWrite()
+    const firstResponse = await first
+
+    expect([firstResponse.status, secondResponse.status].sort()).toEqual([200, 413])
+    expect(mockAttachmentQuotaService.reserve).toHaveBeenCalledTimes(2)
+  })
+
+  it('rejects files that exceed configured size limit', async () => {
+    const { POST: upload } = await loadHandlers()
+    const oversized = new Uint8Array(2048)
+    const file = new File([oversized], 'doc.pdf', { type: 'application/pdf' })
+    const req = new Request('http://x/api/attachments', { method: 'POST', body: fdWith(file) as any })
+    const res = await upload(req)
+    expect(res.status).toBe(413)
+    const payload = await res.json()
+    expect(payload.error).toMatch(/exceeds/i)
+  })
+
+  it('rejects files that exceed the default global upload limit without field config', async () => {
+    const { POST: upload } = await loadHandlers()
+    process.env.OM_ATTACHMENT_MAX_UPLOAD_MB = '0.0005'
+    const file = new File([new Uint8Array(1024)], 'doc.pdf', { type: 'application/pdf' })
+    const fd = new FormData()
+    fd.set('entityId', 'example:todo')
+    fd.set('recordId', 'r1')
+    fd.set('file', file)
+    const req = new Request('http://x/api/attachments', { method: 'POST', body: fd as any })
+    const res = await upload(req)
+    expect(res.status).toBe(413)
+    const payload = await res.json()
+    expect(payload.error).toMatch(/maximum upload size/i)
+  })
+
+  it('rejects an oversized multipart body without a content length before materializing metadata', async () => {
+    process.env.OM_ATTACHMENT_MAX_UPLOAD_MB = '0.000001'
+    const { POST: upload } = await loadHandlers()
+    const boundary = 'oversized-metadata'
+    const body = new TextEncoder().encode([
+      `--${boundary}\r\nContent-Disposition: form-data; name="entityId"\r\n\r\nexample:todo\r\n`,
+      `--${boundary}\r\nContent-Disposition: form-data; name="recordId"\r\n\r\nr1\r\n`,
+      `--${boundary}\r\nContent-Disposition: form-data; name="fieldKey"\r\n\r\nattachments\r\n`,
+      `--${boundary}\r\nContent-Disposition: form-data; name="customFields"\r\n\r\n`,
+      'x'.repeat(1024 * 1024),
+      `\r\n--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="small.pdf"\r\n`,
+      'Content-Type: application/pdf\r\n\r\n\u0001\r\n',
+      `--${boundary}--\r\n`,
+    ].join(''))
+    const req = new Request('http://x/api/attachments', {
+      method: 'POST',
+      headers: { 'content-type': `multipart/form-data; boundary=${boundary}` },
+      body,
+    })
+
+    expect(req.headers.get('content-length')).toBeNull()
+    const res = await upload(req)
+
+    expect(res.status).toBe(413)
+    await expect(res.json()).resolves.toMatchObject({
+      error: expect.stringMatching(/maximum upload size/i),
+    })
+  })
+
+  it('rejects uploads that exceed the tenant storage quota', async () => {
+    const { POST: upload } = await loadHandlers()
+    process.env.OM_ATTACHMENT_TENANT_QUOTA_MB = '0.001'
+    mockEm.getKysely.mockReturnValue(buildUsageKysely(1000))
+    const file = new File([new Uint8Array(200)], 'doc.pdf', { type: 'application/pdf' })
+    const req = new Request('http://x/api/attachments', { method: 'POST', body: fdWith(file) as any })
+    const res = await upload(req)
+    expect(res.status).toBe(413)
+    const payload = await res.json()
+    expect(payload.error).toMatch(/quota exceeded/i)
+  })
+
+  it('extracts content when partition requires OCR', async () => {
+    const { POST: upload } = await loadHandlers()
+    mockExtractAttachmentContent.mockResolvedValue('extracted text')
+    const file = new File(
+      [new Uint8Array([1, 2, 3])],
+      'doc.docx',
+      { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },
+    )
+    const req = new Request('http://x/api/attachments', { method: 'POST', body: fdWith(file) as any })
+    const res = await upload(req)
+    expect(res.status).toBe(200)
+    expect(mockExtractAttachmentContent).toHaveBeenCalled()
+    const payload = mockEm.create.mock.calls.find((call) => call[0].name === 'Attachment')?.[1]
+    expect(payload?.content).toBe('extracted text')
+  })
+
+  it('skips OCR when partition disables it', async () => {
+    const { POST: upload } = await loadHandlers()
+    const disabledPartition = { ...partitions[0], requiresOcr: false }
+    mockEm.findOne.mockImplementation(async (entity: any, where: any) => {
+      if (entity?.name === 'AttachmentPartition') return disabledPartition
+      if (entity?.name === 'CustomFieldDef') {
+        return { configJson: { maxAttachmentSizeMb: 0.001, acceptExtensions: ['pdf'] } }
+      }
+      return null
+    })
+    const file = new File([new Uint8Array([1, 2, 3])], 'doc.pdf', { type: 'application/pdf' })
+    const req = new Request('http://x/api/attachments', { method: 'POST', body: fdWith(file) as any })
+    const res = await upload(req)
+    expect(res.status).toBe(200)
+    expect(mockExtractAttachmentContent).not.toHaveBeenCalled()
+    const payload = mockEm.create.mock.calls.find((call) => call[0].name === 'Attachment')?.[1]
+    expect(payload?.content ?? null).toBeNull()
+  })
+
+  it('queues LLM OCR for uploaded PDFs when OpenAI is configured', async () => {
+    const { POST: upload } = await loadHandlers()
+    process.env.OPENAI_API_KEY = 'test-key'
+    mockExtractAttachmentContent.mockResolvedValue('pdf text')
+    const file = new File([new Uint8Array([1, 2, 3])], 'doc.pdf', { type: 'application/pdf' })
+    const req = new Request('http://x/api/attachments', { method: 'POST', body: fdWith(file) as any })
+    const res = await upload(req)
+    expect(res.status).toBe(200)
+    expect(mockExtractAttachmentContent).not.toHaveBeenCalled()
+    expect(mockRequestOcrProcessing).toHaveBeenCalledTimes(1)
+  })
+
+  it('falls back to text extraction for uploaded PDFs when OpenAI is missing', async () => {
+    const { POST: upload } = await loadHandlers()
+    mockExtractAttachmentContent.mockResolvedValue('pdf text')
+    const file = new File([new Uint8Array([1, 2, 3])], 'doc.pdf', { type: 'application/pdf' })
+    const req = new Request('http://x/api/attachments', { method: 'POST', body: fdWith(file) as any })
+    const res = await upload(req)
+    expect(res.status).toBe(200)
+    expect(mockExtractAttachmentContent).toHaveBeenCalled()
+    expect(mockRequestOcrProcessing).not.toHaveBeenCalled()
+  })
+
+  it('queues LLM OCR for uploaded images when OpenAI is configured', async () => {
+    const { POST: upload } = await loadHandlers()
+    process.env.OPENAI_API_KEY = 'test-key'
+    mockEm.findOne.mockImplementation(async (entity: any, where: any) => {
+      if (entity?.name === 'AttachmentPartition') {
+        return partitions.find((p) => p.code === where?.code) ?? null
+      }
+      if (entity?.name === 'CustomFieldDef') {
+        return { configJson: { maxAttachmentSizeMb: 0.001, acceptExtensions: ['png', 'pdf', 'docx'] } }
+      }
+      return null
+    })
+    const file = new File([new Uint8Array([1, 2, 3])], 'scan.png', { type: 'image/png' })
+    const req = new Request('http://x/api/attachments', { method: 'POST', body: fdWith(file) as any })
+    const res = await upload(req)
+    expect(res.status).toBe(200)
+    expect(mockExtractAttachmentContent).not.toHaveBeenCalled()
+    expect(mockRequestOcrProcessing).toHaveBeenCalledTimes(1)
+  })
+
+  it('uses env default when partition flag is undefined', async () => {
+    const { POST: upload } = await loadHandlers()
+    delete process.env.OPENMERCATO_DEFAULT_ATTACHMENT_OCR_ENABLED
+    mockExtractAttachmentContent.mockResolvedValue('default text')
+    const partitionWithoutFlag = { ...partitions[0] }
+    delete (partitionWithoutFlag as any).requiresOcr
+    mockEm.findOne.mockImplementation(async (entity: any, where: any) => {
+      if (entity?.name === 'AttachmentPartition') return partitionWithoutFlag
+      if (entity?.name === 'CustomFieldDef') {
+        return { configJson: { maxAttachmentSizeMb: 0.001, acceptExtensions: ['pdf', 'docx'] } }
+      }
+      return null
+    })
+    const file = new File(
+      [new Uint8Array([1, 2, 3])],
+      'doc.docx',
+      { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },
+    )
+    const req = new Request('http://x/api/attachments', { method: 'POST', body: fdWith(file) as any })
+    const res = await upload(req)
+    expect(res.status).toBe(200)
+    expect(mockExtractAttachmentContent).toHaveBeenCalled()
+  })
+
+  it('applies normalized tags and assignments from form payload', async () => {
+    const { POST: upload } = await loadHandlers()
+    const file = new File([new Uint8Array([1, 2, 3])], 'doc.pdf', { type: 'application/pdf' })
+    const fd = fdWith(file)
+    fd.set('tags', '["primary","primary ",""]')
+    fd.set(
+      'assignments',
+      JSON.stringify([
+        { type: 'catalog.products', id: 'prod-1', href: '/products/1', label: '' },
+        { type: 'catalog.products', id: 'prod-1', href: '/products/1', label: ' Spec Sheet ' },
+      ]),
+    )
+    const req = new Request('http://x/api/attachments', { method: 'POST', body: fd as any })
+    const res = await upload(req)
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.item.tags).toEqual(['primary'])
+    expect(body.item.assignments).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: 'catalog.products', id: 'prod-1', href: '/products/1', label: 'Spec Sheet' }),
+        expect.objectContaining({ type: 'example:todo', id: 'r1' }),
+      ]),
+    )
+  })
+
+  it('rejects explicit uploads to unrelated public partitions', async () => {
+    const { POST: upload } = await loadHandlers()
+    const file = new File([new Uint8Array([1, 2, 3])], 'doc.pdf', { type: 'application/pdf' })
+    const req = new Request(
+      'http://x/api/attachments',
+      { method: 'POST', body: fdWith(file, { partitionCode: 'productsMedia' }) as any },
+    )
+    const res = await upload(req)
+    expect(res.status).toBe(403)
+    const payload = await res.json()
+    expect(payload.error).toMatch(/public storage partitions/i)
+  })
+
+  it('lists attachments with sanitized metadata via GET', async () => {
+    const { GET: list } = await loadHandlers()
+    mockEm.find.mockResolvedValue([
+      {
+        id: 'att-1',
+        entityId: 'example:todo',
+        recordId: 'r1',
+        organizationId: 'org',
+        tenantId: 't1',
+        fileName: ' doc.pdf ',
+        url: 'http://cdn.local/doc.pdf',
+        fileSize: 10,
+        createdAt: '2024-01-01T00:00:00.000Z',
+        partitionCode: 'privateAttachments',
+        storageMetadata: { tags: ['primary', 'primary'], assignments: [{ type: 'catalog.products', id: 'prod-1' }] },
+      },
+    ])
+    const req = new Request('http://x/api/attachments?entityId=example:todo&recordId=r1')
+    const res = await list(req)
+    expect(res.status).toBe(200)
+    const payload = await res.json()
+    expect(payload.items).toHaveLength(1)
+    expect(payload.items[0]).toEqual(
+      expect.objectContaining({
+        id: 'att-1',
+        tags: ['primary'],
+        assignments: [{ type: 'catalog.products', id: 'prod-1' }],
+        thumbnailUrl: expect.stringContaining('att-1'),
+      }),
+    )
+    expect(mockEm.find).toHaveBeenCalledWith(
+      expect.any(Function),
+      expect.objectContaining({ entityId: 'example:todo', recordId: 'r1' }),
+      expect.any(Object),
+    )
+  })
+
+  it('pages with an unclamped offset and echoes the requested page (#5299)', async () => {
+    const { GET: list } = await loadHandlers()
+    mockEm.count.mockResolvedValue(5)
+    const req = new Request('http://x/api/attachments?entityId=example:todo&recordId=r1&page=2&pageSize=2')
+    const res = await list(req)
+    expect(res.status).toBe(200)
+    const payload = await res.json()
+    expect(payload).toEqual(expect.objectContaining({ total: 5, page: 2, pageSize: 2, totalPages: 3 }))
+    expect(mockEm.find).toHaveBeenCalledWith(
+      expect.any(Function),
+      expect.objectContaining({ entityId: 'example:todo', recordId: 'r1' }),
+      expect.objectContaining({ limit: 2, offset: 2 }),
+    )
+  })
+
+  it('serves an empty page past the end instead of clamping to the last one (#5299)', async () => {
+    const { GET: list } = await loadHandlers()
+    // Five records over a page size of two is three pages; page 7 is well past the end.
+    mockEm.count.mockResolvedValue(5)
+    const req = new Request('http://x/api/attachments?entityId=example:todo&recordId=r1&page=7&pageSize=2')
+    const res = await list(req)
+    expect(res.status).toBe(200)
+    const payload = await res.json()
+    expect(payload.items).toEqual([])
+    // The echoed page is what the caller asked for, not the clamped last page, so an
+    // incremental loader that pages while the page is full terminates instead of
+    // being served the last page forever.
+    expect(payload).toEqual(expect.objectContaining({ total: 5, page: 7, pageSize: 2, totalPages: 3 }))
+    expect(mockEm.find).toHaveBeenCalledWith(
+      expect.any(Function),
+      expect.objectContaining({ entityId: 'example:todo', recordId: 'r1' }),
+      expect.objectContaining({ limit: 2, offset: 12 }),
+    )
+  })
+
+  it('rejects superadmin uploads with no organization selected using a 400 with a clear message instead of a 401 (#3764)', async () => {
+    mockGetAuthFromRequest.mockImplementation(() => ({
+      orgId: null,
+      tenantId: 't1',
+      roles: ['superadmin'],
+      isSuperAdmin: true,
+    }))
+    const { POST: upload } = await loadHandlers()
+    const file = new File([new Uint8Array([1, 2, 3])], 'doc.pdf', { type: 'application/pdf' })
+    const req = new Request('http://x/api/attachments', { method: 'POST', body: fdWith(file) as any })
+    const res = await upload(req)
+    // A 401 makes the client treat it as session expiry (misleading toast + form reset);
+    // a specific organization is required to store the file, so return 400.
+    expect(res.status).toBe(400)
+    const payload = await res.json()
+    expect(payload.error).toMatch(/organization/i)
+    expect(mockEm.create).not.toHaveBeenCalled()
+  })
+
+  it('still returns 401 for a non-superadmin upload with no organization', async () => {
+    mockGetAuthFromRequest.mockImplementation(() => ({
+      orgId: null,
+      tenantId: 't1',
+      roles: ['admin'],
+    }))
+    const { POST: upload } = await loadHandlers()
+    const file = new File([new Uint8Array([1, 2, 3])], 'doc.pdf', { type: 'application/pdf' })
+    const req = new Request('http://x/api/attachments', { method: 'POST', body: fdWith(file) as any })
+    const res = await upload(req)
+    expect(res.status).toBe(401)
+  })
+
+  it('lets a superadmin with no organization delete tenant-wide by dropping the org filter (#3764)', async () => {
+    mockGetAuthFromRequest.mockImplementation(() => ({
+      orgId: null,
+      tenantId: 't1',
+      roles: ['superadmin'],
+      isSuperAdmin: true,
+    }))
+    mockEm.findOne.mockImplementation(async (entity: any) => {
+      if (entity?.name === 'Attachment') {
+        return {
+          id: 'att-1',
+          tenantId: 't1',
+          organizationId: 'org-owned-by-another-org',
+          partitionCode: 'privateAttachments',
+          storagePath: null,
+        }
+      }
+      return null
+    })
+    const { DELETE: remove } = await loadHandlers()
+    const req = new Request('http://x/api/attachments?id=att-1', { method: 'DELETE' })
+    const res = await remove(req)
+    expect(res.status).toBe(200)
+    expect(mockEm.findOne).toHaveBeenCalledWith(
+      expect.any(Function),
+      { id: 'att-1', tenantId: 't1' },
+    )
+    expect(mockEm.remove).toHaveBeenCalled()
+  })
+
+  it('still returns 401 for a non-superadmin delete with no organization', async () => {
+    mockGetAuthFromRequest.mockImplementation(() => ({
+      orgId: null,
+      tenantId: 't1',
+      roles: ['admin'],
+    }))
+    const { DELETE: remove } = await loadHandlers()
+    const req = new Request('http://x/api/attachments?id=att-1', { method: 'DELETE' })
+    const res = await remove(req)
+    expect(res.status).toBe(401)
+  })
+
+  it('stores the attachment under the currently selected organization, not the uploader home org (#3765)', async () => {
+    const { POST: upload } = await loadHandlers()
+    // A multi-org admin switched the header org: auth.orgId stays 'org' (home),
+    // but the request scope resolves the selected org.
+    mockResolveAttachmentOrganizationId.mockResolvedValueOnce('selected-org')
+    const file = new File([new Uint8Array([1, 2, 3])], 'doc.pdf', { type: 'application/pdf' })
+    const req = new Request('http://x/api/attachments', { method: 'POST', body: fdWith(file) as any })
+    const res = await upload(req)
+    expect(res.status).toBe(200)
+    const payload = mockEm.create.mock.calls.find((call) => call[0].name === 'Attachment')?.[1]
+    expect(payload?.organizationId).toBe('selected-org')
+    expect(payload?.tenantId).toBe('t1')
+  })
+
+  it('filters listed attachments by the currently selected organization (#3765)', async () => {
+    const { GET: list } = await loadHandlers()
+    mockResolveAttachmentOrganizationId.mockResolvedValueOnce('selected-org')
+    mockEm.find.mockResolvedValue([])
+    const req = new Request('http://x/api/attachments?entityId=example:todo&recordId=r1')
+    const res = await list(req)
+    expect(res.status).toBe(200)
+    expect(mockEm.find).toHaveBeenCalledWith(
+      expect.any(Function),
+      expect.objectContaining({ organizationId: 'selected-org' }),
+      expect.any(Object),
+    )
+  })
+})

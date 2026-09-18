@@ -1,0 +1,610 @@
+import type { EntityManager } from '@mikro-orm/postgresql'
+import { type Kysely, sql } from 'kysely'
+import { resolveRegisteredEntityTableName } from '@open-mercato/shared/lib/query/engine'
+import { resolveTenantEncryptionService } from '@open-mercato/shared/lib/encryption/customFieldValues'
+import { decryptIndexDocForSearch, encryptIndexDocForStorage } from '@open-mercato/shared/lib/encryption/indexDoc'
+import {
+  upsertIndexBatch,
+  assertIndexBatchWritesLanded,
+  createEmptyUpsertIndexBatchResult,
+  mergeUpsertIndexBatchResults,
+  QueryIndexBatchWriteError,
+  type AnyRow,
+} from './batch'
+import { refreshCoverageSnapshot, writeCoverageCounts, applyCoverageAdjustments } from './coverage'
+import { prepareJob, updateJobProgress, finalizeJob, type JobScope } from './jobs'
+import { purgeOrphans } from './stale'
+import type { VectorIndexService } from '@open-mercato/search/vector'
+import { isSearchDebugEnabled } from './search-tokens'
+import { createLogger } from '@open-mercato/shared/lib/logger'
+
+const logger = createLogger('query_index').child({ component: 'reindexer' })
+
+export type ReindexJobOptions = {
+  entityType: string
+  tenantId?: string | null
+  organizationId?: string | null
+  force?: boolean
+  batchSize?: number
+  emitVectorizeEvents?: boolean
+  eventBus?: {
+    emitEvent(event: string, payload: any, options?: any): Promise<void>
+  }
+  partitionCount?: number
+  partitionIndex?: number
+  resetCoverage?: boolean
+  onProgress?: (info: { processed: number; total: number; chunkSize: number }) => void
+  vectorService?: VectorIndexService | null
+}
+
+export type ReindexJobResult = {
+  processed: number
+  total: number
+  tenantScopes: Array<string | null>
+  scopes: Array<{ tenantId: string | null; organizationId: string | null }>
+}
+
+export const DEFAULT_REINDEX_PARTITIONS = 5
+const DEFAULT_BATCH_SIZE = 500
+/**
+ * Above this many failed records the purge exclusion list stops being a sane query, so
+ * the purge is skipped entirely instead. Failing closed keeps stale rows; the alternative
+ * deletes index entries the run failed to rebuild.
+ */
+const MAX_PURGE_EXCLUSIONS = 1000
+const deriveOrgFromId = new Set<string>(['directory:organization'])
+const COVERAGE_REFRESH_THROTTLE_MS = 5 * 60 * 1000
+const lastCoverageReset = new Map<string, number>()
+
+const REINDEX_DECRYPT_DEBUG_KEYS = ['display_name', 'first_name', 'last_name', 'brand_name', 'legal_name', 'primary_email', 'primary_phone'] as const
+
+export type ReindexDecryptDebugPayload = {
+  entityType: string
+  tenantId: string | null
+  organizationId: string | null
+  keys: string[]
+}
+
+export function buildReindexDecryptDebugPayload(
+  entityType: string,
+  doc: Record<string, unknown>,
+  scope: { organizationId: string | null; tenantId: string | null },
+): ReindexDecryptDebugPayload {
+  const presentKeys: string[] = []
+  for (const key of REINDEX_DECRYPT_DEBUG_KEYS) {
+    const value = doc[key]
+    if (key in doc && value != null && value !== '') presentKeys.push(key)
+  }
+  return {
+    entityType,
+    tenantId: scope.tenantId ?? null,
+    organizationId: scope.organizationId ?? null,
+    keys: presentKeys,
+  }
+}
+
+async function cleanupLegacyJobScopes(
+  db: Kysely<any>,
+  options: {
+    entityType: string
+    organizationId: string | null
+    tenantId: string | null
+    activePartitionCount: number | null
+  },
+): Promise<void> {
+  await db
+    .deleteFrom('entity_index_jobs' as any)
+    .where('entity_type' as any, '=', options.entityType)
+    .where(sql<boolean>`organization_id is not distinct from ${options.organizationId}`)
+    .where(sql<boolean>`tenant_id is not distinct from ${options.tenantId}`)
+    .where(sql<boolean>`partition_count is distinct from ${options.activePartitionCount}`)
+    .execute()
+}
+
+function toNumber(value: unknown): number {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0
+  if (typeof value === 'string') {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : 0
+  }
+  return 0
+}
+
+async function getColumnSet(db: Kysely<any>, tableName: string): Promise<Set<string>> {
+  try {
+    const rows = await db
+      .selectFrom('information_schema.columns' as any)
+      .select(['column_name' as any])
+      .where(sql<boolean>`table_schema = current_schema()`)
+      .where('table_name' as any, '=', tableName)
+      .execute() as Array<{ column_name: string }>
+    return new Set(rows.map((row) => String(row.column_name).toLowerCase()))
+  } catch {
+    return new Set<string>()
+  }
+}
+
+export async function reindexEntity(
+  em: EntityManager,
+  options: ReindexJobOptions,
+): Promise<ReindexJobResult> {
+  const entityType = String(options?.entityType || '')
+  if (!entityType) {
+    return {
+      processed: 0,
+      total: 0,
+      tenantScopes: [],
+      scopes: [],
+    }
+  }
+  const tenantIdInput = options?.tenantId
+  const tenantId = tenantIdInput === 'undefined' ? undefined : tenantIdInput
+  const organizationIdInput = options?.organizationId
+  const organizationId = organizationIdInput === 'undefined' ? undefined : organizationIdInput
+  const force = options?.force === true
+  const batchSize = Number.isFinite(options?.batchSize) && options!.batchSize! > 0
+    ? Math.max(1, Math.trunc(options!.batchSize!))
+    : DEFAULT_BATCH_SIZE
+  const emitVectorize = options?.emitVectorizeEvents === true
+  const eventBus = options?.eventBus
+  const vectorService = options?.vectorService ?? null
+  const partitionCountRaw = Number.isFinite(options?.partitionCount)
+    ? Math.max(1, Math.trunc(options!.partitionCount!))
+    : 1
+  const usingPartitions = partitionCountRaw > 1
+  const partitionIndexRaw = Number.isFinite(options?.partitionIndex)
+    ? Math.max(0, Math.trunc(options!.partitionIndex!))
+    : 0
+  const partitionIndex = usingPartitions
+    ? Math.min(partitionIndexRaw, partitionCountRaw - 1)
+    : null
+  const resetCoverage = options?.resetCoverage ?? (!usingPartitions || partitionIndex === 0)
+
+  const db = (em as any).getKysely() as Kysely<any>
+  // Resolve the source table strictly via registered MikroORM metadata. We must
+  // never fall back to a pluralized guess derived from the caller-supplied id
+  // here: doing so would let a principal with `query_index.reindex` point the
+  // reindexer at arbitrary tables (e.g. `auth_users`, `users`) and read their
+  // rows into the index, bypassing tenant scoping and entity-level encryption.
+  const table = resolveRegisteredEntityTableName(em, entityType)
+  if (!table || entityType === 'query_index:search_token' || table === 'search_tokens') {
+    if (!table) {
+      logger.warn('Refusing to reindex unregistered entity type', {
+        entityType,
+      })
+    }
+    return {
+      processed: 0,
+      total: 0,
+      tenantScopes: [],
+      scopes: [],
+    }
+  }
+  const columns = await getColumnSet(db, table)
+  const hasOrgCol = columns.has('organization_id')
+  const hasTenantCol = columns.has('tenant_id')
+  const hasDeletedCol = columns.has('deleted_at')
+
+  const jobScope: JobScope = {
+    entityType,
+    organizationId: organizationId ?? null,
+    tenantId: tenantId ?? null,
+    partitionIndex,
+    partitionCount: usingPartitions ? partitionCountRaw : null,
+  }
+
+  if (!force) {
+    const activeJob = await db
+      .selectFrom('entity_index_jobs' as any)
+      .select(['id' as any])
+      .where('entity_type' as any, '=', entityType)
+      .where('finished_at' as any, 'is', null as any)
+      .where(sql<boolean>`organization_id is not distinct from ${null}`)
+      .where(sql<boolean>`tenant_id is not distinct from ${tenantId ?? null}`)
+      .where(sql<boolean>`partition_index is not distinct from ${partitionIndex}`)
+      .where(sql<boolean>`partition_count is not distinct from ${usingPartitions ? partitionCountRaw : null}`)
+      .executeTakeFirst()
+    if (activeJob) {
+      return {
+        processed: 0,
+        total: 0,
+        tenantScopes: [],
+        scopes: [],
+      }
+    }
+  }
+
+  if (resetCoverage) {
+    await cleanupLegacyJobScopes(db, {
+      entityType,
+      organizationId: jobScope.organizationId ?? null,
+      tenantId: jobScope.tenantId ?? null,
+      activePartitionCount: jobScope.partitionCount ?? null,
+    })
+  }
+
+  const scopeKey = (tenantValue: string | null, orgValue: string | null) => `${tenantValue ?? '__null__'}|${orgValue ?? '__null__'}`
+
+  const applyBaseWhere = <QB extends { where: (...args: any[]) => QB }>(q: QB): QB => {
+    let chain = q
+    if (hasDeletedCol) chain = chain.where('b.deleted_at' as any, 'is', null as any)
+    if (tenantId !== undefined && hasTenantCol) {
+      chain = tenantId === null
+        ? chain.where('b.tenant_id' as any, 'is', null as any)
+        : chain.where('b.tenant_id' as any, '=', tenantId)
+    }
+    if (organizationId !== undefined && hasOrgCol) {
+      chain = organizationId === null
+        ? chain.where('b.organization_id' as any, 'is', null as any)
+        : chain.where('b.organization_id' as any, '=', organizationId)
+    }
+    if (usingPartitions && partitionIndex !== null) {
+      chain = chain.where(sql<boolean>`mod(abs(hashtext(b.id::text)), ${partitionCountRaw}) = ${partitionIndex}`)
+    }
+    return chain
+  }
+
+  type ScopeStats = { tenantId: string | null; organizationId: string | null; count: number }
+  const baseCounts = new Map<string, ScopeStats>()
+  const registerBaseCount = (tenantValue: string | null, orgValue: string | null, count: number) => {
+    const key = scopeKey(tenantValue, orgValue)
+    baseCounts.set(key, { tenantId: tenantValue, organizationId: orgValue, count })
+  }
+
+  const groupByTenant = hasTenantCol && tenantId === undefined
+  const groupByOrg = hasOrgCol && organizationId === undefined
+
+  if (groupByTenant || groupByOrg) {
+    let groupQuery = applyBaseWhere(
+      db.selectFrom(`${table} as b` as any).select(sql<number>`count(*)`.as('count')),
+    )
+    if (groupByTenant) {
+      groupQuery = groupQuery.select('b.tenant_id as tenant_id' as any).groupBy('b.tenant_id' as any)
+    }
+    if (groupByOrg) {
+      groupQuery = groupQuery.select('b.organization_id as organization_id' as any).groupBy('b.organization_id' as any)
+    }
+    const rows = await groupQuery.execute() as Array<Record<string, unknown>>
+    for (const row of rows) {
+      const bucketTenant = groupByTenant
+        ? ((row as any)?.tenant_id ?? null)
+        : (tenantId === undefined ? null : tenantId ?? null)
+      const bucketOrg = groupByOrg
+        ? ((row as any)?.organization_id ?? null)
+        : (organizationId === undefined ? null : organizationId ?? null)
+      registerBaseCount(bucketTenant, bucketOrg, toNumber((row as any)?.count))
+    }
+  } else {
+    const row = await applyBaseWhere(
+      db.selectFrom(`${table} as b` as any).select(sql<number>`count(*)`.as('count')),
+    ).executeTakeFirst() as { count: unknown } | undefined
+    const bucketTenant = tenantId === undefined ? null : tenantId ?? null
+    const bucketOrg = organizationId === undefined ? null : organizationId ?? null
+    registerBaseCount(bucketTenant, bucketOrg, toNumber(row?.count))
+  }
+
+  const total = Array.from(baseCounts.values()).reduce((acc, value) => acc + (Number.isFinite(value.count) ? value.count : 0), 0)
+  await prepareJob(db, jobScope, 'reindexing', { totalCount: total })
+  const jobRow = await db
+    .selectFrom('entity_index_jobs' as any)
+    .select(['started_at' as any])
+    .where('entity_type' as any, '=', entityType)
+    .where('organization_id' as any, 'is', null as any)
+    .where(sql<boolean>`tenant_id is not distinct from ${tenantId ?? null}`)
+    .where(sql<boolean>`partition_index is not distinct from ${partitionIndex}`)
+    .where(sql<boolean>`partition_count is not distinct from ${usingPartitions ? partitionCountRaw : null}`)
+    .orderBy('started_at' as any, 'desc')
+    .executeTakeFirst() as { started_at: Date | string } | undefined
+  const jobStartedAt = jobRow?.started_at ? new Date(jobRow.started_at) : new Date()
+  const deriveOrg = deriveOrgFromId.has(entityType)
+    ? (row: AnyRow) => String(row.id)
+    : undefined
+
+  const scopeOverrides: { tenantId?: string; orgId?: string } = {}
+  if (tenantId !== undefined && tenantId !== null) {
+    scopeOverrides.tenantId = String(tenantId)
+  }
+  if (organizationId !== undefined && organizationId !== null) {
+    scopeOverrides.orgId = String(organizationId)
+  }
+
+  const scopeEntries = Array.from(baseCounts.values()).map((entry) => ({
+    tenantId: entry.tenantId,
+    organizationId: entry.organizationId,
+  }))
+  const tenantScopes = Array.from(
+    new Set(scopeEntries.map((entry) => entry.tenantId ?? null)),
+  )
+
+  let processed = 0
+  let lastId: string | null = null
+  let jobFailed = false
+  const writeTotals = createEmptyUpsertIndexBatchResult()
+
+  options?.onProgress?.({ processed, total, chunkSize: 0 })
+
+  // Partitions run concurrently, so a scope-wide purge here would delete rows a sibling
+  // partition has already written and never rebuild them (the run still reports success
+  // because progress counts attempted writes). Each partition therefore purges only the
+  // slice it is about to rebuild, and every partition purges — restricting the purge to
+  // the coverage-resetting partition would otherwise leave the other slices' stale rows
+  // behind on a forced rebuild.
+  if (force && (resetCoverage || usingPartitions)) {
+    try {
+      let purgeQuery = db
+        .deleteFrom('entity_indexes' as any)
+        .where('entity_type' as any, '=', entityType)
+      if (tenantId !== undefined) {
+        purgeQuery = purgeQuery.where(sql<boolean>`tenant_id is not distinct from ${tenantId ?? null}`)
+      }
+      if (organizationId !== undefined) {
+        purgeQuery = purgeQuery.where(sql<boolean>`organization_id is not distinct from ${organizationId ?? null}`)
+      }
+      if (usingPartitions && partitionIndex !== null) {
+        purgeQuery = purgeQuery.where(
+          sql<boolean>`mod(abs(hashtext(entity_id::text)), ${partitionCountRaw}) = ${partitionIndex}`,
+        )
+      }
+      await purgeQuery.execute()
+    } catch (error) {
+      logger.warn('Failed to purge index rows before force reindex', {
+        entityType,
+        tenantId: tenantId ?? null,
+        organizationId: organizationId ?? null,
+        partitionIndex: usingPartitions ? partitionIndex : null,
+        error: error instanceof Error ? error.message : error,
+      })
+    }
+  }
+
+  // The vector purge is scope-wide and cannot be partitioned — the queued job deletes every
+  // vector for the scope. Emitting it from one partition while siblings are already queueing
+  // per-record vectorize jobs is the same race the row purge just had, so a partitioned run
+  // leaves it to the caller that owns the fan-out (`api/reindex.ts` queues it once, before
+  // dispatching any partition).
+  if (force && resetCoverage && !usingPartitions && emitVectorize && eventBus) {
+    if (tenantId !== undefined) {
+      const payload: Record<string, unknown> = {
+        entityType,
+        tenantId: tenantId ?? null,
+      }
+      if (organizationId !== undefined) payload.organizationId = organizationId ?? null
+      try {
+        await eventBus.emitEvent('query_index.vectorize_purge', payload)
+      } catch (err) {
+        logger.warn('Failed to queue vector purge before force reindex', {
+          entityType,
+          tenantId: tenantId ?? null,
+          organizationId: organizationId ?? null,
+          error: err instanceof Error ? err.message : err,
+        })
+      }
+    } else {
+      logger.warn('Skipping vector purge for force reindex without tenant scope', {
+        entityType,
+      })
+    }
+  }
+
+  if (resetCoverage) {
+    // Only meaningful for an unpartitioned run: `baseCounts` holds this partition's slice,
+    // so writing it as the scope's base count under-reports by the partition factor, and
+    // zeroing indexed_count scope-wide discards deltas siblings have already applied. The
+    // authoritative `refreshCoverageSnapshot` at the end of every partition owns the counts
+    // for partitioned runs.
+    const nowTs = Date.now()
+    for (const scope of usingPartitions ? [] : baseCounts.values()) {
+      const key = `${entityType}|${scopeKey(scope.tenantId, scope.organizationId)}`
+      const last = lastCoverageReset.get(key) ?? 0
+      if (force || nowTs - last >= COVERAGE_REFRESH_THROTTLE_MS) {
+        await writeCoverageCounts(em, {
+          entityType,
+          tenantId: scope.tenantId,
+          organizationId: scope.organizationId,
+          withDeleted: false,
+        }, {
+          baseCount: scope.count,
+          indexedCount: 0,
+          vectorCount: emitVectorize ? 0 : undefined,
+        })
+        lastCoverageReset.set(key, nowTs)
+      }
+    }
+  }
+
+  try {
+    while (true) {
+      let query = applyBaseWhere(
+        db
+          .selectFrom(`${table} as b` as any)
+          .selectAll('b' as any)
+          .orderBy('b.id' as any, 'asc')
+          .limit(batchSize),
+      )
+      if (lastId !== null) {
+        query = query.where('b.id' as any, '>', lastId)
+      }
+      const rows = await query.execute() as AnyRow[]
+      if (!rows.length) break
+
+      const encryption = resolveTenantEncryptionService(em as any)
+      const dekKeyCache = new Map<string | null, string | null>()
+      const encryptDoc = async (
+        targetEntity: string,
+        doc: Record<string, unknown>,
+        scope: { organizationId: string | null; tenantId: string | null },
+      ) => {
+        return await encryptIndexDocForStorage(
+          targetEntity,
+          doc,
+          { tenantId: scope.tenantId ?? null, organizationId: scope.organizationId ?? null },
+          encryption,
+        )
+      }
+      const decryptDoc = async (
+        targetEntity: string,
+        doc: Record<string, unknown>,
+        scope: { organizationId: string | null; tenantId: string | null },
+      ) => {
+        const result = await decryptIndexDocForSearch(
+          targetEntity,
+          doc,
+          { tenantId: scope.tenantId ?? null, organizationId: scope.organizationId ?? null },
+          encryption,
+          dekKeyCache,
+        )
+        if (isSearchDebugEnabled()) {
+          logger.debug('Reindex decrypt', buildReindexDecryptDebugPayload(targetEntity, result as Record<string, unknown>, scope))
+        }
+        return result
+      }
+
+      const batchResult = await upsertIndexBatch(db, entityType, rows, scopeOverrides, { deriveOrganizationId: deriveOrg, encryptDoc, decryptDoc })
+      mergeUpsertIndexBatchResults(writeTotals, batchResult)
+
+      // A whole batch failing is infrastructural (pool exhausted, disk full, KMS down),
+      // not a poison record. Abort now instead of grinding through the rest of the table.
+      if (batchResult.written === 0 && batchResult.attempted > 0) {
+        throw new QueryIndexBatchWriteError(entityType, writeTotals)
+      }
+
+      const failedInBatch = new Set(batchResult.failedRecordIds)
+      const writtenRows = failedInBatch.size ? rows.filter((row) => !failedInBatch.has(String(row.id))) : rows
+
+      const coverageDeltas = new Map<string, { tenantId: string | null; organizationId: string | null; delta: number }>()
+      for (const row of writtenRows) {
+        const scopeTenant = tenantId !== undefined
+          ? tenantId ?? null
+          : (hasTenantCol ? ((row as AnyRow).tenant_id ?? null) : null)
+        const scopeOrg = organizationId !== undefined
+          ? organizationId ?? null
+          : (hasOrgCol ? ((row as AnyRow).organization_id ?? null) : (deriveOrg ? deriveOrg(row) ?? null : null))
+        const key = scopeKey(scopeTenant ?? null, scopeOrg ?? null)
+        const existingDelta = coverageDeltas.get(key)
+        if (existingDelta) existingDelta.delta += 1
+        else coverageDeltas.set(key, {
+          tenantId: scopeTenant ?? null,
+          organizationId: scopeOrg ?? null,
+          delta: 1,
+        })
+      }
+      if (coverageDeltas.size > 0) {
+        await applyCoverageAdjustments(
+          em,
+          Array.from(coverageDeltas.values()).map((entry) => ({
+            entityType,
+            tenantId: entry.tenantId,
+            organizationId: entry.organizationId,
+            withDeleted: false,
+            deltaBase: 0,
+            deltaIndex: entry.delta,
+          })),
+        )
+      }
+
+      if (emitVectorize && eventBus) {
+        await Promise.all(
+          writtenRows.map((row) => {
+            const scopeOrg = organizationId !== undefined
+              ? organizationId ?? null
+              : hasOrgCol
+                ? ((row as AnyRow).organization_id ?? null)
+                : (deriveOrg ? deriveOrg(row) ?? null : null)
+            const scopeTenant = tenantId !== undefined
+              ? tenantId ?? null
+              : (hasTenantCol ? ((row as AnyRow).tenant_id ?? null) : null)
+            return eventBus
+              .emitEvent('query_index.vectorize_one', {
+                entityType,
+                recordId: String(row.id),
+                organizationId: scopeOrg,
+                tenantId: scopeTenant,
+              })
+              .catch(() => undefined)
+          }),
+        )
+      }
+
+      processed += batchResult.written
+      lastId = String(rows[rows.length - 1]!.id)
+      options?.onProgress?.({ processed, total, chunkSize: batchResult.written })
+      await updateJobProgress(db, jobScope, batchResult.written)
+    }
+
+    // Records this run failed to write still look untouched to the purge predicate, so
+    // without the exclusion the purge would delete the index rows it just failed to
+    // rebuild — turning a stale entry into a missing one.
+    const purgeExclusions = writeTotals.failedRecordIds
+    if (purgeExclusions.length > MAX_PURGE_EXCLUSIONS) {
+      logger.warn('Skipping orphan purge after widespread write failures', {
+        entityType,
+        failedRecords: purgeExclusions.length,
+      })
+    } else {
+      await purgeOrphans(db, {
+        entityType,
+        tenantId,
+        organizationId,
+        partitionIndex: usingPartitions ? partitionIndex : null,
+        partitionCount: usingPartitions ? partitionCountRaw : null,
+        startedAt: jobStartedAt,
+        excludeRecordIds: purgeExclusions,
+      })
+    }
+
+    if (force && vectorService && (!usingPartitions || partitionIndex === null)) {
+      try {
+        await vectorService.removeOrphans({
+          entityId: entityType,
+          tenantId,
+          organizationId,
+          olderThan: jobStartedAt,
+        })
+      } catch (error) {
+        logger.warn('Failed to prune vector orphans after reindex', {
+          entityType,
+          tenantId: tenantId ?? null,
+          organizationId: organizationId ?? null,
+          error: error instanceof Error ? error.message : error,
+        })
+      }
+    }
+
+    for (const scope of scopeEntries) {
+      await refreshCoverageSnapshot(
+        em,
+        {
+          entityType,
+          tenantId: scope.tenantId,
+          organizationId: scope.organizationId,
+          withDeleted: false,
+        },
+      )
+    }
+
+    // Deliberately after the coverage refresh: the authoritative recount is what keeps
+    // indexed_count truthful, and it is most worth having when a run has just failed.
+    // Throwing here fails the queue job so the loss is visible instead of silent.
+    if (writeTotals.searchTokenFailures > 0) {
+      logger.warn('Search token writes failed during reindex', {
+        entityType,
+        batches: writeTotals.searchTokenFailures,
+      })
+    }
+    assertIndexBatchWritesLanded(entityType, writeTotals)
+  } catch (error) {
+    jobFailed = true
+    throw error
+  } finally {
+    // Still finalized on failure: the scope stays wedged behind the active-job guard
+    // while finished_at is null. The status carries the outcome instead.
+    await finalizeJob(db, jobScope, jobFailed ? { status: 'failed' } : {})
+  }
+
+  return {
+    processed,
+    total,
+    scopes: scopeEntries,
+    tenantScopes,
+  }
+}

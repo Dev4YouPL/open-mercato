@@ -1,0 +1,273 @@
+import 'dotenv/config'
+import 'reflect-metadata'
+import { MikroORM } from '@mikro-orm/core'
+import { ReflectMetadataProvider } from '@mikro-orm/decorators/legacy'
+import { PostgreSqlDriver, type EntityManager as PostgreSqlEntityManager } from '@mikro-orm/postgresql'
+import { getSslConfig } from './ssl'
+import { createLogger } from '../logger'
+import { findDuplicateRegisteredEntityClassNames } from './duplicateEntities'
+import {
+  toDuplicateEntityClassNameFields,
+  type DuplicateEntityClassNameGroup,
+} from './duplicateEntityClassNames'
+
+const logger = createLogger('shared').child({ component: 'orm' })
+
+export type AppMikroORM = MikroORM<PostgreSqlDriver, PostgreSqlEntityManager<PostgreSqlDriver>>
+
+let ormInstance: AppMikroORM | null = null
+
+// Use globalThis so standalone apps survive duplicated shared package module instances.
+const GLOBAL_ENTITIES_KEY = '__openMercatoOrmEntities__'
+// Same reason, plus HMR: a module-level map would reset on the very reloads it exists to
+// deduplicate across.
+const GLOBAL_REPORTED_DUPLICATE_ENTITY_NAMES_KEY = '__openMercatoReportedDuplicateEntityClassNames__'
+
+function getReportedDuplicateEntityClassNames(): Map<string, string> {
+  const globals = globalThis as Record<string, unknown>
+  const existing = globals[GLOBAL_REPORTED_DUPLICATE_ENTITY_NAMES_KEY]
+  if (existing instanceof Map) return existing as Map<string, string>
+  const created = new Map<string, string>()
+  globals[GLOBAL_REPORTED_DUPLICATE_ENTITY_NAMES_KEY] = created
+  return created
+}
+
+/**
+ * Identifies a collision by the modules and files that contribute to it, so a
+ * re-registration reporting the same name from a different pair of modules is a new
+ * collision rather than a repeat.
+ */
+function fingerprintCollision(group: DuplicateEntityClassNameGroup): string {
+  return group.sources
+    .map((source) => `${source.moduleId ?? ''}|${source.sourcePath ?? ''}`)
+    .sort((left, right) => left.localeCompare(right))
+    .join(',')
+}
+
+function getRegisteredEntities(): any[] | null {
+  return (globalThis as Record<string, unknown>)[GLOBAL_ENTITIES_KEY] as any[] | null ?? null
+}
+
+function setRegisteredEntities(entities: any[]): void {
+  (globalThis as Record<string, unknown>)[GLOBAL_ENTITIES_KEY] = entities
+}
+
+/**
+ * A duplicate entity class name across modules corrupts entity resolution silently, and
+ * no build step catches it. Report it here — the one point every registration path goes
+ * through — so the logs name the cause instead of only its distant symptoms.
+ */
+function warnOnDuplicateEntityClassNames(entities: readonly unknown[]): void {
+  try {
+    const duplicates = findDuplicateRegisteredEntityClassNames(entities)
+    // Development re-runs registration on every HMR reload, so report a collision only
+    // when it appears or its contributing modules change. Reprinting the same warning on
+    // every reload buries it, while tracking the previous registration rather than every
+    // name ever seen keeps a collision that was fixed and reintroduced reportable.
+    const reported = getReportedDuplicateEntityClassNames()
+    const current = new Map(duplicates.map((group) => [group.className, fingerprintCollision(group)]))
+    const fresh = duplicates.filter((group) => reported.get(group.className) !== current.get(group.className))
+    reported.clear()
+    for (const [className, fingerprint] of current) reported.set(className, fingerprint)
+    if (fresh.length === 0) return
+    logger.warn('Duplicate entity class names across enabled modules', toDuplicateEntityClassNameFields(fresh))
+  } catch (err) {
+    // This check is a diagnostic. It must never be the reason a bootstrap fails.
+    logger.debug('Duplicate entity class name check skipped', { err })
+  }
+}
+
+export function registerOrmEntities(entities: any[]) {
+  warnOnDuplicateEntityClassNames(entities)
+  if (getRegisteredEntities() !== null && process.env.NODE_ENV === 'development') {
+    logger.debug('ORM entities re-registered (this may occur during HMR)')
+  }
+  setRegisteredEntities(entities)
+}
+
+export function getOrmEntities(): any[] {
+  const entities = getRegisteredEntities()
+  if (!entities) {
+    throw new Error('[Bootstrap] ORM entities not registered. Call registerOrmEntities() at bootstrap.')
+  }
+  return entities
+}
+
+export type ResolvedPoolConfig = {
+  poolMin: number
+  poolMax: number
+  poolIdleTimeout: number
+  poolAcquireTimeout: number
+  idleSessionTimeoutMs: number | undefined
+  idleInTransactionTimeoutMs: number | undefined
+  statementTimeoutMs: number | undefined
+  lockTimeoutMs: number | undefined
+}
+
+// Parse an optional positive-millisecond env var. Returns undefined when unset,
+// non-numeric, or non-positive so callers treat "no value" as "no timeout".
+function parsePositiveIntEnv(raw: string | undefined): number | undefined {
+  const parsed = parseInt(raw || '')
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined
+}
+
+export function resolvePoolConfig(env: NodeJS.ProcessEnv = process.env): ResolvedPoolConfig {
+  const idleSessionTimeoutEnv = parseInt(env.DB_IDLE_SESSION_TIMEOUT_MS || '')
+  const idleInTxTimeoutEnv = parseInt(env.DB_IDLE_IN_TRANSACTION_TIMEOUT_MS || '')
+  return {
+    poolMin: parseInt(env.DB_POOL_MIN || '2'),
+    poolMax: parseInt(env.DB_POOL_MAX || '20'),
+    poolIdleTimeout: parseInt(env.DB_POOL_IDLE_TIMEOUT || '3000'),
+    poolAcquireTimeout: parseInt(env.DB_POOL_ACQUIRE_TIMEOUT || '6000'),
+    idleSessionTimeoutMs: Number.isFinite(idleSessionTimeoutEnv)
+      ? idleSessionTimeoutEnv
+      : env.NODE_ENV === 'production'
+        ? undefined
+        : 600_000,
+    // Finite default in every environment (including production) so a leaked or idle
+    // open transaction cannot pin a pool connection indefinitely and exhaust the pool.
+    // Mirrors the long-standing dev value; override (incl. 0 to disable) via env.
+    idleInTransactionTimeoutMs: Number.isFinite(idleInTxTimeoutEnv) ? idleInTxTimeoutEnv : 120_000,
+    // Opt-in guards against runaway statements and lock waits. No timeout when unset.
+    statementTimeoutMs: parsePositiveIntEnv(env.DB_STATEMENT_TIMEOUT_MS),
+    lockTimeoutMs: parsePositiveIntEnv(env.DB_LOCK_TIMEOUT_MS),
+  }
+}
+
+type PoolLike = {
+  on(event: 'error', listener: (err: unknown) => void): unknown
+  on(event: 'connect', listener: (client: { on(event: 'error', listener: (err: unknown) => void): unknown }) => void): unknown
+  options?: Record<string, unknown>
+}
+
+// Postgres can terminate a connection at any moment (admin termination, network
+// drop, and — most relevantly for long-running daemons — the
+// `idle_in_transaction_session_timeout` configured above, FATAL 25P03). Where
+// node-postgres surfaces that depends on the client's state:
+// - IDLE (checked into the pool): pg-pool re-emits on the pool's 'error' event.
+// - CHECKED OUT (e.g. a connection pinned by an open transaction while the app
+//   awaits non-DB work): pg-pool removes its idle listener, so the FATAL emits
+//   on the Client itself.
+// Either way an unlistened 'error' event crashes the whole process ("Scheduler
+// polling engine exited unexpectedly with exit code 1"). Swallow both: the pool
+// discards the dead client, and any in-flight transaction still fails normally
+// on its next query/commit against the dead connection.
+// The per-client listener is deliberately attached once on 'connect' and never
+// removed: it is a last-resort sink whose only job is to guarantee the 'error'
+// event always has a listener, in every client state. It is not error handling
+// and must not be "cleaned up" — removing it reintroduces the process crash.
+// A reaped IDLE client therefore logs twice (once here, once via the pool-level
+// handler that pg-pool's own idle listener re-emits); the pool-level line is the
+// one that identifies the client as idle.
+export function attachPoolErrorHandlers(pool: PoolLike): void {
+  pool.on('error', (err: unknown) => {
+    logger.warn('Idle pg pool client error (connection reaped/terminated)', { err })
+  })
+  pool.on('connect', (client) => {
+    client.on('error', (err: unknown) => {
+      logger.warn('pg client error (connection reaped/terminated)', { err })
+    })
+  })
+}
+
+export async function getOrm() {
+  if (ormInstance) {
+    return ormInstance
+  }
+
+  const entities = getOrmEntities()
+  const clientUrl = process.env.DATABASE_URL
+  if (!clientUrl) {
+    throw new Error('DATABASE_URL is not set')
+  }
+
+  // Parse connection pool settings from environment
+  const {
+    poolMin,
+    poolMax,
+    poolIdleTimeout,
+    poolAcquireTimeout,
+    idleSessionTimeoutMs,
+    idleInTransactionTimeoutMs,
+    statementTimeoutMs,
+    lockTimeoutMs,
+  } = resolvePoolConfig()
+  const connectionOptions =
+    idleSessionTimeoutMs && idleSessionTimeoutMs > 0
+      ? `-c idle_session_timeout=${idleSessionTimeoutMs}`
+      : undefined
+
+  const sslConfig = getSslConfig()
+
+  if (process.env.OM_DB_POOL_DEBUG === '1' || process.env.OM_INTEGRATION_TEST === 'true') {
+    logger.info('Pool config', {
+      poolMin,
+      poolMax,
+      poolIdleTimeout,
+      poolAcquireTimeout,
+      idleSessionTimeoutMs,
+      idleInTransactionTimeoutMs,
+      statementTimeoutMs,
+      lockTimeoutMs,
+      nodeEnv: process.env.NODE_ENV,
+    })
+  }
+
+  ormInstance = await MikroORM.init<PostgreSqlDriver, PostgreSqlEntityManager<PostgreSqlDriver>>({
+    driver: PostgreSqlDriver,
+    clientUrl,
+    entities,
+    debug: false,
+    // v7 no longer defaults to ReflectMetadataProvider. Entities in this repo use
+    // `@mikro-orm/decorators/legacy`, which relies on TypeScript `emitDecoratorMetadata`
+    // + reflect-metadata for type inference (nullability, column types). Without this,
+    // inferred types are silently wrong at runtime.
+    metadataProvider: ReflectMetadataProvider,
+    // MikroORM v7 pool shape (min/max/idleTimeoutMillis). Knex-era `acquireTimeoutMillis` /
+    // `destroyTimeoutMillis` were removed; acquire wait maps to pg `connectionTimeoutMillis`
+    // below under `driverOptions`. Mirror `connectionTimeoutMillis` here too — older Mikro
+    // versions read it from `pool`; v7 reads from `driverOptions` but accepting both
+    // costs nothing and protects us from upstream config-merge regressions.
+    pool: {
+      min: poolMin,
+      max: poolMax,
+      idleTimeoutMillis: poolIdleTimeout,
+      acquireTimeoutMillis: poolAcquireTimeout,
+    } as any,
+    // Driver options are merged into pg.PoolConfig (ClientConfig + pg-pool).
+    driverOptions: {
+      connectionTimeoutMillis: poolAcquireTimeout,
+      idle_in_transaction_session_timeout: idleInTransactionTimeoutMs,
+      statement_timeout: statementTimeoutMs,
+      lock_timeout: lockTimeoutMs,
+      options: connectionOptions,
+      ssl: sslConfig,
+      onPoolCreated: (pool: PoolLike) => {
+        attachPoolErrorHandlers(pool)
+        if (process.env.OM_DB_POOL_DEBUG === '1' || process.env.OM_INTEGRATION_TEST === 'true') {
+          logger.info('pg pool created with options', {
+            max: pool.options?.max,
+            min: pool.options?.min,
+            idleTimeoutMillis: pool.options?.idleTimeoutMillis,
+            connectionTimeoutMillis: pool.options?.connectionTimeoutMillis,
+          })
+        }
+      },
+    },
+  })
+
+  return ormInstance
+}
+
+
+async function closeOrmIfLoaded(): Promise<void> {
+  if (ormInstance) {
+    await ormInstance.close(true)
+    ormInstance = null
+  }
+}
+
+// In dev mode, handle reloads cleanly without leaving dangling connections.
+if (process.env.NODE_ENV !== 'production') {
+  void closeOrmIfLoaded()
+}

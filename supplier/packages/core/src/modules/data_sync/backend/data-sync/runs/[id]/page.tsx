@@ -1,0 +1,496 @@
+"use client"
+import * as React from 'react'
+import { useRouter } from 'next/navigation'
+import { Page, PageBody } from '@open-mercato/ui/backend/Page'
+import { FormHeader } from '@open-mercato/ui/backend/forms'
+import { Card, CardHeader, CardTitle, CardContent } from '@open-mercato/ui/primitives/card'
+import { Badge } from '@open-mercato/ui/primitives/badge'
+import { StatusBadge } from '@open-mercato/ui/primitives/status-badge'
+import { Button } from '@open-mercato/ui/primitives/button'
+import { LogList, type LogListEntry } from '@open-mercato/ui/backend/LogList'
+import { Progress } from '@open-mercato/ui/primitives/progress'
+import { Pagination } from '@open-mercato/ui/primitives/pagination'
+import { Spinner } from '@open-mercato/ui/primitives/spinner'
+import { apiCall } from '@open-mercato/ui/backend/utils/apiCall'
+import { useGuardedMutation } from '@open-mercato/ui/backend/injection/useGuardedMutation'
+import { flash } from '@open-mercato/ui/backend/FlashMessages'
+import { useT } from '@open-mercato/shared/lib/i18n/context'
+import { LoadingMessage, ErrorMessage, RecordNotFoundState } from '@open-mercato/ui/backend/detail'
+import { useAppEvent } from '@open-mercato/ui/backend/injection/useAppEvent'
+import { RotateCcw, XCircle } from 'lucide-react'
+import { getSyncRunStatusVariant } from '../../../../lib/syncRunStatus'
+import {
+  buildRetryFailureMessage,
+  resolveRunParameterText,
+  type RetryFailureBody,
+} from '../../../../components/RunParameterFields'
+
+type RunParameterDeclaration = {
+  key: string
+  label?: string
+  labelKey?: string
+}
+
+type SyncRunDetail = {
+  id: string
+  integrationId: string
+  entityType: string
+  direction: 'import' | 'export'
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled' | 'paused'
+  createdCount: number
+  updatedCount: number
+  skippedCount: number
+  failedCount: number
+  batchesCompleted: number
+  lastError: string | null
+  progressJobId: string | null
+  parameters: Record<string, unknown> | null
+  progressJob: {
+    id: string
+    status: string
+    progressPercent: number
+    processedCount: number
+    totalCount: number | null
+    etaSeconds: number | null
+    meta?: Record<string, unknown> | null
+  } | null
+  triggeredBy: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+type ProgressEventPayload = {
+  jobId?: string
+  status?: string
+  progressPercent?: number
+  processedCount?: number
+  totalCount?: number | null
+  etaSeconds?: number | null
+  meta?: Record<string, unknown> | null
+}
+
+type LogEntry = {
+  id: string
+  level: 'info' | 'warn' | 'error'
+  message: string
+  createdAt: string
+  payload?: Record<string, unknown> | null
+}
+
+function formatEtaSeconds(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`
+  if (seconds < 3600) return `${Math.ceil(seconds / 60)}m`
+  const hours = Math.floor(seconds / 3600)
+  const minutes = Math.ceil((seconds % 3600) / 60)
+  return `${hours}h ${minutes}m`
+}
+
+type SyncRunDetailPageProps = {
+  params?: {
+    id?: string
+  }
+}
+
+const LOG_PAGE_SIZE = 50
+
+export default function SyncRunDetailPage({ params }: SyncRunDetailPageProps) {
+  const router = useRouter()
+  const runId = params?.id
+  const t = useT()
+  const { runMutation } = useGuardedMutation<Record<string, unknown>>({
+    contextId: 'data_sync.runDetail',
+  })
+
+  const [run, setRun] = React.useState<SyncRunDetail | null>(null)
+  const [isLoading, setIsLoading] = React.useState(true)
+  const [error, setError] = React.useState<string | null>(null)
+  const [isNotFound, setIsNotFound] = React.useState(false)
+  const [logs, setLogs] = React.useState<LogEntry[]>([])
+  const [isLoadingLogs, setIsLoadingLogs] = React.useState(false)
+  const [logsTotal, setLogsTotal] = React.useState(0)
+  const [logsPage, setLogsPage] = React.useState(1)
+  const logsPageRef = React.useRef(1)
+  const [parameterLabels, setParameterLabels] = React.useState<Record<string, string>>({})
+  // Declarations cannot change between two refreshes of the same run, so the
+  // options list is fetched once per integration rather than on every progress
+  // event that re-reads the run.
+  const parameterLabelsIntegrationRef = React.useRef<string | null>(null)
+
+  // The run row stores machine keys. Resolve the adapter's declared labels so a
+  // past run reads as "Start id" rather than "startId"; keys the adapter no
+  // longer declares keep their raw form, which keeps historical runs readable.
+  const loadParameterLabels = React.useCallback(async (integrationId: string) => {
+    if (parameterLabelsIntegrationRef.current === integrationId) return
+    parameterLabelsIntegrationRef.current = integrationId
+    const call = await apiCall<{ items?: Array<{ integrationId: string; runParameters?: RunParameterDeclaration[] }> }>(
+      '/api/data_sync/options',
+      undefined,
+      { fallback: { items: [] } },
+    )
+    const declared = (call.result?.items ?? []).find((item) => item.integrationId === integrationId)?.runParameters ?? []
+    const labels: Record<string, string> = {}
+    for (const param of declared) {
+      const resolved = resolveRunParameterText(t, param.labelKey, param.label)
+      if (resolved) labels[param.key] = resolved
+    }
+    setParameterLabels(labels)
+  }, [t])
+
+  const loadRun = React.useCallback(async () => {
+    if (!runId) {
+      setError(t('data_sync.runs.detail.loadError'))
+      setIsLoading(false)
+      return
+    }
+    setIsNotFound(false)
+    const call = await apiCall<SyncRunDetail>(
+      `/api/data_sync/runs/${encodeURIComponent(runId)}`,
+      undefined,
+      { fallback: null },
+    )
+    if (!call.ok || !call.result) {
+      if (call.status === 404) {
+        setIsNotFound(true)
+      } else {
+        setError(t('data_sync.runs.detail.loadError'))
+      }
+      setIsLoading(false)
+      return
+    }
+    setRun(call.result)
+    setIsLoading(false)
+    if (call.result.parameters && Object.keys(call.result.parameters).length > 0) {
+      void loadParameterLabels(call.result.integrationId)
+    }
+  }, [loadParameterLabels, runId, t])
+
+  const loadLogs = React.useCallback(async (page?: number) => {
+    if (!runId) return
+    const targetPage = page ?? logsPageRef.current
+    setIsLoadingLogs(true)
+    const params = new URLSearchParams({ runId, pageSize: String(LOG_PAGE_SIZE), page: String(targetPage) })
+    const call = await apiCall<{ items: LogEntry[]; total?: number }>(
+      `/api/integrations/logs?${params.toString()}`,
+      undefined,
+      { fallback: { items: [], total: 0 } },
+    )
+    if (call.ok && call.result) {
+      setLogs(call.result.items)
+      if (typeof call.result.total === 'number') setLogsTotal(call.result.total)
+      logsPageRef.current = targetPage
+      setLogsPage(targetPage)
+    }
+    setIsLoadingLogs(false)
+  }, [runId])
+
+  React.useEffect(() => {
+    void loadRun()
+    void loadLogs()
+  }, [loadRun, loadLogs])
+
+  const handleProgressEvent = React.useCallback((payload: ProgressEventPayload) => {
+    const eventJobId = typeof payload.jobId === 'string' ? payload.jobId : null
+    if (!eventJobId) return
+
+    setRun((current) => {
+      if (!current?.progressJobId || current.progressJobId !== eventJobId) return current
+      return {
+        ...current,
+        status: (payload.status as SyncRunDetail['status']) ?? current.status,
+        progressJob: {
+          id: eventJobId,
+          status: payload.status ?? current.progressJob?.status ?? current.status,
+          progressPercent: payload.progressPercent ?? current.progressJob?.progressPercent ?? 0,
+          processedCount: payload.processedCount ?? current.progressJob?.processedCount ?? 0,
+          totalCount: payload.totalCount ?? current.progressJob?.totalCount ?? null,
+          etaSeconds: payload.etaSeconds ?? current.progressJob?.etaSeconds ?? null,
+          meta: payload.meta ?? current.progressJob?.meta ?? null,
+        },
+      }
+    })
+  }, [])
+
+  useAppEvent('progress.job.updated', (event) => {
+    handleProgressEvent(event.payload as ProgressEventPayload)
+  }, [handleProgressEvent])
+
+  useAppEvent('progress.job.started', (event) => {
+    handleProgressEvent(event.payload as ProgressEventPayload)
+  }, [handleProgressEvent])
+
+  useAppEvent('progress.job.completed', (event) => {
+    handleProgressEvent(event.payload as ProgressEventPayload)
+    void loadRun()
+    void loadLogs()
+  }, [handleProgressEvent, loadLogs, loadRun])
+
+  useAppEvent('progress.job.failed', (event) => {
+    handleProgressEvent(event.payload as ProgressEventPayload)
+    void loadRun()
+    void loadLogs()
+  }, [handleProgressEvent, loadLogs, loadRun])
+
+  useAppEvent('progress.job.cancelled', (event) => {
+    handleProgressEvent(event.payload as ProgressEventPayload)
+    void loadRun()
+    void loadLogs()
+  }, [handleProgressEvent, loadLogs, loadRun])
+
+  useAppEvent('om:bridge:reconnected', () => {
+    void loadRun()
+    void loadLogs()
+  }, [loadLogs, loadRun])
+
+  const handleCancel = React.useCallback(async () => {
+    if (!runId) return
+    const call = await runMutation({
+      // optimistic-lock-exempt: run lifecycle action endpoint (cancel), not a concurrent record edit
+      operation: () => apiCall(`/api/data_sync/runs/${encodeURIComponent(runId)}/cancel`, {
+        method: 'POST',
+      }, { fallback: null }),
+      mutationPayload: { runId },
+      context: {
+        operation: 'update',
+        actionId: 'cancel-sync-run',
+        runId,
+      },
+    })
+    if (call.ok) {
+      flash(t('data_sync.runs.detail.cancelSuccess'), 'success')
+      void loadRun()
+    } else {
+      flash(t('data_sync.runs.detail.cancelError'), 'error')
+    }
+  }, [runId, runMutation, t, loadRun])
+
+  const handleRetry = React.useCallback(async () => {
+    if (!runId) return
+    const call = await runMutation({
+      // optimistic-lock-exempt: starts a new retry run (create), not a concurrent record edit
+      operation: () => apiCall<{ id: string }>(`/api/data_sync/runs/${encodeURIComponent(runId)}/retry`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fromBeginning: false }),
+      }, { fallback: null }),
+      mutationPayload: { runId, fromBeginning: false },
+      context: {
+        operation: 'create',
+        actionId: 'retry-sync-run',
+        runId,
+      },
+    })
+    if (call.ok && call.result) {
+      flash(t('data_sync.runs.detail.retrySuccess'), 'success')
+      router.push(`/backend/data-sync/runs/${encodeURIComponent(call.result.id)}`)
+    } else {
+      flash(buildRetryFailureMessage(call.result as RetryFailureBody | null, t), 'error')
+    }
+  }, [runId, router, runMutation, t])
+
+  if (isLoading) return <Page><PageBody><LoadingMessage label={t('data_sync.runs.detail.title')} /></PageBody></Page>
+  if (isNotFound) {
+    return (
+      <Page>
+        <PageBody>
+          <RecordNotFoundState
+            label={t('data_sync.runs.detail.notFound', 'Sync run not found.')}
+            backHref="/backend/data-sync"
+            backLabel={t('data_sync.runs.detail.back')}
+          />
+        </PageBody>
+      </Page>
+    )
+  }
+  if (error || !run) return <Page><PageBody><ErrorMessage label={error ?? t('data_sync.runs.detail.loadError')} /></PageBody></Page>
+
+  const totalProcessed = run.createdCount + run.updatedCount + run.skippedCount + run.failedCount
+  const progressPercent = run.progressJob?.progressPercent ?? (run.status === 'completed' ? 100 : 0)
+  const progressStatus = run.progressJob?.status ?? run.status
+  const processedCount = run.progressJob?.processedCount ?? totalProcessed
+  const hasProgressTotal = typeof run.progressJob?.totalCount === 'number' && run.progressJob.totalCount > 0
+  const etaLabel = run.progressJob?.etaSeconds && run.progressJob.etaSeconds > 0
+    ? formatEtaSeconds(run.progressJob.etaSeconds)
+    : null
+
+  return (
+    <Page>
+      <PageBody className="space-y-6">
+        <FormHeader
+          mode="detail"
+          backHref="/backend/data-sync"
+          backLabel={t('data_sync.runs.detail.back')}
+          entityTypeLabel={t('data_sync.runs.detail.title')}
+          title={`${run.integrationId} — ${run.entityType}`}
+          statusBadge={(
+            <div className="mt-2 flex flex-wrap gap-2">
+              <Badge variant="outline">{t(`data_sync.dashboard.direction.${run.direction}`)}</Badge>
+              <StatusBadge variant={getSyncRunStatusVariant(run.status)}>
+                {t(`data_sync.dashboard.status.${run.status}`)}
+              </StatusBadge>
+              {run.triggeredBy ? <Badge variant="outline">{run.triggeredBy}</Badge> : null}
+            </div>
+          )}
+          actionsContent={(
+            <>
+              {(run.status === 'running' || run.status === 'pending') ? (
+                <Button type="button" variant="destructive" size="sm" onClick={() => void handleCancel()}>
+                  <XCircle className="mr-2 h-4 w-4" />
+                  {t('data_sync.runs.detail.cancel')}
+                </Button>
+              ) : null}
+              {run.status === 'failed' ? (
+                <Button type="button" variant="outline" size="sm" onClick={() => void handleRetry()}>
+                  <RotateCcw className="mr-2 h-4 w-4" />
+                  {t('data_sync.runs.detail.retry')}
+                </Button>
+              ) : null}
+            </>
+          )}
+        />
+
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between gap-3">
+              <CardTitle>{t('data_sync.runs.detail.progress')}</CardTitle>
+              <StatusBadge variant={getSyncRunStatusVariant(progressStatus)}>
+                {t(`data_sync.dashboard.status.${progressStatus}`)}
+              </StatusBadge>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="flex items-center justify-between gap-3 text-sm">
+              <span className="font-medium">
+                {hasProgressTotal
+                  ? t('data_sync.runs.detail.progress.percent', { percent: progressPercent })
+                  : t('data_sync.runs.detail.progress.itemsProcessed', { count: processedCount })}
+              </span>
+              {etaLabel ? (
+                <span className="text-muted-foreground">
+                  {t('data_sync.runs.detail.progress.eta', { eta: etaLabel })}
+                </span>
+              ) : null}
+            </div>
+            {hasProgressTotal ? (
+              <Progress value={progressPercent} className="h-3" />
+            ) : (
+              <div className="relative h-3 w-full overflow-hidden rounded-full bg-secondary">
+                <div className="absolute inset-y-0 left-0 w-1/2 animate-pulse rounded-full bg-primary/80" />
+                <div className="absolute inset-y-0 right-0 w-1/3 rounded-full bg-primary/10" />
+              </div>
+            )}
+            <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground">
+              <span>
+                {hasProgressTotal
+                  ? t('data_sync.runs.detail.progress.itemsProcessedTotal', {
+                      processed: processedCount,
+                      total: run.progressJob?.totalCount ?? 0,
+                    })
+                  : t('data_sync.runs.detail.progress.itemsProcessed', { count: processedCount })}
+              </span>
+              <span>{t('data_sync.runs.detail.progress.batches', { count: run.batchesCompleted })}</span>
+            </div>
+          </CardContent>
+        </Card>
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+          <Card>
+            <CardContent className="pt-6 text-center">
+              <div className="text-2xl font-bold text-status-success-text">{run.createdCount}</div>
+              <p className="text-sm text-muted-foreground">{t('data_sync.runs.detail.counters.created')}</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-6 text-center">
+              <div className="text-2xl font-bold text-status-info-text">{run.updatedCount}</div>
+              <p className="text-sm text-muted-foreground">{t('data_sync.runs.detail.counters.updated')}</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-6 text-center">
+              <div className="text-2xl font-bold text-muted-foreground">{run.skippedCount}</div>
+              <p className="text-sm text-muted-foreground">{t('data_sync.runs.detail.counters.skipped')}</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-6 text-center">
+              <div className="text-2xl font-bold text-status-error-text">{run.failedCount}</div>
+              <p className="text-sm text-muted-foreground">{t('data_sync.runs.detail.counters.failed')}</p>
+            </CardContent>
+          </Card>
+        </div>
+
+        {run.parameters && Object.keys(run.parameters).length > 0 ? (
+          <Card>
+            <CardHeader>
+              <CardTitle>{t('data_sync.runs.detail.parameters', 'Run parameters')}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <dl className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                {Object.entries(run.parameters).map(([key, value]) => (
+                  <div key={key} className="flex items-center justify-between gap-3 rounded-md border bg-card px-3 py-2 text-sm">
+                    <dt className="font-medium text-muted-foreground">{parameterLabels[key] ?? key}</dt>
+                    <dd className="font-mono text-foreground">
+                      {typeof value === 'boolean' ? String(value) : String(value ?? '')}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            </CardContent>
+          </Card>
+        ) : null}
+
+        {run.lastError && (
+          <Card className="border-status-error-border bg-status-error-bg">
+            <CardHeader>
+              <CardTitle className="text-status-error-text">{t('data_sync.runs.detail.error')}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <pre className="text-sm text-status-error-text whitespace-pre-wrap">{run.lastError}</pre>
+            </CardContent>
+          </Card>
+        )}
+
+        <Card>
+          <CardHeader>
+            <CardTitle>{t('data_sync.runs.detail.logs')}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {isLoadingLogs ? (
+              <div className="flex justify-center py-4"><Spinner /></div>
+            ) : (
+              <LogList
+                entries={logs.map<LogListEntry>((log) => ({
+                  id: log.id,
+                  time: new Date(log.createdAt).toLocaleString(),
+                  level: log.level,
+                  message: log.message,
+                  body: log.payload ? (
+                    <pre className="overflow-x-auto whitespace-pre-wrap rounded-md border bg-card p-3 text-xs">
+                      {log.payload.kind === 'export-item-failure' && typeof log.payload.summary === 'string'
+                        ? log.payload.summary
+                        : JSON.stringify(log.payload, null, 2)}
+                    </pre>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">
+                      {t('data_sync.runs.detail.logs.noPayload', 'No payload recorded for this log entry.')}
+                    </p>
+                  ),
+                }))}
+                emptyMessage={t('data_sync.runs.detail.noLogs')}
+              />
+            )}
+            {logsTotal > LOG_PAGE_SIZE && (
+              <Pagination
+                className="mt-4"
+                page={logsPage}
+                pageSize={LOG_PAGE_SIZE}
+                total={logsTotal}
+                onPageChange={(next) => { void loadLogs(next) }}
+              />
+            )}
+          </CardContent>
+        </Card>
+      </PageBody>
+    </Page>
+  )
+}

@@ -1,0 +1,586 @@
+import { createHash } from 'node:crypto'
+import { z } from 'zod'
+import type { EntityManager } from '@mikro-orm/postgresql'
+import { type Kysely, sql } from 'kysely'
+import { runWithCacheTenant } from '@open-mercato/cache'
+import type { CommandBus } from '@open-mercato/shared/lib/commands/command-bus'
+import {
+  buildCollectionTags,
+  debugCrudCache,
+  isCrudCacheEnabled,
+  normalizeTagSegment,
+  resolveCrudCache,
+} from '@open-mercato/shared/lib/crud/cache'
+import type { OpenApiRouteDoc } from '@open-mercato/shared/lib/openapi/types'
+import { findWithDecryption } from '@open-mercato/shared/lib/encryption/find'
+import { lookupHashCandidates } from '@open-mercato/shared/lib/encryption/aes'
+import { User } from '../../auth/data/entities'
+import { Message, MessageObject } from '../data/entities'
+import { composeMessageSchema, listMessagesSchema, type ListMessagesInput } from '../data/validators'
+import {
+  composeRequiresChannelTypeResolution,
+  composeSourceHintSchema,
+  resolveComposeSourceChannelType,
+} from '../lib/composeSourceChannelType'
+import { resolveMessageActionData } from '../lib/actions'
+import { MESSAGE_ATTACHMENT_ENTITY_ID } from '../lib/constants'
+import { getMessageType } from '../lib/message-types-registry'
+import { validateMessageObjectsForType } from '../lib/object-validation'
+import { attachOperationMetadataHeader } from '../lib/operationMetadata'
+import { canUseMessageEmailFeature, resolveMessageContext } from '../lib/routeHelpers'
+import { applyMessageParticipantScope } from '../lib/participantScope'
+import { resolveUserFeatures, runMessageMutationGuardAfterSuccess, runMessageMutationGuards } from './guards'
+import { findMessageIdsBySearchTokens } from '../lib/searchLookup'
+import { MessageCommandExecuteResult } from '../commands/shared'
+import {
+  composeMessageRequestSchema as composeSchema,
+  composeResponseSchema,
+  listMessagesSchema as listSchema,
+  messageListItemSchema,
+} from './openapi'
+
+type MessageCommandExecuteResultWithThreadId = MessageCommandExecuteResult & {
+  threadId: string
+}
+
+const NO_MATCH_ID = '00000000-0000-0000-0000-000000000000'
+const MESSAGE_LIST_CACHE_TTL_MS = 30_000
+const MESSAGE_LIST_RESOURCE = 'messages.message'
+
+function getDb(em: EntityManager): Kysely<any> {
+  return em.getKysely<any>()
+}
+
+type MessageListScopeRow = {
+  id: string
+  sender_user_id: string
+  is_draft: boolean
+  recipient_status: string | null
+  read_at: string | null
+}
+
+type AttachmentCountRow = {
+  record_id: string
+  count: string | number
+}
+
+type RecipientCountRow = {
+  message_id: string
+  count: string | number
+}
+
+type MessageListPayload = {
+  items: Array<Record<string, unknown>>
+  page: number
+  pageSize: number
+  total: number
+  totalPages: number
+}
+
+type MessageListScope = Awaited<ReturnType<typeof resolveMessageContext>>['scope']
+
+function normalizeCacheFilterValue(value: unknown): unknown {
+  if (value === undefined) return null
+  if (value instanceof Date) return value.toISOString()
+  if (Array.isArray(value)) return value.map(normalizeCacheFilterValue)
+  if (value && typeof value === 'object') {
+    return Object.entries(value as Record<string, unknown>)
+      .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey))
+      .map(([key, entryValue]) => [key, normalizeCacheFilterValue(entryValue)])
+  }
+  return value
+}
+
+function buildMessageListFilterSignature(input: ListMessagesInput): string {
+  const canonicalInput = Object.entries(input)
+    .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey))
+    .map(([key, value]) => [key, normalizeCacheFilterValue(value)])
+
+  return createHash('sha256')
+    .update(JSON.stringify(canonicalInput))
+    .digest('hex')
+    .slice(0, 32)
+}
+
+function buildMessageListCacheKey(scope: MessageListScope, input: ListMessagesInput): string {
+  return [
+    'messages:list:v1',
+    `tenant:${normalizeTagSegment(scope.tenantId)}`,
+    `org:${normalizeTagSegment(scope.organizationId)}`,
+    `user:${normalizeTagSegment(scope.userId)}`,
+    `filters:${buildMessageListFilterSignature(input)}`,
+  ].join('|')
+}
+
+function isMessageListPayload(value: unknown): value is MessageListPayload {
+  if (!value || typeof value !== 'object') return false
+  const payload = value as Partial<MessageListPayload>
+  return Array.isArray(payload.items)
+    && typeof payload.page === 'number'
+    && typeof payload.pageSize === 'number'
+    && typeof payload.total === 'number'
+    && typeof payload.totalPages === 'number'
+}
+
+export const metadata = {
+  GET: { requireAuth: true },
+  POST: { requireAuth: true, requireFeatures: ['messages.compose'] },
+}
+
+export async function GET(req: Request) {
+  const { ctx, scope } = await resolveMessageContext(req)
+  const url = new URL(req.url)
+  const params = Object.fromEntries(url.searchParams)
+  const input = listMessagesSchema.parse(params)
+
+  const cache = isCrudCacheEnabled() ? resolveCrudCache(ctx.container) : null
+  const cacheKey = cache ? buildMessageListCacheKey(scope, input) : null
+  if (cache && cacheKey) {
+    try {
+      const cached = await runWithCacheTenant(scope.tenantId, () => cache.get(cacheKey))
+      if (isMessageListPayload(cached)) {
+        return Response.json(cached)
+      }
+    } catch (error) {
+      debugCrudCache('messages-list-cache-read-failed', {
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
+  }
+
+  const em = ctx.container.resolve('em') as EntityManager
+  const db = getDb(em) as any
+
+  const searchIds = input.search
+    ? await findMessageIdsBySearchTokens({
+        em,
+        query: input.search,
+        tenantId: scope.tenantId ?? null,
+        organizationId: scope.organizationId,
+      })
+    : undefined
+
+  const buildBaseQuery = () => {
+    let q: any = db
+      .selectFrom('messages as m')
+      .where('m.tenant_id', '=', scope.tenantId)
+      .where('m.deleted_at', 'is', null)
+
+    if (scope.organizationId) {
+      q = q.where('m.organization_id', '=', scope.organizationId)
+    } else {
+      q = q.where('m.organization_id', 'is', null)
+    }
+
+    const joinRecipient = () => {
+      q = q.leftJoin('message_recipients as r', (jb: any) => jb
+        .onRef('m.id', '=', 'r.message_id')
+        .on('r.recipient_user_id', '=', scope.userId))
+    }
+
+    switch (input.folder) {
+      case 'inbox':
+        joinRecipient()
+        q = q
+          .where('r.message_id', 'is not', null)
+          .where('r.deleted_at', 'is', null)
+          .where('r.archived_at', 'is', null)
+          .where('m.is_draft', '=', false)
+        break
+      case 'archived':
+        joinRecipient()
+        q = q
+          .where('r.message_id', 'is not', null)
+          .where('r.deleted_at', 'is', null)
+          .where('r.archived_at', 'is not', null)
+        break
+      case 'sent':
+        q = q
+          .where('m.sender_user_id', '=', scope.userId)
+          .where('m.is_draft', '=', false)
+        joinRecipient()
+        break
+      case 'drafts':
+        q = q
+          .where('m.sender_user_id', '=', scope.userId)
+          .where('m.is_draft', '=', true)
+        joinRecipient()
+        break
+      case 'all':
+        // Sender-OR-recipient participant scope shared with the
+        // communication_channels message enricher — see participantScope.ts (#4133).
+        q = applyMessageParticipantScope(q, scope.userId)
+        break
+      default: {
+        const unsupportedFolder: never = input.folder
+        throw new Error(`Unsupported folder: ${String(unsupportedFolder)}`)
+      }
+    }
+
+    if (input.status) q = q.where('r.status', '=', input.status)
+    if (input.type) q = q.where('m.type', '=', input.type)
+    if (input.visibility) q = q.where('m.visibility', '=', input.visibility)
+    if (input.sourceEntityType) q = q.where('m.source_entity_type', '=', input.sourceEntityType)
+    if (input.sourceEntityId) q = q.where('m.source_entity_id', '=', input.sourceEntityId)
+    if (input.externalEmail) q = q.where('m.external_email_hash', 'in', lookupHashCandidates(input.externalEmail))
+    if (input.senderId) q = q.where('m.sender_user_id', '=', input.senderId)
+
+    if (input.search) {
+      if (!searchIds || searchIds.length === 0) {
+        q = q.where('m.id', '=', NO_MATCH_ID)
+      } else {
+        q = q.where('m.id', 'in', searchIds)
+      }
+    }
+
+    if (input.since) q = q.where('m.sent_at', '>', new Date(input.since))
+
+    if (input.hasObjects !== undefined) {
+      const existsFn = (eb: any) => eb.exists(
+        eb.selectFrom('message_objects')
+          .select(sql<number>`1`.as('one'))
+          .whereRef('message_objects.message_id', '=', 'm.id')
+      )
+      const notExistsFn = (eb: any) => eb.not(eb.exists(
+        eb.selectFrom('message_objects')
+          .select(sql<number>`1`.as('one'))
+          .whereRef('message_objects.message_id', '=', 'm.id')
+      ))
+      q = input.hasObjects ? q.where(existsFn) : q.where(notExistsFn)
+    }
+
+    if (input.hasAttachments !== undefined) {
+      const existsFn = (eb: any) => eb.exists(
+        eb.selectFrom('attachments')
+          .select(sql<number>`1`.as('one'))
+          .where('attachments.entity_id', '=', MESSAGE_ATTACHMENT_ENTITY_ID)
+          .where(sql<boolean>`attachments.record_id = m.id::text`)
+      )
+      const notExistsFn = (eb: any) => eb.not(eb.exists(
+        eb.selectFrom('attachments')
+          .select(sql<number>`1`.as('one'))
+          .where('attachments.entity_id', '=', MESSAGE_ATTACHMENT_ENTITY_ID)
+          .where(sql<boolean>`attachments.record_id = m.id::text`)
+      ))
+      q = input.hasAttachments ? q.where(existsFn) : q.where(notExistsFn)
+    }
+
+    if (input.hasActions !== undefined) {
+      q = input.hasActions
+        ? q.where('m.action_data', 'is not', null)
+        : q.where('m.action_data', 'is', null)
+    }
+
+    return q
+  }
+
+  // Audited for #3386 rollout (P3): sort is on m.sent_at (a plain timestamp —
+  // not in the messages:message encryption map whose encrypted fields are:
+  // subject, body, external_email, external_name, action_data, action_result).
+  // The handler already uses the correct two-phase shape: Kysely SQL
+  // ORDER BY + LIMIT/OFFSET produces a bounded page of IDs, then
+  // findWithDecryption is called only for those IDs — never for the full
+  // result set. The #3278 unbounded-decrypt hazard does not apply here.
+  // Covered by __tests__/list.test.ts.
+  const countResult = await buildBaseQuery()
+    .select(sql<number>`count(*)`.as('count'))
+    .executeTakeFirst() as { count: string | number } | undefined
+  const total = Number(countResult?.count ?? 0)
+
+  const offset = (input.page - 1) * input.pageSize
+  const scopeRows = await buildBaseQuery()
+    .select([
+      'm.id',
+      'm.sender_user_id',
+      'm.is_draft',
+      'r.status as recipient_status',
+      'r.read_at',
+    ])
+    .orderBy('m.sent_at', 'desc')
+    .offset(offset)
+    .limit(input.pageSize)
+    .execute()
+
+  const typedRows = scopeRows as MessageListScopeRow[]
+  const messageIds = typedRows.map((row) => row.id)
+
+  const messageEntities = messageIds.length > 0
+    ? await findWithDecryption(
+        em,
+        Message,
+        { id: { $in: messageIds } },
+        undefined,
+        { tenantId: scope.tenantId, organizationId: scope.organizationId }
+      )
+    : []
+
+  const messagesById = new Map<string, Message>()
+  for (const message of messageEntities) {
+    messagesById.set(message.id, message)
+  }
+
+  const objects = messageIds.length > 0
+    ? await em.find(MessageObject, { messageId: { $in: messageIds } })
+    : []
+
+  const objectsByMessage = objects.reduce((acc, obj) => {
+    if (!acc[obj.messageId]) acc[obj.messageId] = []
+    acc[obj.messageId].push(obj)
+    return acc
+  }, {} as Record<string, MessageObject[]>)
+
+  const attachmentCounts: AttachmentCountRow[] = messageIds.length > 0
+    ? await (getDb(em) as any)
+        .selectFrom('attachments')
+        .select(['record_id', sql<string>`count(*)`.as('count')])
+        .where('entity_id', '=', MESSAGE_ATTACHMENT_ENTITY_ID)
+        .where('record_id', 'in', messageIds)
+        .groupBy('record_id')
+        .execute()
+    : []
+
+  const attachmentCountByMessage = attachmentCounts.reduce((acc: Record<string, number>, row) => {
+    acc[row.record_id] = Number(row.count)
+    return acc
+  }, {})
+
+  const recipientCounts: RecipientCountRow[] = messageIds.length > 0
+    ? await (getDb(em) as any)
+        .selectFrom('message_recipients')
+        .select(['message_id', sql<string>`count(*)`.as('count')])
+        .where('message_id', 'in', messageIds)
+        .where('deleted_at', 'is', null)
+        .groupBy('message_id')
+        .execute()
+    : []
+
+  const recipientCountByMessage = recipientCounts.reduce((acc: Record<string, number>, row) => {
+    acc[row.message_id] = Number(row.count)
+    return acc
+  }, {})
+
+  const senderUserIds = Array.from(new Set(typedRows.map((row) => row.sender_user_id).filter(Boolean)))
+  const senderUsers = senderUserIds.length > 0
+    ? await findWithDecryption(
+        em,
+        User,
+        { id: { $in: senderUserIds } },
+        undefined,
+        { tenantId: scope.tenantId, organizationId: scope.organizationId }
+      )
+    : []
+
+  const senderMetaById = new Map<string, { name: string | null; email: string | null }>()
+  senderUsers.forEach((user) => {
+    const name = typeof user.name === 'string' && user.name.trim().length ? user.name.trim() : null
+    senderMetaById.set(user.id, { name, email: user.email ?? null })
+  })
+
+  const payload: MessageListPayload = {
+    items: typedRows
+      .map((row) => {
+        const message = messagesById.get(row.id)
+        if (!message) return null
+        const body = typeof message.body === 'string' ? message.body : ''
+        const bodyPreview = body.substring(0, 150) + (body.length > 150 ? '...' : '')
+        const actionData = resolveMessageActionData(message)
+        return {
+          ...(senderMetaById.get(row.sender_user_id)
+            ? {
+                senderName: senderMetaById.get(row.sender_user_id)?.name ?? null,
+                senderEmail: senderMetaById.get(row.sender_user_id)?.email ?? null,
+              }
+            : { senderName: null, senderEmail: null }),
+          id: message.id,
+          type: message.type,
+          visibility: message.visibility ?? null,
+          sourceEntityType: message.sourceEntityType ?? null,
+          sourceEntityId: message.sourceEntityId ?? null,
+          externalEmail: message.externalEmail ?? null,
+          externalName: message.externalName ?? null,
+          subject: message.subject,
+          bodyPreview,
+          senderUserId: message.senderUserId,
+          priority: message.priority,
+          status: row.recipient_status ?? (row.is_draft ? 'draft' : 'sent'),
+          hasObjects: (objectsByMessage[message.id] || []).length > 0,
+          objectCount: (objectsByMessage[message.id] || []).length,
+          hasAttachments: (attachmentCountByMessage[message.id] || 0) > 0,
+          attachmentCount: attachmentCountByMessage[message.id] || 0,
+          recipientCount: recipientCountByMessage[message.id] || 0,
+          hasActions:
+            Boolean(actionData?.actions?.length)
+            || Boolean(getMessageType(message.type)?.defaultActions?.length)
+            || (objectsByMessage[message.id] || []).some((item) => item.actionRequired && Boolean(item.actionType)),
+          actionTaken: message.actionTaken ?? null,
+          sentAt: message.sentAt ? message.sentAt.toISOString() : null,
+          readAt: row.read_at,
+          threadId: message.threadId ?? null,
+        }
+      })
+      .filter((item): item is NonNullable<typeof item> => item !== null),
+    page: input.page,
+    pageSize: input.pageSize,
+    total,
+    totalPages: Math.ceil(total / input.pageSize),
+  }
+
+  if (cache && cacheKey) {
+    try {
+      await runWithCacheTenant(scope.tenantId, () =>
+        cache.set(cacheKey, payload, {
+          ttl: MESSAGE_LIST_CACHE_TTL_MS,
+          tags: buildCollectionTags(
+            MESSAGE_LIST_RESOURCE,
+            scope.tenantId,
+            [scope.organizationId],
+          ),
+        }),
+      )
+    } catch (error) {
+      debugCrudCache('messages-list-cache-write-failed', {
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
+  }
+
+  return Response.json(payload)
+}
+
+export async function POST(req: Request) {
+  const { ctx, scope } = await resolveMessageContext(req)
+  const commandBus = ctx.container.resolve('commandBus') as CommandBus
+  const body = await req.json().catch(() => ({}))
+
+  // #4975: whether `externalEmail` is required depends on the channel this
+  // message originates from, so the channel type has to be established BEFORE
+  // validation. It is resolved server-side from the referenced conversation or
+  // parent message and any client-sent `sourceChannelType` is dropped —
+  // otherwise a caller could waive the requirement by asserting its own type.
+  // An unresolvable source stays `undefined`, which the validator fails closed on.
+  // Only the "public, non-draft, no address" branch of the validator reads the
+  // answer, so every other compose skips the lookup instead of discarding it.
+  const sourceHint = composeRequiresChannelTypeResolution(body)
+    ? composeSourceHintSchema.safeParse(body)
+    : null
+  const sourceChannelType = sourceHint?.success
+    ? await resolveComposeSourceChannelType(
+        ctx.container,
+        { tenantId: scope.tenantId, organizationId: scope.organizationId ?? null },
+        sourceHint.data,
+      )
+    : undefined
+  const { sourceChannelType: _clientSuppliedChannelType, ...clientBody } =
+    (body ?? {}) as Record<string, unknown>
+  const input = composeMessageSchema.parse({
+    ...clientBody,
+    ...(sourceChannelType ? { sourceChannelType } : {}),
+  })
+
+  const isPublicVisibility = input.visibility === 'public'
+  const sendViaEmail = isPublicVisibility ? true : input.sendViaEmail
+  if (sendViaEmail && !(await canUseMessageEmailFeature(ctx, scope))) {
+    return Response.json({ error: 'Missing feature: messages.email' }, { status: 403 })
+  }
+
+  if (input.objects?.length) {
+    const objectValidationError = validateMessageObjectsForType(input.type, input.objects)
+    if (objectValidationError) {
+      return Response.json({ error: objectValidationError }, { status: 400 })
+    }
+  }
+
+  const guardResult = await runMessageMutationGuards(
+    ctx.container,
+    {
+      tenantId: scope.tenantId,
+      organizationId: scope.organizationId,
+      userId: scope.userId,
+      resourceKind: 'messages.message',
+      resourceId: null,
+      operation: 'create',
+      requestMethod: req.method,
+      requestHeaders: req.headers,
+      mutationPayload: input as Record<string, unknown>,
+    },
+    resolveUserFeatures(ctx.auth),
+  )
+  if (!guardResult.ok) {
+    return Response.json(
+      guardResult.errorBody ?? { error: 'Operation blocked by guard' },
+      { status: guardResult.errorStatus ?? 422 },
+    )
+  }
+
+  const { result, logEntry } = await commandBus.execute('messages.messages.compose', {
+    input: {
+      ...input,
+      sendViaEmail,
+      tenantId: scope.tenantId,
+      organizationId: scope.organizationId,
+      userId: scope.userId,
+    },
+    ctx: {
+      container: ctx.container,
+      auth: ctx.auth ?? null,
+      organizationScope: null,
+      selectedOrganizationId: scope.organizationId,
+      organizationIds: scope.organizationId ? [scope.organizationId] : null,
+      request: req,
+    },
+  })
+  const { id: messageId, threadId: responseThreadId } = result as unknown as MessageCommandExecuteResultWithThreadId
+
+  const response = Response.json({ id: messageId, threadId: responseThreadId }, { status: 201 })
+  attachOperationMetadataHeader(response, logEntry, {
+    resourceKind: 'messages.message',
+    resourceId: messageId,
+  })
+  await runMessageMutationGuardAfterSuccess(guardResult.afterSuccessCallbacks, {
+    tenantId: scope.tenantId,
+    organizationId: scope.organizationId,
+    userId: scope.userId,
+    resourceKind: 'messages.message',
+    resourceId: messageId,
+    operation: 'create',
+    requestMethod: req.method,
+    requestHeaders: req.headers,
+  })
+  return response
+}
+
+export const openApi: OpenApiRouteDoc = {
+  tag: 'Messages',
+  methods: {
+    GET: {
+      summary: 'List messages',
+      query: listSchema,
+      responses: [
+        {
+          status: 200,
+          description: 'Message list',
+          schema: z.object({
+            items: z.array(messageListItemSchema),
+            page: z.number(),
+            pageSize: z.number(),
+            total: z.number(),
+            totalPages: z.number(),
+          }),
+        },
+      ],
+    },
+    POST: {
+      summary: 'Compose a message',
+      requestBody: {
+        schema: composeSchema,
+      },
+      responses: [
+        {
+          status: 201,
+          description: 'Message created',
+          schema: composeResponseSchema,
+        },
+      ],
+    },
+  },
+}

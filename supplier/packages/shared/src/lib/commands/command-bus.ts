@@ -1,0 +1,774 @@
+import type { ActionLog } from '@open-mercato/core/modules/audit_logs/data/entities'
+import type { ActionLogCreateInput } from '@open-mercato/core/modules/audit_logs/data/validators'
+import { commandRegistry } from './registry'
+import type {
+  BulkImportSuppression,
+  CommandExecutionOptions,
+  CommandExecuteResult,
+  CommandHandler,
+  CommandLogBuilderArgs,
+  CommandLogMetadata,
+  CommandRuntimeContext,
+} from './types'
+import { defaultUndoToken } from './types'
+import type { ActionLogService } from '@open-mercato/core/modules/audit_logs/services/actionLogService'
+import type { AwilixContainer } from 'awilix'
+import type { DataEngine } from '@open-mercato/shared/lib/data/engine'
+import {
+  canonicalizeResourceTag,
+  deriveResourceFromCommandId,
+  invalidateCrudCache,
+  pickFirstIdentifier,
+  isCrudCacheDebugEnabled,
+} from '@open-mercato/shared/lib/crud/cache'
+import { normalizeCustomFieldKey } from '@open-mercato/shared/lib/custom-fields/keys'
+import { getAllCommandInterceptorInstances } from './command-interceptor-store'
+import {
+  runCommandInterceptorsBefore,
+  runCommandInterceptorsAfter,
+  runCommandInterceptorsBeforeUndo,
+  runCommandInterceptorsAfterUndo,
+} from './command-interceptor-runner'
+import type { CommandInterceptorContext } from './command-interceptor'
+import { CommandInterceptorError } from './errors'
+import { isReadProjectionAlwaysConsistent } from '@open-mercato/shared/lib/data/consistency'
+import { createLogger } from '../logger'
+
+const logger = createLogger('shared').child({ component: 'commands' })
+
+const SKIPPED_ACTION_LOG_RESOURCE_KINDS = new Set<string>([
+  'audit_logs.access',
+  'audit_logs.action',
+  'dashboards.layout',
+  'dashboards.user_widgets',
+  'dashboards.role_widgets',
+])
+
+function asRecord(input: unknown): Record<string, unknown> | null {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null
+  return input as Record<string, unknown>
+}
+
+/** Command handlers often return domain keys (e.g. warehouseId) without `id`; cache invalidation must still resolve the record. */
+function extractPrimaryIdFromCommandResult(result: unknown): string | null {
+  const r = asRecord(result)
+  if (!r) return null
+  const direct = pickFirstIdentifier(r.id, r.entityId, r.recordId)
+  if (direct) return direct
+  for (const key of [
+    'warehouseId',
+    'zoneId',
+    'locationId',
+    'lotId',
+    'reservationId',
+    'profileId',
+    'movementId',
+    'balanceId',
+  ]) {
+    const v = r[key]
+    if (typeof v === 'string' && v.trim().length > 0) return v.trim()
+  }
+  return null
+}
+
+function toISOString(value: unknown): string | null {
+  if (value instanceof Date) {
+    const iso = value.toISOString()
+    return Number.isNaN(value.getTime()) ? null : iso
+  }
+  if (typeof value === 'string') {
+    const parsed = new Date(value)
+    return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString()
+  }
+  return null
+}
+
+function deepEqual(a: unknown, b: unknown, seen?: Set<unknown>): boolean {
+  if (Object.is(a, b)) return true
+  if (a instanceof Date || b instanceof Date) {
+    const aIso = toISOString(a)
+    const bIso = toISOString(b)
+    if (aIso != null && bIso != null) return aIso === bIso
+    return false
+  }
+  if (Array.isArray(a) && Array.isArray(b)) {
+    if (a.length !== b.length) return false
+    return a.every((value, index) => deepEqual(value, b[index], seen))
+  }
+  if (a && b && typeof a === 'object' && typeof b === 'object') {
+    if (!seen) seen = new Set()
+    if (seen.has(a) || seen.has(b)) return false
+    seen.add(a)
+    seen.add(b)
+    const aRec = a as Record<string, unknown>
+    const bRec = b as Record<string, unknown>
+    const keysA = Object.keys(aRec)
+    const keysB = Object.keys(bRec)
+    if (keysA.length !== keysB.length) return false
+    return keysA.every((key) => deepEqual(aRec[key], bRec[key], seen))
+  }
+  return false
+}
+
+const CUSTOM_FIELD_CONTAINER_KEYS = new Set(['custom', 'customFields', 'customValues', 'cf'])
+const SKIPPED_CHANGE_KEYS = new Set(['updatedAt', 'updated_at'])
+
+function appendCustomFieldChanges(
+  changes: Record<string, { from: unknown; to: unknown }>,
+  before: unknown,
+  after: unknown
+): boolean {
+  const beforeRec = asRecord(before)
+  const afterRec = asRecord(after)
+  if (!beforeRec && !afterRec) return false
+  const left = beforeRec ?? {}
+  const right = afterRec ?? {}
+  const keys = new Set([...Object.keys(left), ...Object.keys(right)])
+  for (const key of keys) {
+    const from = left[key]
+    const to = right[key]
+    if (!deepEqual(from, to)) {
+      changes[normalizeCustomFieldKey(key)] = { from, to }
+    }
+  }
+  return true
+}
+
+function buildRecordChanges(
+  before: Record<string, unknown>,
+  after: Record<string, unknown>,
+): Record<string, { from: unknown; to: unknown }> {
+  return buildRecordChangesDeep(before, after)
+}
+
+function buildRecordChangesDeep(
+  before: Record<string, unknown>,
+  after: Record<string, unknown>,
+  prefix?: string,
+  seen?: Set<unknown>,
+): Record<string, { from: unknown; to: unknown }> {
+  const changes: Record<string, { from: unknown; to: unknown }> = {}
+  if (!seen) seen = new Set()
+  if (seen.has(before) || seen.has(after)) return changes
+  seen.add(before)
+  seen.add(after)
+  const keys = new Set([...Object.keys(before), ...Object.keys(after)])
+  for (const key of keys) {
+    if (SKIPPED_CHANGE_KEYS.has(key)) continue
+    if (CUSTOM_FIELD_CONTAINER_KEYS.has(key)) {
+      const handled = appendCustomFieldChanges(changes, before[key], after[key])
+      if (handled) continue
+    }
+    const from = before[key]
+    const to = after[key]
+    const path = prefix ? `${prefix}.${key}` : key
+    const fromRec = asRecord(from)
+    const toRec = asRecord(to)
+    if (fromRec && toRec) {
+      const nested = buildRecordChangesDeep(fromRec, toRec, path, seen)
+      if (Object.keys(nested).length) {
+        Object.assign(changes, nested)
+        continue
+      }
+    }
+    if (!deepEqual(from, to)) {
+      changes[path] = { from, to }
+    }
+  }
+  return changes
+}
+
+function deriveChangesFromSnapshots(
+  before: unknown,
+  after: unknown,
+): Record<string, { from: unknown; to: unknown }> | null {
+  const beforeRec = asRecord(before)
+  const afterRec = asRecord(after)
+  if (!beforeRec || !afterRec) return null
+  const changes = buildRecordChanges(beforeRec, afterRec)
+  return Object.keys(changes).length ? changes : null
+}
+
+function invertRecordedChanges(
+  changes: unknown,
+): Record<string, { from: unknown; to: unknown }> | null {
+  const source = asRecord(changes)
+  if (!source) return null
+  const inverted: Record<string, { from: unknown; to: unknown }> = {}
+  for (const [key, value] of Object.entries(source)) {
+    const entry = asRecord(value)
+    if (!entry || (!('from' in entry) && !('to' in entry))) continue
+    inverted[key] = {
+      from: entry.to,
+      to: entry.from,
+    }
+  }
+  return Object.keys(inverted).length ? inverted : null
+}
+
+function extractAliasList(source: unknown): string[] {
+  if (!source || typeof source !== 'object' || Array.isArray(source)) return []
+  const record = source as Record<string, unknown>
+  const raw = record.cacheAliases
+  if (!Array.isArray(raw)) return []
+  const aliases = new Set<string>()
+  for (const value of raw) {
+    if (typeof value !== 'string') continue
+    const normalized = canonicalizeResourceTag(value)
+    if (normalized) aliases.add(normalized)
+  }
+  return Array.from(aliases)
+}
+
+export class CommandBus {
+  async execute<TInput = unknown, TResult = unknown>(
+    commandId: string,
+    options: CommandExecutionOptions<TInput>
+  ): Promise<CommandExecuteResult<TResult>> {
+    const handler = await this.resolveHandler<TInput, TResult>(commandId)
+
+    // Run beforeExecute command interceptors
+    const allInterceptors = getAllCommandInterceptorInstances()
+    let interceptorMetadata = new Map<string, Record<string, unknown>>()
+    let effectiveOptions = options
+    const userFeatures = allInterceptors.length
+      ? await this.resolveUserFeaturesForInterceptors(options.ctx)
+      : []
+    if (allInterceptors.length) {
+      const interceptorCtx: CommandInterceptorContext = {
+        commandId,
+        auth: options.ctx.auth ?? null,
+        selectedOrganizationId: options.ctx.selectedOrganizationId ?? options.ctx.auth?.orgId ?? null,
+        container: options.ctx.container,
+      }
+      const beforeResult = await runCommandInterceptorsBefore(
+        allInterceptors, commandId, options.input, interceptorCtx, userFeatures,
+      )
+      if (!beforeResult.ok) {
+        const blocked = beforeResult.error!
+        throw new CommandInterceptorError(blocked.message, { status: blocked.status, body: blocked.body })
+      }
+      interceptorMetadata = beforeResult.metadataByInterceptor
+      if (beforeResult.modifiedInput) {
+        effectiveOptions = {
+          ...options,
+          input: { ...(options.input as object), ...beforeResult.modifiedInput } as TInput,
+        }
+      }
+    }
+
+    const snapshots = await this.prepareSnapshots(handler, effectiveOptions)
+    const redoLogEntry = effectiveOptions.redoLogEntry ?? null
+    const result =
+      redoLogEntry && typeof handler.redo === 'function'
+        ? await handler.redo({ input: effectiveOptions.input, ctx: effectiveOptions.ctx, logEntry: redoLogEntry })
+        : await handler.execute(effectiveOptions.input, effectiveOptions.ctx)
+    const afterSnapshot = await this.captureAfter(handler, effectiveOptions, result)
+    const snapshotsWithAfter = { ...snapshots, after: afterSnapshot }
+    const logMeta = await this.buildLog(handler, effectiveOptions, result, snapshotsWithAfter)
+    let mergedMeta = this.mergeMetadata(effectiveOptions.metadata, logMeta)
+    // Interceptors opt into audit-log enrichment with a reserved `logContext` key rather
+    // than the generic `context` one, so the metadata an interceptor already passes to its
+    // own afterExecute hook is never silently promoted into audit storage.
+    // Map iteration order is interceptor priority order (see collectMatching), so a
+    // later-priority interceptor overrides an earlier one on key collisions.
+    let interceptorContextMerged: Record<string, unknown> = {}
+    for (const meta of interceptorMetadata.values()) {
+      const logContextRecord = asRecord(asRecord(meta)?.logContext)
+      if (!logContextRecord) continue
+      interceptorContextMerged = {
+        ...interceptorContextMerged,
+        ...logContextRecord,
+      }
+    }
+    const baseContext = asRecord(effectiveOptions.metadata?.context) ?? {}
+    const logMetaContext = asRecord(logMeta?.context) ?? {}
+    if (Object.keys(interceptorContextMerged).length > 0 || Object.keys(baseContext).length > 0 || Object.keys(logMetaContext).length > 0) {
+      mergedMeta = mergedMeta ?? {}
+      mergedMeta.context = {
+        ...baseContext,
+        ...interceptorContextMerged,
+        ...logMetaContext,
+      }
+    }
+    const undoable = this.isUndoable(handler)
+    if (undoable) {
+      mergedMeta = mergedMeta ?? {}
+      if (!mergedMeta.undoToken) mergedMeta.undoToken = defaultUndoToken()
+      if (mergedMeta.actorUserId === undefined) mergedMeta.actorUserId = effectiveOptions.ctx.auth?.sub ?? null
+    }
+    if (afterSnapshot !== undefined && afterSnapshot !== null) {
+      if (!mergedMeta) {
+        mergedMeta = { snapshotAfter: afterSnapshot }
+      } else if (!mergedMeta.snapshotAfter) {
+        mergedMeta.snapshotAfter = afterSnapshot
+      }
+    }
+    if (snapshots.before) {
+      if (!mergedMeta) {
+        mergedMeta = { snapshotBefore: snapshots.before }
+      } else if (!mergedMeta.snapshotBefore) {
+        mergedMeta.snapshotBefore = snapshots.before
+      }
+    }
+    if (mergedMeta?.snapshotBefore !== undefined && mergedMeta?.snapshotAfter !== undefined) {
+      const currentChanges = mergedMeta.changes
+      const shouldInfer =
+        currentChanges === undefined ||
+        currentChanges === null ||
+        (typeof currentChanges === 'object' && !Array.isArray(currentChanges) && Object.keys(currentChanges).length === 0)
+      if (shouldInfer) {
+        const inferred = deriveChangesFromSnapshots(mergedMeta.snapshotBefore, mergedMeta.snapshotAfter)
+        if (inferred) mergedMeta.changes = inferred
+      }
+    }
+    const logEntry = await this.persistLog(commandId, effectiveOptions, mergedMeta)
+
+    // Run afterExecute command interceptors
+    let finalResult = result
+    if (allInterceptors.length) {
+      const interceptorCtx: CommandInterceptorContext = {
+        commandId,
+        auth: effectiveOptions.ctx.auth ?? null,
+        selectedOrganizationId: effectiveOptions.ctx.selectedOrganizationId ?? effectiveOptions.ctx.auth?.orgId ?? null,
+        container: effectiveOptions.ctx.container,
+      }
+      const afterResult = await runCommandInterceptorsAfter(
+        allInterceptors, commandId, effectiveOptions.input, result, interceptorCtx,
+        userFeatures, interceptorMetadata,
+      )
+      if (afterResult.modifiedResult && typeof result === 'object' && result) {
+        finalResult = { ...(result as object), ...afterResult.modifiedResult } as Awaited<TResult>
+      }
+    }
+
+    if (!effectiveOptions.skipCacheInvalidation) {
+      await this.invalidateCacheAfterExecute(commandId, effectiveOptions, finalResult, mergedMeta)
+    }
+    // Bulk-import backfills defer heavy per-record side effects: the ctx flags are read here and
+    // threaded as a local into the flush (never stored on the shared dataEngine), so a concurrent
+    // command with different flags can't observe them. Reindex is restored by the caller's
+    // end-of-run `query_index rebuild`. Mirrors `skipCacheInvalidation` above.
+    await this.flushCrudSideEffects(effectiveOptions.ctx.container, effectiveOptions.ctx?.bulkImport)
+    return { result: finalResult, logEntry }
+  }
+
+  async undo(undoToken: string, ctx: CommandRuntimeContext): Promise<void> {
+    const service = (ctx.container.resolve('actionLogService') as ActionLogService)
+    const log = await service.findByUndoToken(undoToken)
+    if (!log) throw new Error('Undo token expired or not found')
+    const handler = await this.resolveHandler(log.commandId)
+    if (!handler.undo || this.isUndoable(handler) === false) {
+      throw new Error(`Command ${log.commandId} is not undoable`)
+    }
+
+    // Atomically claim the action-log row before running any undo side effects.
+    // Two concurrent requests holding the same undo token can both pass
+    // findByUndoToken/executionState checks; the compare-and-set below ensures
+    // only one transitions `done` -> `undoing` and proceeds, the other bails out.
+    const claimed = await service.claimForUndo(log.id)
+    if (!claimed) throw new Error('Undo token already consumed')
+
+    try {
+      // Run beforeUndo command interceptors
+      const allInterceptors = getAllCommandInterceptorInstances()
+      let undoInterceptorMetadata = new Map<string, Record<string, unknown>>()
+      const userFeatures = allInterceptors.length
+        ? await this.resolveUserFeaturesForInterceptors(ctx)
+        : []
+      if (allInterceptors.length) {
+        const undoCtx = { input: log.commandPayload, logEntry: log, undoToken }
+        const interceptorCtx: CommandInterceptorContext = {
+          commandId: log.commandId,
+          auth: ctx.auth ?? null,
+          selectedOrganizationId: ctx.selectedOrganizationId ?? ctx.auth?.orgId ?? null,
+          container: ctx.container,
+        }
+        const beforeResult = await runCommandInterceptorsBeforeUndo(
+          allInterceptors, log.commandId, undoCtx, interceptorCtx, userFeatures,
+        )
+        if (!beforeResult.ok) {
+          const blocked = beforeResult.error!
+          throw new CommandInterceptorError(blocked.message, { status: blocked.status, body: blocked.body })
+        }
+        undoInterceptorMetadata = beforeResult.metadataByInterceptor
+      }
+
+      await handler.undo({
+        input: log.commandPayload as Parameters<NonNullable<typeof handler.undo>>[0]['input'],
+        ctx,
+        logEntry: log,
+      })
+      await service.markUndone(log.id, this.buildUndoTraceLog(log, ctx))
+
+      // Run afterUndo command interceptors
+      if (allInterceptors.length) {
+        const undoCtx = { input: log.commandPayload, logEntry: log, undoToken }
+        const interceptorCtx: CommandInterceptorContext = {
+          commandId: log.commandId,
+          auth: ctx.auth ?? null,
+          selectedOrganizationId: ctx.selectedOrganizationId ?? ctx.auth?.orgId ?? null,
+          container: ctx.container,
+        }
+        await runCommandInterceptorsAfterUndo(
+          allInterceptors, log.commandId, undoCtx, interceptorCtx,
+          userFeatures, undoInterceptorMetadata,
+        )
+      }
+
+      await this.invalidateCacheAfterUndo(log, ctx)
+      await this.flushCrudSideEffects(ctx.container)
+    } catch (err) {
+      // Undo failed after claiming the row — release the claim so the action
+      // remains retryable instead of being stranded in the `undoing` state.
+      await service.releaseUndoClaim(log.id).catch(() => {})
+      throw err
+    }
+  }
+
+  private buildUndoTraceLog(log: ActionLog, ctx: CommandRuntimeContext): ActionLogCreateInput | undefined {
+    const snapshotBefore = log.snapshotAfter ?? null
+    const snapshotAfter = log.snapshotBefore ?? null
+    const changes =
+      deriveChangesFromSnapshots(snapshotBefore, snapshotAfter)
+      ?? invertRecordedChanges(log.changesJson)
+      ?? undefined
+
+    const baseContext = asRecord(log.contextJson) ?? {}
+    const context = {
+      ...baseContext,
+      historyAction: 'undo',
+      sourceLogId: log.id,
+      sourceCommandId: log.commandId,
+    }
+
+    return {
+      tenantId: log.tenantId ?? ctx.auth?.tenantId ?? null,
+      organizationId: log.organizationId ?? ctx.selectedOrganizationId ?? ctx.auth?.orgId ?? null,
+      actorUserId: ctx.auth?.sub ?? log.actorUserId ?? null,
+      commandId: log.commandId,
+      actionLabel: log.actionLabel ?? undefined,
+      resourceKind: log.resourceKind ?? undefined,
+      resourceId: log.resourceId ?? undefined,
+      parentResourceKind: log.parentResourceKind ?? null,
+      parentResourceId: log.parentResourceId ?? null,
+      relatedResourceKind: log.relatedResourceKind ?? null,
+      relatedResourceId: log.relatedResourceId ?? null,
+      snapshotBefore,
+      snapshotAfter,
+      changes,
+      context,
+    }
+  }
+
+  private async resolveUserFeaturesForInterceptors(ctx: CommandRuntimeContext): Promise<string[]> {
+    if (!ctx.auth) return []
+    try {
+      type RbacLike = { getGrantedFeatures: (userId: string, opts: { tenantId: string | null; organizationId: string | null }) => Promise<string[]> }
+      const rbac = ctx.container.resolve('rbacService') as RbacLike | undefined
+      if (rbac?.getGrantedFeatures) {
+        return await rbac.getGrantedFeatures(ctx.auth.sub, {
+          tenantId: ctx.auth.tenantId,
+          organizationId: ctx.selectedOrganizationId ?? ctx.auth.orgId,
+        })
+      }
+    } catch {
+      // Intentional: rbacService is not registered in all runtime contexts (CLI, tests, bootstrap).
+      // Falling through to return [] is safe — interceptors without feature gating still run.
+    }
+    return []
+  }
+
+  private async resolveHandler<TInput, TResult>(commandId: string): Promise<CommandHandler<TInput, TResult>> {
+    const handler =
+      commandRegistry.get<TInput, TResult>(commandId) ??
+      ((await commandRegistry.load(commandId)) as CommandHandler<TInput, TResult> | null)
+    if (!handler) {
+      const moduleName = commandId.split('.')[0]
+      const registered = commandRegistry.list()
+      const sameModule = registered.filter((id) => id.split('.')[0] === moduleName)
+      const registeredLoaders = commandRegistry.listLoaders()
+      const sameModuleLoaders = registeredLoaders.filter((id) => id === commandId || id.startsWith(`${moduleName}:`))
+      const hint = sameModule.length > 0
+        ? ` Registered commands for module "${moduleName}": [${sameModule.join(', ')}].`
+        : sameModuleLoaders.length > 0
+          ? ` Command loaders for module "${moduleName}" were registered but none loaded "${commandId}".`
+          : ` No commands or command loaders registered for module "${moduleName}". Ensure the command file is imported or generated lazy command loaders are registered.`
+      throw new Error(`Command handler not registered for id ${commandId}.${hint}`)
+    }
+    return handler
+  }
+
+  private async prepareSnapshots<TInput, TResult>(
+    handler: CommandHandler<TInput, TResult>,
+    options: CommandExecutionOptions<TInput>
+  ): Promise<{ before?: unknown }> {
+    if (!handler.prepare) return {}
+    try {
+      return (await handler.prepare(options.input, options.ctx)) || {}
+    } catch (err) {
+      throw err
+    }
+  }
+
+  private async captureAfter<TInput, TResult>(
+    handler: CommandHandler<TInput, TResult>,
+    options: CommandExecutionOptions<TInput>,
+    result: TResult
+  ): Promise<unknown> {
+    if (!handler.captureAfter) return undefined
+    return handler.captureAfter(options.input, result, options.ctx)
+  }
+
+  private async buildLog<TInput, TResult>(
+    handler: CommandHandler<TInput, TResult>,
+    options: CommandExecutionOptions<TInput>,
+    result: TResult,
+    snapshots: { before?: unknown; after?: unknown }
+  ): Promise<CommandLogMetadata | null> {
+    if (!handler.buildLog) return null
+    const args: CommandLogBuilderArgs<TInput, TResult> = {
+      input: options.input,
+      result,
+      ctx: options.ctx,
+      snapshots,
+    }
+    return (await handler.buildLog(args)) || null
+  }
+
+  private mergeMetadata(primary?: CommandLogMetadata | null, secondary?: CommandLogMetadata | null): CommandLogMetadata | null {
+    if (!primary && !secondary) return null
+    return {
+      skipLog: secondary?.skipLog ?? primary?.skipLog ?? false,
+      tenantId: secondary?.tenantId ?? primary?.tenantId ?? null,
+      organizationId: secondary?.organizationId ?? primary?.organizationId ?? null,
+      actorUserId: secondary?.actorUserId ?? primary?.actorUserId ?? null,
+      onBehalfOfUserId: secondary?.onBehalfOfUserId ?? primary?.onBehalfOfUserId ?? null,
+      actionLabel: secondary?.actionLabel ?? primary?.actionLabel ?? null,
+      resourceKind: secondary?.resourceKind ?? primary?.resourceKind ?? null,
+      resourceId: secondary?.resourceId ?? primary?.resourceId ?? null,
+      parentResourceKind: secondary?.parentResourceKind ?? primary?.parentResourceKind ?? null,
+      parentResourceId: secondary?.parentResourceId ?? primary?.parentResourceId ?? null,
+      relatedResourceKind: secondary?.relatedResourceKind ?? primary?.relatedResourceKind ?? null,
+      relatedResourceId: secondary?.relatedResourceId ?? primary?.relatedResourceId ?? null,
+      undoToken: secondary?.undoToken ?? primary?.undoToken ?? null,
+      payload: secondary?.payload ?? primary?.payload ?? null,
+      snapshotBefore: secondary?.snapshotBefore ?? primary?.snapshotBefore ?? null,
+      snapshotAfter: secondary?.snapshotAfter ?? primary?.snapshotAfter ?? null,
+      changes: secondary?.changes ?? primary?.changes ?? null,
+      context: secondary?.context ?? primary?.context ?? null,
+    }
+  }
+
+  private async persistLog<TInput>(
+    commandId: string,
+    options: CommandExecutionOptions<TInput>,
+    metadata: CommandLogMetadata | null
+  ): Promise<ActionLog | null> {
+    if (!metadata) return null
+    if (metadata.skipLog) return null
+    const resourceKind =
+      typeof metadata.resourceKind === 'string' ? metadata.resourceKind : null
+    if (resourceKind && SKIPPED_ACTION_LOG_RESOURCE_KINDS.has(resourceKind)) {
+      return null
+    }
+    let service: ActionLogService | null = null
+    try {
+      service = (options.ctx.container.resolve('actionLogService') as ActionLogService)
+    } catch {
+      service = null
+    }
+    if (!service) return null
+
+    const tenantId = metadata.tenantId ?? options.ctx.auth?.tenantId ?? null
+    const organizationId =
+      metadata.organizationId ?? options.ctx.selectedOrganizationId ?? options.ctx.auth?.orgId ?? null
+    // On-behalf-of attribution (Wave 4 P2): when `ctx.runAs` is set the actor is
+    // the agent principal and the human it acts for is recorded separately. This
+    // funnels agent writes through the SAME ActionLog path as a human's — only the
+    // attribution differs (actorUserId=agent, onBehalfOfUserId=human, source='agent').
+    const runAs = options.ctx.runAs ?? null
+    const actorUserId = runAs?.actorUserId ?? metadata.actorUserId ?? options.ctx.auth?.sub ?? null
+    const onBehalfOfUserId = runAs ? (runAs.onBehalfOfUserId ?? null) : (metadata.onBehalfOfUserId ?? null)
+    const systemActorContext = !actorUserId && options.ctx.systemActor === true
+      ? { systemActor: 'system:command' }
+      : null
+    const payload: Record<string, unknown> = {
+      tenantId: tenantId ?? undefined,
+      organizationId: organizationId ?? undefined,
+      actorUserId: actorUserId ?? undefined,
+      onBehalfOfUserId: onBehalfOfUserId ?? undefined,
+      commandId,
+    }
+
+    if (metadata) {
+      if ('actionLabel' in metadata && metadata.actionLabel != null) payload.actionLabel = metadata.actionLabel
+      if ('resourceKind' in metadata && metadata.resourceKind != null) payload.resourceKind = metadata.resourceKind
+      if ('resourceId' in metadata && metadata.resourceId != null) payload.resourceId = metadata.resourceId
+      if ('parentResourceKind' in metadata && metadata.parentResourceKind != null) payload.parentResourceKind = metadata.parentResourceKind
+      if ('parentResourceId' in metadata && metadata.parentResourceId != null) payload.parentResourceId = metadata.parentResourceId
+      if ('relatedResourceKind' in metadata && metadata.relatedResourceKind != null) payload.relatedResourceKind = metadata.relatedResourceKind
+      if ('relatedResourceId' in metadata && metadata.relatedResourceId != null) payload.relatedResourceId = metadata.relatedResourceId
+      if ('undoToken' in metadata && metadata.undoToken != null) payload.undoToken = metadata.undoToken
+      if ('payload' in metadata && metadata.payload !== undefined) payload.commandPayload = metadata.payload
+      if ('snapshotBefore' in metadata && metadata.snapshotBefore !== undefined) payload.snapshotBefore = metadata.snapshotBefore
+      if ('snapshotAfter' in metadata && metadata.snapshotAfter !== undefined) payload.snapshotAfter = metadata.snapshotAfter
+      if ('changes' in metadata && metadata.changes !== undefined && metadata.changes !== null) payload.changes = metadata.changes
+      if ('context' in metadata && metadata.context !== undefined && metadata.context !== null) {
+        payload.context = { ...(systemActorContext ?? {}), ...metadata.context }
+      } else if (systemActorContext) {
+        payload.context = systemActorContext
+      }
+    }
+
+    if (runAs) {
+      // Stamp the audit source so `deriveActionLogSource` projects `sourceKey='agent'`.
+      // Merge into any caller-provided context rather than replacing it.
+      const baseContext = asRecord(payload.context) ?? {}
+      payload.context = { ...baseContext, source: runAs.source }
+    }
+
+    const redoEnvelope = wrapRedoPayload('commandPayload' in payload ? (payload.commandPayload as unknown) : undefined, options.input)
+    payload.commandPayload = redoEnvelope
+
+    return await service.log(payload as ActionLogCreateInput)
+  }
+
+  private isUndoable(handler: CommandHandler<unknown, unknown>): boolean {
+    return handler.isUndoable !== false && typeof handler.undo === 'function'
+  }
+
+  private async invalidateCacheAfterExecute<TResult>(
+    commandId: string,
+    options: CommandExecutionOptions<unknown>,
+    result: TResult,
+    metadata: CommandLogMetadata | null
+  ): Promise<void> {
+    const resource = typeof metadata?.resourceKind === 'string' ? metadata.resourceKind : null
+    if (!resource) return
+    try {
+      const ctx = options.ctx
+      const resultRecord = asRecord(result)
+      const resultEntity = asRecord(resultRecord?.entity)
+      const inputRecord = asRecord(options.input)
+      const inputEntity = asRecord(inputRecord?.entity)
+
+      const recordId = pickFirstIdentifier(
+        metadata?.resourceId,
+        extractPrimaryIdFromCommandResult(result),
+        resultRecord?.entityId,
+        resultRecord?.id,
+        resultRecord?.recordId,
+        resultEntity?.id,
+        inputRecord?.id,
+        inputRecord?.entityId,
+        inputRecord?.recordId,
+        inputEntity?.id
+      )
+
+      const organizationId = pickFirstIdentifier(
+        metadata?.organizationId,
+        resultRecord?.organizationId,
+        resultEntity?.organizationId,
+        inputRecord?.organizationId,
+        inputEntity?.organizationId,
+        ctx.selectedOrganizationId ?? ctx.auth?.orgId ?? null
+      )
+
+      const tenantId = pickFirstIdentifier(
+        metadata?.tenantId,
+        resultRecord?.tenantId,
+        resultEntity?.tenantId,
+        inputRecord?.tenantId,
+        inputEntity?.tenantId,
+        ctx.auth?.tenantId ?? null
+      )
+
+      const fallbackTenant = pickFirstIdentifier(metadata?.tenantId, ctx.auth?.tenantId ?? null)
+
+      const aliasSet = new Set<string>()
+      for (const alias of extractAliasList(metadata?.context ?? null)) {
+        aliasSet.add(alias)
+      }
+      const derived = deriveResourceFromCommandId(commandId)
+      if (derived) aliasSet.add(derived)
+      const aliasExtras = Array.from(aliasSet)
+      await invalidateCrudCache(
+        ctx.container,
+        resource,
+        { id: recordId, organizationId, tenantId },
+        fallbackTenant,
+        `command:${commandId}:execute`,
+        aliasExtras
+      )
+    } catch (err) {
+      if (isCrudCacheDebugEnabled()) {
+        try {
+          logger.debug('Cache execute-invalidation failed', { commandId, err })
+        } catch {}
+      }
+    }
+  }
+
+  private async invalidateCacheAfterUndo(log: ActionLog, ctx: CommandRuntimeContext): Promise<void> {
+    const resource = typeof log.resourceKind === 'string' ? log.resourceKind : null
+    if (!resource) return
+    try {
+      const recordId = pickFirstIdentifier(log.resourceId)
+      const organizationId = pickFirstIdentifier(log.organizationId, ctx.selectedOrganizationId ?? ctx.auth?.orgId ?? null)
+      const tenantId = pickFirstIdentifier(log.tenantId, ctx.auth?.tenantId ?? null)
+      const fallbackTenant = pickFirstIdentifier(log.tenantId, ctx.auth?.tenantId ?? null)
+      const aliasSet = new Set<string>()
+      for (const alias of extractAliasList(log.contextJson ?? null)) {
+        aliasSet.add(alias)
+      }
+      const derived = deriveResourceFromCommandId(log.commandId)
+      if (derived) aliasSet.add(derived)
+      const aliasExtras = Array.from(aliasSet)
+      await invalidateCrudCache(
+        ctx.container,
+        resource,
+        { id: recordId, organizationId, tenantId },
+        fallbackTenant,
+        `command:${log.commandId}:undo`,
+        aliasExtras
+      )
+    } catch (err) {
+      if (isCrudCacheDebugEnabled()) {
+        try {
+          logger.debug('Cache undo-invalidation failed', { commandId: log.commandId, err })
+        } catch {}
+      }
+    }
+  }
+
+  private async flushCrudSideEffects(container: AwilixContainer, suppress?: BulkImportSuppression): Promise<void> {
+    try {
+      const dataEngine = (container.resolve('dataEngine') as DataEngine)
+      await dataEngine.flushOrmEntityChanges(suppress)
+    } catch (error) {
+      if (isReadProjectionAlwaysConsistent()) {
+        throw error
+      }
+      // best-effort: failures should not block command execution
+    }
+  }
+}
+
+type RedoEnvelope = {
+  __redoInput: unknown
+  [key: string]: unknown
+}
+
+function wrapRedoPayload(existing: unknown, input: unknown): RedoEnvelope {
+  if (!existing || typeof existing !== 'object' || Array.isArray(existing)) {
+    const envelope: RedoEnvelope = { __redoInput: input }
+    if (existing !== undefined) envelope.value = existing
+    return envelope
+  }
+  const current = existing as Record<string, unknown>
+  if ('__redoInput' in current && current.__redoInput !== undefined) {
+    return current as RedoEnvelope
+  }
+  return { __redoInput: input, ...current }
+}
