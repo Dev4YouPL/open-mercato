@@ -19,11 +19,15 @@ export const enabledModules: ModuleEntry[] = [
   { id: 'search', from: '@open-mercato/search' },
   { id: 'attachments', from: '@open-mercato/core' },
   { id: 'customers', from: '@open-mercato/core' },
+  { id: 'supplier_examples', from: '@app' },
   { id: 'messages', from: '@open-mercato/core' },
   { id: 'dictionaries', from: '@open-mercato/core' },
   { id: 'feature_toggles', from: '@open-mercato/core' },
   { id: 'currencies', from: '@open-mercato/core' },
+  { id: 'integrations', from: '@open-mercato/core' },
   { id: 'communication_channels', from: '@open-mercato/core' },
+  { id: 'channel_imap', from: '@open-mercato/channel-imap' },
+  { id: 'mailbox_seed', from: '@app' },
   { id: 'ai_assistant', from: '@open-mercato/ai-assistant' },
 ]
 
