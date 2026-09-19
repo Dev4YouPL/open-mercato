@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from 'react'
+import Link from 'next/link'
 import type { LegacyColumnDef as ColumnDef } from '@tanstack/react-table/legacy'
 import type { SortingState } from '@tanstack/react-table'
 import { useQuery } from '@tanstack/react-query'
@@ -26,6 +27,8 @@ type SupplyCaseRow = {
   statusReason: string | null
   originalCommitment: Commitment[]
   currentCommitment: Commitment[]
+  acceptedCommitment: Commitment[]
+  cancelledCommitment: Commitment[]
   updatedAt: string | null
 }
 
@@ -36,6 +39,11 @@ const statusVariants: Record<string, StatusBadgeVariant> = {
   proposal_ready: 'info',
   proposal_queued: 'info',
   proposal_delivered: 'success',
+  reply_received: 'info',
+  commitment_updated: 'info',
+  confirmation_queued: 'info',
+  resolved: 'success',
+  needs_human: 'warning',
   escalated: 'warning',
   blocked_recipient: 'warning',
   send_failed: 'error',
@@ -48,6 +56,15 @@ function formatCommitment(value: Commitment[], locale: string, t: (key: string, 
       date: new Intl.DateTimeFormat(locale, { weekday: 'short', month: 'short', day: 'numeric' }).format(new Date(entry.date)),
     }))
     .join(', ')
+}
+
+function formatProposed(row: SupplyCaseRow, locale: string, t: (key: string, params?: Record<string, string | number>) => string): string {
+  if (row.acceptedCommitment.length || row.cancelledCommitment.length) {
+    const accepted = formatCommitment(row.acceptedCommitment, locale, t) || t('supplier_demo.supplyCases.table.none')
+    const cancelled = formatCommitment(row.cancelledCommitment, locale, t) || t('supplier_demo.supplyCases.table.none')
+    return `${t('supplier_demo.supplyCases.table.accepted')}: ${accepted}; ${t('supplier_demo.supplyCases.table.cancelled')}: ${cancelled}`
+  }
+  return formatCommitment(row.currentCommitment, locale, t) || t('supplier_demo.supplyCases.table.noCommitment')
 }
 
 function isListError(error: unknown): error is ListError {
@@ -79,7 +96,7 @@ export default function SupplyCasesTable() {
   })
 
   const columns = React.useMemo<ColumnDef<SupplyCaseRow>[]>(() => [
-    { accessorKey: 'orderNumber', header: t('supplier_demo.supplyCases.table.order'), meta: { priority: 1 } },
+    { accessorKey: 'orderNumber', header: t('supplier_demo.supplyCases.table.order'), meta: { priority: 1 }, cell: ({ row }) => <Link className="underline" href={`/backend/supplier-demo/supply-cases/${encodeURIComponent(row.original.id)}`}>{row.original.orderNumber}</Link> },
     { accessorKey: 'sku', header: t('supplier_demo.supplyCases.table.sku'), meta: { priority: 2 } },
     { accessorKey: 'customerDisplayName', header: t('supplier_demo.supplyCases.table.customer'), meta: { priority: 5 } },
     {
@@ -103,7 +120,7 @@ export default function SupplyCasesTable() {
       header: t('supplier_demo.supplyCases.table.proposed'),
       enableSorting: false,
       meta: { priority: 4 },
-      cell: ({ getValue }) => <span>{formatCommitment(Array.isArray(getValue()) ? getValue() as Commitment[] : [], locale, t) || t('supplier_demo.supplyCases.table.noCommitment')}</span>,
+      cell: ({ row }) => <span>{formatProposed(row.original, locale, t)}</span>,
     },
     {
       accessorKey: 'statusReason',
@@ -170,7 +187,7 @@ export default function SupplyCasesTable() {
         label: t('supplier_demo.supplyCases.filters.status'),
         type: 'select',
         options: [
-          'detected', 'proposal_ready', 'proposal_queued', 'proposal_delivered', 'escalated', 'blocked_recipient', 'send_failed',
+          'detected', 'proposal_ready', 'proposal_queued', 'proposal_delivered', 'reply_received', 'commitment_updated', 'confirmation_queued', 'resolved', 'needs_human', 'escalated', 'blocked_recipient', 'send_failed',
         ].map((value) => ({ value, label: t(`supplier_demo.supplyCases.status.${value}`) })),
       }]}
       filterValues={{ status }}

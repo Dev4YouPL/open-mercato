@@ -27,6 +27,7 @@ export const enabledModules: ModuleEntry[] = [
   { id: 'currencies', from: '@open-mercato/core' },
   { id: 'messages', from: '@open-mercato/core' },
   { id: 'integrations', from: '@open-mercato/core' },
+  { id: 'scheduler', from: '@open-mercato/scheduler' },
   { id: 'communication_channels', from: '@open-mercato/core' },
   { id: 'channel_imap', from: '@open-mercato/channel-imap' },
   { id: 'supplier_demo', from: '@app' },

@@ -10,6 +10,26 @@ export const reportDisruptionBodySchema = z.object({
 export const reportDisruptionResponseSchema = z.object({ caseId: z.string().uuid(), status: z.string() })
 const errorSchema = z.object({ error: z.string(), code: z.string().optional() })
 
+export const pollNowResponseSchema = z.object({ queued: z.literal(true), requestedAt: z.string() })
+
+export const pollNowOpenApi: OpenApiRouteDoc = {
+  tag: 'Supplier Demo',
+  summary: 'Poll the Supplier mailbox now',
+  methods: {
+    POST: {
+      summary: 'Queue an immediate poll of the configured Supplier mailbox',
+      responses: [{ status: 202, description: 'Poll queued', schema: pollNowResponseSchema }],
+      errors: [
+        { status: 400, description: 'Organization scope required', schema: errorSchema },
+        { status: 401, description: 'Authentication required', schema: errorSchema },
+        { status: 403, description: 'Manage permission required', schema: errorSchema },
+        { status: 409, description: 'Mailbox cannot be polled (disconnected, requires reauth, disabled or push-driven)', schema: errorSchema },
+        { status: 503, description: 'Mailbox is not configured', schema: errorSchema },
+      ],
+    } satisfies OpenApiMethodDoc,
+  },
+}
+
 export const retryOpenApi: OpenApiRouteDoc = {
   tag: 'Supplier Demo',
   summary: 'Retry a failed supply case proposal',

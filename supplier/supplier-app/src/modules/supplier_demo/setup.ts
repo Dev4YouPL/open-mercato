@@ -28,6 +28,7 @@ const DEMO_WAREHOUSE_NAME = 'Supplier Demo Warehouse'
 const DEMO_LOCATION_CODE = 'STOCK'
 const SYSTEM_ACTOR_ID = '9f6eb96f-b5a1-4df0-9608-1d46426ecf63'
 const AUTO_SUPPLY_PROPOSAL_TOGGLE = 'supplier_demo_auto_supply_proposal'
+const AUTO_SUPPLY_REPLY_TOGGLE = 'supplier_demo_auto_supply_reply'
 
 type SeedScope = {
   tenantId: string
@@ -107,6 +108,27 @@ export async function ensureAutoSupplyProposalToggle(em: EntityManager): Promise
     identifier: AUTO_SUPPLY_PROPOSAL_TOGGLE,
     name: 'Supplier Demo automatic supply proposal',
     description: 'Enables automatic supply case proposal e-mails for the supplier demo.',
+    category: 'supplier_demo',
+    type: 'boolean',
+    defaultValue: true,
+  }))
+  await em.flush()
+}
+
+export async function ensureAutoSupplyReplyToggle(em: EntityManager): Promise<void> {
+  const existing = await em.findOne(FeatureToggle, { identifier: AUTO_SUPPLY_REPLY_TOGGLE })
+  if (existing) {
+    if (existing.deletedAt) {
+      existing.deletedAt = null
+      existing.updatedAt = new Date()
+      await em.flush()
+    }
+    return
+  }
+  em.persist(em.create(FeatureToggle, {
+    identifier: AUTO_SUPPLY_REPLY_TOGGLE,
+    name: 'Supplier Demo automatic supply reply',
+    description: 'Enables automatic acceptance application and commitment confirmations for the supplier demo.',
     category: 'supplier_demo',
     type: 'boolean',
     defaultValue: true,
@@ -562,10 +584,12 @@ export const setup: ModuleSetupConfig = {
 
   async seedDefaults({ em }) {
     await ensureAutoSupplyProposalToggle(em)
+    await ensureAutoSupplyReplyToggle(em)
   },
 
   async seedExamples({ em, container, tenantId, organizationId }) {
     await ensureAutoSupplyProposalToggle(em)
+    await ensureAutoSupplyReplyToggle(em)
     await ensureSupplierDemoEncryptionMaps(em, tenantId, organizationId)
     const scope = { tenantId, organizationId }
     const commandBus = container.resolve('commandBus') as CommandBus

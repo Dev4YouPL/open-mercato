@@ -7,7 +7,7 @@ export const defaultEncryptionMaps: ModuleEncryptionMap[] = [
   },
   {
     entityId: 'supplier_demo:supply_message',
-    fields: [{ field: 'recipient_email' }, { field: 'sender_email' }],
+    fields: [{ field: 'recipient_email' }, { field: 'sender_email' }, { field: 'body_excerpt' }],
   },
 ]
 

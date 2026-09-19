@@ -8,6 +8,11 @@ export type SupplyCaseStatus =
   | 'escalated'
   | 'blocked_recipient'
   | 'send_failed'
+  | 'reply_received'
+  | 'commitment_updated'
+  | 'confirmation_queued'
+  | 'resolved'
+  | 'needs_human'
 
 export type SupplyMessageDeliveryStatus =
   | 'pending'
@@ -21,6 +26,8 @@ export type SupplyCommitment = {
   quantity: number
   date: string
 }
+
+export type FreedCapacity = { date: string; quantity: number }
 
 export type SupplierProductionAllocation = {
   orderNumber: string
@@ -116,6 +123,24 @@ export class SupplyCase {
   @Property({ name: 'negotiation_turn', type: 'integer', default: 0 })
   negotiationTurn = 0
 
+  @Property({ name: 'accepted_commitment', type: 'json', nullable: true })
+  acceptedCommitment?: SupplyCommitment[] | null
+
+  @Property({ name: 'cancelled_commitment', type: 'json', nullable: true })
+  cancelledCommitment?: SupplyCommitment[] | null
+
+  @Property({ name: 'freed_capacity', type: 'json', nullable: true })
+  freedCapacity?: FreedCapacity[] | null
+
+  @Property({ name: 'reply_received_at', type: Date, nullable: true })
+  replyReceivedAt?: Date | null
+
+  @Property({ name: 'commitment_updated_at', type: Date, nullable: true })
+  commitmentUpdatedAt?: Date | null
+
+  @Property({ name: 'resolved_at', type: Date, nullable: true })
+  resolvedAt?: Date | null
+
   @Property({ name: 'created_at', type: Date, onCreate: () => new Date() })
   createdAt: Date = new Date()
 
@@ -129,6 +154,8 @@ export class SupplyCase {
 @Entity({ tableName: 'supplier_demo_supply_messages' })
 @Index({ name: 'supplier_demo_supply_messages_case_idx', properties: ['tenantId', 'organizationId', 'supplyCaseId'] })
 @Index({ name: 'supplier_demo_supply_messages_comm_message_idx', properties: ['tenantId', 'organizationId', 'commMessageId'] })
+@Index({ name: 'supplier_demo_supply_messages_case_direction_idx', properties: ['tenantId', 'organizationId', 'supplyCaseId', 'direction'] })
+@Index({ name: 'supplier_demo_supply_messages_hub_link_uq', expression: 'create unique index "supplier_demo_supply_messages_hub_link_uq" on "supplier_demo_supply_messages" ("tenant_id", "organization_id", "hub_channel_link_id") where "hub_channel_link_id" is not null and "deleted_at" is null' })
 @Index({
   name: 'supplier_demo_supply_messages_business_id_uq',
   expression:
@@ -151,10 +178,52 @@ export class SupplyMessage {
   businessMessageId!: string
 
   @Property({ type: 'text', default: 'outbound' })
-  direction: 'outbound' = 'outbound'
+  direction: 'outbound' | 'inbound' = 'outbound'
 
-  @Property({ name: 'message_type', type: 'text', default: 'SUPPLY_PROPOSAL' })
-  messageType: 'SUPPLY_PROPOSAL' = 'SUPPLY_PROPOSAL'
+  @Property({ name: 'message_type', type: 'text', default: 'SUPPLY_PROPOSAL', nullable: true })
+  messageType?: 'SUPPLY_PROPOSAL' | 'SUPPLY_ACCEPTANCE' | 'SUPPLY_COUNTER_PROPOSAL' | 'SUPPLY_REJECTION' | 'SUPPLY_COMMITMENT_CONFIRMED' | null = 'SUPPLY_PROPOSAL'
+
+  @Property({ name: 'validation_status', type: 'text', nullable: true })
+  validationStatus?: string | null
+
+  @Property({ name: 'validation_reason', type: 'text', nullable: true })
+  validationReason?: string | null
+
+  @Property({ name: 'envelope_message_id', type: 'text', nullable: true })
+  envelopeMessageId?: string | null
+
+  @Property({ name: 'hub_channel_link_id', type: 'uuid', nullable: true })
+  hubChannelLinkId?: string | null
+
+  @Property({ name: 'hub_external_message_id', type: 'uuid', nullable: true })
+  hubExternalMessageId?: string | null
+
+  @Property({ name: 'hub_message_id', type: 'uuid', nullable: true })
+  hubMessageId?: string | null
+
+  @Property({ name: 'rfc_message_id', type: 'text', nullable: true })
+  rfcMessageId?: string | null
+
+  @Property({ name: 'in_reply_to_business_id', type: 'text', nullable: true })
+  inReplyToBusinessId?: string | null
+
+  @Property({ name: 'received_at', type: Date, nullable: true })
+  receivedAt?: Date | null
+
+  @Property({ name: 'queued_at', type: Date, nullable: true })
+  queuedAt?: Date | null
+
+  @Property({ name: 'delivered_at', type: Date, nullable: true })
+  deliveredAt?: Date | null
+
+  @Property({ name: 'applied_at', type: Date, nullable: true })
+  appliedAt?: Date | null
+
+  @Property({ name: 'duplicate_count', type: 'integer', default: 0 })
+  duplicateCount = 0
+
+  @Property({ name: 'body_excerpt', type: 'text', nullable: true })
+  bodyExcerpt?: string | null
 
   @Property({ name: 'sender_email', type: 'text', nullable: true })
   senderEmail?: string | null

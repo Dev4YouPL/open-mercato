@@ -6,7 +6,7 @@ import { createCrudOpenApiFactory, createPagedListResponseSchema } from '@open-m
 import { SupplyCase, type SupplyCaseStatus } from '../../data/entities'
 
 const ENTITY_ID = 'supplier_demo:supply_case' as const
-const statuses = ['detected', 'proposal_ready', 'proposal_queued', 'proposal_delivered', 'escalated', 'blocked_recipient', 'send_failed'] as const
+const statuses = ['detected', 'proposal_ready', 'proposal_queued', 'proposal_delivered', 'reply_received', 'commitment_updated', 'confirmation_queued', 'resolved', 'needs_human', 'escalated', 'blocked_recipient', 'send_failed'] as const
 
 export const supplyCaseListQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
@@ -31,6 +31,8 @@ const listFields = [
   'original_commitment',
   'baseline_commitment',
   'current_commitment',
+  'accepted_commitment',
+  'cancelled_commitment',
   'created_at',
   'updated_at',
 ]
@@ -105,6 +107,8 @@ export const { metadata, GET } = makeCrudRoute({
       originalCommitment: commitment(item.original_commitment),
       baselineCommitment: commitment(item.baseline_commitment),
       currentCommitment: commitment(item.current_commitment),
+      acceptedCommitment: commitment(item.accepted_commitment),
+      cancelledCommitment: commitment(item.cancelled_commitment),
       createdAt: isoDate(item.created_at),
       updatedAt: isoDate(item.updated_at),
     }),
@@ -124,6 +128,8 @@ export const supplyCaseListItemSchema = z.object({
   originalCommitment: z.array(z.object({ quantity: z.number(), date: z.string() })),
   baselineCommitment: z.array(z.object({ quantity: z.number(), date: z.string() })),
   currentCommitment: z.array(z.object({ quantity: z.number(), date: z.string() })),
+  acceptedCommitment: z.array(z.object({ quantity: z.number(), date: z.string() })),
+  cancelledCommitment: z.array(z.object({ quantity: z.number(), date: z.string() })),
   createdAt: z.string().nullable(),
   updatedAt: z.string().nullable(),
 })

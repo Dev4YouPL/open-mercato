@@ -4,7 +4,7 @@ import type { CommandHandler, CommandRuntimeContext } from '@open-mercato/shared
 import { registerCommand } from '@open-mercato/shared/lib/commands'
 import { extractUndoPayload } from '@open-mercato/shared/lib/commands/undo'
 import { conflict, notFound, badRequest, CrudHttpError, isUniqueViolation } from '@open-mercato/shared/lib/crud/errors'
-import { findOneWithDecryption } from '@open-mercato/shared/lib/encryption/find'
+import { findOneWithDecryption, findWithDecryption } from '@open-mercato/shared/lib/encryption/find'
 import type { QueryEngine } from '@open-mercato/shared/lib/query/types'
 import { E } from '#generated/entities.ids.generated'
 import { SalesOrder } from '@open-mercato/core/modules/sales/data/entities'
@@ -19,11 +19,11 @@ import {
 } from '../data/entities'
 import { emitSupplierDemoEvent } from '../events'
 import { resolveMailboxActor, sendSupplyMail, SupplierDemoMailboxError } from '../lib/mailbox'
-import { composeSupplyProposal } from '../lib/compose'
+import { composeCommitmentConfirmation, composeSupplyProposal } from '../lib/compose'
 import { planBaselineCommitment, replan, type ReplanMovedAllocation } from '../lib/planner'
 import { evaluate } from '../lib/policy'
 import { resolveSupplyRecipient } from '../lib/recipient'
-import { isAutoSupplyProposalEnabled } from '../lib/toggles'
+import { isAutoSupplyProposalEnabled, isAutoSupplyReplyEnabled } from '../lib/toggles'
 
 type Scope = { tenantId: string; organizationId: string }
 
@@ -400,6 +400,7 @@ const openSupplyCase: CommandHandler<Record<string, unknown>, { caseId: string; 
         deliveryStatus: 'pending',
         direction: 'outbound',
         messageType: 'SUPPLY_PROPOSAL',
+        duplicateCount: 0,
         attempts: 0,
         createdAt: new Date(),
         updatedAt: new Date(),
@@ -455,10 +456,19 @@ const sendSupplyMessage: CommandHandler<Record<string, unknown>, { deliveryStatu
     if (!message) throw notFound('Supply message not found')
     const supplyCase = await findOneWithDecryption(em, SupplyCase, { id: message.supplyCaseId, ...scope, deletedAt: null }, undefined, scope)
     if (!supplyCase) throw notFound('Supply case not found')
-    if (supplyCase.status !== 'proposal_ready' || message.deliveryStatus !== 'pending') {
+    const isProposal = message.messageType === 'SUPPLY_PROPOSAL'
+    const isConfirmation = message.messageType === 'SUPPLY_COMMITMENT_CONFIRMED'
+    const expectedCaseStatus = isProposal ? 'proposal_ready' : 'commitment_updated'
+    if ((!isProposal && !isConfirmation) || supplyCase.status !== expectedCaseStatus || message.deliveryStatus !== 'pending') {
       return { deliveryStatus: message.deliveryStatus, caseStatus: supplyCase.status }
     }
-    if (!(await isAutoSupplyProposalEnabled(ctx.container, scope.tenantId))) {
+    if (!(await (isProposal ? isAutoSupplyProposalEnabled(ctx.container, scope.tenantId) : isAutoSupplyReplyEnabled(ctx.container, scope.tenantId)))) {
+      if (isConfirmation) {
+        supplyCase.status = 'needs_human'
+        supplyCase.statusReason = 'auto_reply_disabled_send'
+        await em.flush()
+        await emitAfterCommit('supplier_demo.supply_case.attention_required', scopePayload(scope, { caseId: supplyCase.id, status: supplyCase.status, reason: supplyCase.statusReason }))
+      }
       return { deliveryStatus: message.deliveryStatus, caseStatus: supplyCase.status }
     }
     const recipient = message.recipientEmail
@@ -491,16 +501,34 @@ const sendSupplyMessage: CommandHandler<Record<string, unknown>, { deliveryStatu
     message.lastError = null
     await em.flush()
 
-    const composed = composeSupplyProposal({
-      messageId: message.businessMessageId,
-      correlationId: supplyCase.correlationId,
-      orderNumber: supplyCase.orderNumber,
-      sku: supplyCase.sku,
-      sender: asString(mailboxActor.fromAddress) ?? senderAddress(),
-      recipient: allowlistResult.email,
-      commitments: supplyCase.currentCommitment,
-    })
+    const composed = isProposal
+      ? composeSupplyProposal({
+        messageId: message.businessMessageId,
+        correlationId: supplyCase.correlationId,
+        orderNumber: supplyCase.orderNumber,
+        sku: supplyCase.sku,
+        sender: asString(mailboxActor.fromAddress) ?? senderAddress(),
+        recipient: allowlistResult.email,
+        commitments: supplyCase.currentCommitment,
+      })
+      : composeCommitmentConfirmation({
+        messageId: message.businessMessageId,
+        correlationId: supplyCase.correlationId,
+        orderNumber: supplyCase.orderNumber,
+        sku: supplyCase.sku,
+        sender: asString(mailboxActor.fromAddress) ?? senderAddress(),
+        recipient: allowlistResult.email,
+        inReplyToMessageId: message.inReplyToBusinessId ?? '',
+        confirmedCommitments: supplyCase.acceptedCommitment ?? [],
+        cancelledCommitments: supplyCase.cancelledCommitment ?? [],
+      })
+    const acceptance = isConfirmation && message.inReplyToBusinessId
+      ? await findOneWithDecryption(em, SupplyMessage, { ...scope, supplyCaseId: supplyCase.id, businessMessageId: message.inReplyToBusinessId, direction: 'inbound', deletedAt: null }, undefined, scope)
+      : null
     message.senderEmail = (asString(mailboxActor.fromAddress) ?? senderAddress()) || null
+    message.subject = composed.subject
+    message.envelopePayload = composed.storedEnvelope
+    message.bodyExcerpt = composed.plain.split('\n\n')[0]?.slice(0, 8000) ?? null
     let result: Awaited<ReturnType<typeof sendSupplyMail>>
     try {
       result = await sendSupplyMail(ctx.container, {
@@ -508,11 +536,14 @@ const sendSupplyMessage: CommandHandler<Record<string, unknown>, { deliveryStatu
         subject: composed.subject,
         body: composed.plain,
         html: composed.html,
+        inReplyTo: acceptance?.rfcMessageId ?? undefined,
+        references: acceptance?.rfcMessageId ? [acceptance.rfcMessageId] : undefined,
+        parentMessageId: acceptance?.hubMessageId ?? undefined,
         channelMetadata: {
-          supplierDemoBusinessMessageId: message.businessMessageId,
-          supplierDemoCaseId: supplyCase.id,
-          correlationId: supplyCase.correlationId,
-        },
+        supplierDemoBusinessMessageId: message.businessMessageId,
+        supplierDemoCaseId: supplyCase.id,
+        correlationId: supplyCase.correlationId,
+      },
       }, { actor: mailboxActor })
     } catch (error) {
       const reason = error instanceof SupplierDemoMailboxError ? error.code : 'mailbox_send_failed'
@@ -528,9 +559,10 @@ const sendSupplyMessage: CommandHandler<Record<string, unknown>, { deliveryStatu
     message.commMessageId = result.messageId
     message.commThreadId = result.threadId
     message.commChannelId = result.channelId
-    supplyCase.status = 'proposal_queued'
+    message.queuedAt = new Date()
+    supplyCase.status = isProposal ? 'proposal_queued' : 'confirmation_queued'
     await em.flush()
-    await emitAfterCommit('supplier_demo.supply_case.proposal_queued', scopePayload(scope, { caseId: supplyCase.id, supplyMessageId: message.id, commMessageId: result.messageId }))
+    await emitAfterCommit(isProposal ? 'supplier_demo.supply_case.proposal_queued' : 'supplier_demo.supply_case.confirmation_queued', scopePayload(scope, { caseId: supplyCase.id, supplyMessageId: message.id, commMessageId: result.messageId }))
     return { deliveryStatus: message.deliveryStatus, caseStatus: supplyCase.status }
   },
 }
@@ -554,21 +586,35 @@ const trackSupplyDelivery: CommandHandler<Record<string, unknown>, { matched: bo
       await em.flush()
       return { matched: true, deliveryStatus: message.deliveryStatus }
     }
+    const confirmation = message.messageType === 'SUPPLY_COMMITMENT_CONFIRMED'
+    // The case only moves while it is still waiting for this message's delivery. A late or replayed hub event
+    // (for example the proposal's .sent arriving after the acceptance) must never regress a case that moved on.
+    const awaitingThisDelivery = supplyCase.status === (confirmation ? 'confirmation_queued' : 'proposal_queued')
     const failed = input.status === 'failed' || input.status === 'delivery_failed' || Boolean(input.error)
     if (failed) {
       message.deliveryStatus = 'delivery_failed'
       message.lastError = asString(input.error)
-      supplyCase.status = 'send_failed'
-      supplyCase.statusReason = 'delivery_failed'
+      if (awaitingThisDelivery) {
+        supplyCase.status = 'send_failed'
+        supplyCase.statusReason = 'delivery_failed'
+      }
       await em.flush()
-      await emitAfterCommit('supplier_demo.supply_case.attention_required', scopePayload(scope, { caseId: supplyCase.id, status: supplyCase.status, reason: 'delivery_failed' }))
+      if (awaitingThisDelivery) {
+        await emitAfterCommit('supplier_demo.supply_case.attention_required', scopePayload(scope, { caseId: supplyCase.id, status: supplyCase.status, reason: 'delivery_failed' }))
+      }
       return { matched: true, deliveryStatus: message.deliveryStatus }
     }
     message.deliveryStatus = 'delivered'
     message.lastError = null
-    supplyCase.status = 'proposal_delivered'
+    message.deliveredAt ??= new Date()
+    if (awaitingThisDelivery) {
+      supplyCase.status = confirmation ? 'resolved' : 'proposal_delivered'
+      if (confirmation) supplyCase.resolvedAt = new Date()
+    }
     await em.flush()
-    await emitAfterCommit('supplier_demo.supply_case.proposal_delivered', scopePayload(scope, { caseId: supplyCase.id, supplyMessageId: message.id }))
+    if (awaitingThisDelivery) {
+      await emitAfterCommit(confirmation ? 'supplier_demo.supply_case.resolved' : 'supplier_demo.supply_case.proposal_delivered', scopePayload(scope, { caseId: supplyCase.id, supplyMessageId: message.id }))
+    }
     return { matched: true, deliveryStatus: message.deliveryStatus }
   },
 }
@@ -585,7 +631,15 @@ const retrySupplyCase: CommandHandler<Record<string, unknown>, { caseId: string;
     const supplyCase = await findOneWithDecryption(em, SupplyCase, { id: caseId, ...scope, deletedAt: null }, undefined, scope)
     if (!supplyCase) throw notFound('Supply case not found')
     if (supplyCase.updatedAt.getTime() !== expectedUpdatedAt.getTime()) throw conflict('Supply case was changed by another user')
-    const message = await findOneWithDecryption(em, SupplyMessage, { supplyCaseId: caseId, ...scope, deletedAt: null }, undefined, scope)
+    if (supplyCase.status === 'reply_received') {
+      // Recovers a lost reply_received event: re-drive the newest valid acceptance that was not applied yet.
+      const acceptance = (await findWithDecryption(em, SupplyMessage, { supplyCaseId: caseId, ...scope, direction: 'inbound', messageType: 'SUPPLY_ACCEPTANCE', validationStatus: 'valid', appliedAt: null, deletedAt: null }, { orderBy: { createdAt: 'desc' } }, scope))[0]
+      if (!acceptance) throw new CrudHttpError(422, { error: 'Supply case is not retryable', code: 'not_retryable' })
+      await emitAfterCommit('supplier_demo.supply_case.reply_received', scopePayload(scope, { caseId: supplyCase.id, supplyMessageId: acceptance.id }))
+      return { caseId: supplyCase.id, status: supplyCase.status }
+    }
+    const messages = await findWithDecryption(em, SupplyMessage, { supplyCaseId: caseId, ...scope, direction: 'outbound', messageType: { $in: ['SUPPLY_PROPOSAL', 'SUPPLY_COMMITMENT_CONFIRMED'] }, deletedAt: null }, { orderBy: { createdAt: 'desc' } }, scope)
+    const message = messages.find((candidate) => ['pending', 'sending', 'enqueue_failed', 'delivery_failed'].includes(candidate.deliveryStatus)) ?? messages[0]
     if (!message) throw notFound('Supply message not found')
     if (!['blocked_recipient', 'send_failed'].includes(supplyCase.status)) {
       throw new CrudHttpError(422, { error: 'Supply case is not retryable', code: 'not_retryable' })
@@ -596,7 +650,7 @@ const retrySupplyCase: CommandHandler<Record<string, unknown>, { caseId: string;
       if (link) {
         message.deliveryStatus = 'queued_in_hub'
         message.commMessageId = link.messageId
-        supplyCase.status = 'proposal_queued'
+        supplyCase.status = message.messageType === 'SUPPLY_COMMITMENT_CONFIRMED' ? 'confirmation_queued' : 'proposal_queued'
         await em.flush()
         return { caseId: supplyCase.id, status: supplyCase.status }
       }
@@ -617,10 +671,11 @@ const retrySupplyCase: CommandHandler<Record<string, unknown>, { caseId: string;
     }
     message.deliveryStatus = 'pending'
     message.lastError = null
-    supplyCase.status = 'proposal_ready'
+    const confirmation = message.messageType === 'SUPPLY_COMMITMENT_CONFIRMED'
+    supplyCase.status = confirmation ? 'commitment_updated' : 'proposal_ready'
     supplyCase.statusReason = null
     await em.flush()
-    await emitAfterCommit('supplier_demo.supply_case.proposal_ready', scopePayload(scope, { caseId: supplyCase.id, supplyMessageId: message.id, correlationId: supplyCase.correlationId }))
+    await emitAfterCommit(confirmation ? 'supplier_demo.supply_case.commitment_updated' : 'supplier_demo.supply_case.proposal_ready', scopePayload(scope, { caseId: supplyCase.id, supplyMessageId: message.id, confirmationMessageId: confirmation ? message.id : undefined, correlationId: supplyCase.correlationId }))
     return { caseId: supplyCase.id, status: supplyCase.status }
   },
 }
