@@ -26,8 +26,10 @@ import ingestInboundMessageCommand, {
 } from '../ingest-inbound-message'
 import { findOneWithDecryption } from '@open-mercato/shared/lib/encryption/find'
 import { composeMessageSchema } from '../../../messages/data/validators'
+import { resolveContact } from '../../lib/contact-resolver'
 
 const mockIngestFindOne = findOneWithDecryption as jest.MockedFunction<typeof findOneWithDecryption>
+const mockResolveContact = resolveContact as jest.MockedFunction<typeof resolveContact>
 
 describe('ingestInboundMessageCommand metadata', () => {
   it('exports the canonical command id', () => {
@@ -487,6 +489,46 @@ describe('ingestInboundMessageCommand — non-email sender identity (#4975)', ()
     expect(
       parsed.error?.issues.some((issue) => issue.path[0] === 'externalEmail'),
     ).toBe(true)
+  })
+
+  it('routes an assigned inbound message to its owner without enabling outbound delivery', async () => {
+    mockIngestFindOne.mockReset()
+    mockIngestFindOne
+      .mockResolvedValueOnce(null as never)
+      .mockResolvedValueOnce({
+        id: 'ch-1',
+        isActive: true,
+        providerKey: 'imap',
+        channelType: 'email',
+        userId: 'u-1',
+      } as never)
+      .mockResolvedValueOnce(null as never)
+      .mockResolvedValueOnce({ assignedUserId: '550e8400-e29b-41d4-a716-446655440051' } as never)
+      .mockResolvedValue(null as never)
+    mockResolveContact.mockResolvedValueOnce({
+      email: 'jane@example.com',
+      displayName: 'Jane Example',
+    })
+    const { ctx, commandBus } = makeCtx()
+
+    const input = {
+      ...discordInput(),
+      providerKey: 'imap',
+      channelType: 'email',
+    }
+    await ingestInboundMessageCommand.execute(input as never, ctx)
+
+    const composeCall = commandBus.execute.mock.calls.find(
+      (call: unknown[]) => call[0] === 'messages.messages.compose',
+    )
+    expect(composeCall).toBeDefined()
+    const composeInput = (composeCall as any[])[1].input as Record<string, unknown>
+    expect(composeInput.visibility).toBe('internal')
+    expect(composeInput.recipients).toEqual([
+      { userId: '550e8400-e29b-41d4-a716-446655440051', type: 'to' },
+    ])
+    expect(composeInput.externalEmail).toBe('jane@example.com')
+    expect(composeMessageSchema.safeParse(composeInput).success).toBe(true)
   })
 })
 

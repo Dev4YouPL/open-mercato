@@ -56,7 +56,7 @@
     "@mikro-orm/postgresql": "^7.1.14",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@napi-rs/canvas": "^1.0.8",
-    "@open-mercato/ai-assistant": "0.8.0",
+    "@open-mercato/ai-assistant": "patch:@open-mercato/ai-assistant@npm%3A0.8.0#~/.yarn/patches/@open-mercato-ai-assistant-npm-0.8.0-6347c29649.patch",
     "@open-mercato/cache": "0.8.0",
     "@open-mercato/channel-apns": "0.8.0",
     "@open-mercato/channel-discord": "0.8.0",
@@ -69,14 +69,14 @@
     "@open-mercato/checkout": "0.8.0",
     "@open-mercato/cli": "patch:@open-mercato/cli@npm%3A0.8.0#~/.yarn/patches/@open-mercato-cli-npm-0.8.0-352e8c707b.patch",
     "@open-mercato/content": "0.8.0",
-    "@open-mercato/core": "0.8.0",
+    "@open-mercato/core": "patch:@open-mercato/core@patch%3A@open-mercato/core@npm%253A0.8.0%23./.yarn/patches/@open-mercato-core-npm-0.8.0-41c770ae92.patch%3A%3Aversion=0.8.0&hash=2061a1&locator=manufacturer-app%2540workspace%253A.#~/.yarn/patches/@open-mercato-core-patch-72b38b64a1.patch",
     "@open-mercato/documents": "0.8.0",
-    "@open-mercato/enterprise": "0.8.0",
+    "@open-mercato/enterprise": "patch:@open-mercato/enterprise@npm%3A0.8.0#~/.yarn/patches/@open-mercato-enterprise-npm-0.8.0-f62b97ab55.patch",
     "@open-mercato/events": "0.8.0",
     "@open-mercato/gateway-stripe": "0.8.0",
     "@open-mercato/onboarding": "0.8.0",
     "@open-mercato/queue": "0.8.0",
-    "@open-mercato/scheduler": "0.8.0",
+    "@open-mercato/scheduler": "patch:@open-mercato/scheduler@npm%3A0.8.0#~/.yarn/patches/@open-mercato-scheduler-npm-0.8.0-eea6713fdc.patch",
     "@open-mercato/search": "0.8.0",
     "@open-mercato/shared": "0.8.0",
     "@open-mercato/sync-akeneo": "0.8.0",
@@ -166,7 +166,10 @@
   "resolutions": {
     "lodash": "4.18.1",
     "lodash-es": "4.18.1",
-    "zod": "4.4.3"
+    "zod": "4.4.3",
+    "@open-mercato/core@npm:0.8.0": "patch:@open-mercato/core@patch%3A@open-mercato/core@npm%253A0.8.0%23./.yarn/patches/@open-mercato-core-npm-0.8.0-41c770ae92.patch%3A%3Aversion=0.8.0&hash=2061a1&locator=manufacturer-app%2540workspace%253A.#~/.yarn/patches/@open-mercato-core-patch-72b38b64a1.patch",
+    "@open-mercato/ai-assistant@npm:0.8.0": "patch:@open-mercato/ai-assistant@npm%3A0.8.0#~/.yarn/patches/@open-mercato-ai-assistant-npm-0.8.0-6347c29649.patch",
+    "@open-mercato/scheduler@npm:0.8.0": "patch:@open-mercato/scheduler@npm%3A0.8.0#~/.yarn/patches/@open-mercato-scheduler-npm-0.8.0-eea6713fdc.patch"
   },
   "imports": {
     "#generated/entities.ids.generated": {

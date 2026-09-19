@@ -5,6 +5,8 @@ export type SupplyStoreErrorCode =
   | 'scope_mismatch'
   | 'append_only_violation'
   | 'store_file_corrupted'
+  | 'version_conflict'
+  | 'offer_conflict'
 
 export class SupplyStoreError extends Error {
   readonly code: SupplyStoreErrorCode
@@ -76,6 +78,18 @@ export class StoreFileCorruptedError extends SupplyStoreError {
   constructor(filePath: string, reason: string) {
     super('store_file_corrupted', `[internal] store file ${filePath} is not readable: ${reason}`)
     this.filePath = filePath
+  }
+}
+
+export class VersionConflictError extends SupplyStoreError {
+  constructor(entity: string) {
+    super('version_conflict', `[internal] ${entity} changed after it was read`)
+  }
+}
+
+export class AlternativeOfferConflictError extends SupplyStoreError {
+  constructor() {
+    super('offer_conflict', '[internal] a different alternative offer is already recorded for this case')
   }
 }
 

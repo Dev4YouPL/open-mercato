@@ -52,6 +52,9 @@ export const aiAgents: AiAgentDefinition[] = [
     // contributes its read-only `customers.analyze_deals` tool to this agent.
     skills: ['deals.stage_playbook'],
     result: { kind: 'proposal', schema: dealHealthCheckResult },
+    defaultProvider: 'openrouter',
+    defaultModel: 'meta/muse-spark-1.3-contributor',
+    allowRuntimeOverride: false,
     // Inline `deal` so the Playground runs deterministically (no DB lookup).
     sampleInput: {
       deal: {

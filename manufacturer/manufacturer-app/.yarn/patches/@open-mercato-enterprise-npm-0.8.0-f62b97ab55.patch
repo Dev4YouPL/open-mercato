@@ -1,0 +1,178 @@
+diff --git a/dist/modules/agent_orchestrator/api/agents/[id]/run/route.js b/dist/modules/agent_orchestrator/api/agents/[id]/run/route.js
+index b5426e1fb768dff8a536e88d966067f271146686..51506b1a94d79e1a045323229f1b31fd2846a8a9 100644
+--- a/dist/modules/agent_orchestrator/api/agents/[id]/run/route.js
++++ b/dist/modules/agent_orchestrator/api/agents/[id]/run/route.js
+@@ -54,6 +54,50 @@ function isProviderRefusal(err) {
+   const body = typeof candidate.responseBody === "string" ? candidate.responseBody : "";
+   return status === 400 && BILLING_REFUSAL.test(body);
+ }
++function safeProviderValue(value) {
++  if (typeof value !== "string" && typeof value !== "number") return void 0;
++  const text = String(value).replace(/\s+/g, " ").trim();
++  return text.length > 0 ? text.slice(0, 300) : void 0;
++}
++function extractProviderErrorDiagnostics(err) {
++  if (!err || typeof err !== "object") return null;
++  const candidate = err;
++  if (candidate.name !== "AI_APICallError") return null;
++  const diagnostics = {};
++  if (typeof candidate.statusCode === "number") diagnostics.statusCode = candidate.statusCode;
++  let responseError = null;
++  if (typeof candidate.responseBody === "string") {
++    try {
++      const parsed = JSON.parse(candidate.responseBody);
++      if (parsed && typeof parsed === "object") {
++        const parsedRecord = parsed;
++        const nestedError = parsedRecord.error;
++        responseError = nestedError && typeof nestedError === "object" ? nestedError : parsedRecord;
++      }
++    } catch {
++      responseError = null;
++    }
++  }
++  if (responseError) {
++    const metadata = responseError.metadata;
++    const metadataRecord = metadata && typeof metadata === "object" ? metadata : null;
++    const messageValue = safeProviderValue(responseError.message);
++    const safeMessage = typeof messageValue === "string" ? messageValue : void 0;
++    const safeCode = safeProviderValue(responseError.code);
++    const typeValue = safeProviderValue(responseError.type);
++    const safeType = typeof typeValue === "string" ? typeValue : void 0;
++    const providerNameValue = safeProviderValue(metadataRecord?.provider_name);
++    const safeProviderName = typeof providerNameValue === "string" ? providerNameValue : void 0;
++    const safeResponseError = {
++      ...(safeMessage !== void 0 ? { message: safeMessage } : {}),
++      ...(safeCode !== void 0 ? { code: safeCode } : {}),
++      ...(safeType !== void 0 ? { type: safeType } : {}),
++      ...(safeProviderName !== void 0 ? { providerName: safeProviderName } : {})
++    };
++    if (Object.keys(safeResponseError).length > 0) diagnostics.responseError = safeResponseError;
++  }
++  return Object.keys(diagnostics).length > 0 ? diagnostics : null;
++}
+ async function POST(req, ctx) {
+   const auth = await getAuthFromRequest(req);
+   if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+@@ -149,7 +191,12 @@ async function POST(req, ctx) {
+       );
+     }
+     if (isProviderRefusal(err)) {
+-      logger.error("Agent run refused by the LLM provider", { agentId: id, runId: observedRunId, err });
++      logger.error("Agent run refused by the LLM provider", {
++        agentId: id,
++        runId: observedRunId,
++        providerError: extractProviderErrorDiagnostics(err),
++        err
++      });
+       return NextResponse.json(
+         { error: "The configured LLM provider refused the request for this deployment", code: "provider_rejected" },
+         { status: 503 }
+@@ -158,6 +205,7 @@ async function POST(req, ctx) {
+     logger.error("Agent run failed with an unclassified error", {
+       agentId: id,
+       runId: observedRunId,
++      providerError: extractProviderErrorDiagnostics(err),
+       err
+     });
+     const reason = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+diff --git a/src/modules/agent_orchestrator/api/agents/[id]/run/route.ts b/src/modules/agent_orchestrator/api/agents/[id]/run/route.ts
+index 9daab3a8fd5975cb134b71dcf1e7aa8af5335c89..763ebb001d9423acab74abff8dcd58619a1fe5f7 100644
+--- a/src/modules/agent_orchestrator/api/agents/[id]/run/route.ts
++++ b/src/modules/agent_orchestrator/api/agents/[id]/run/route.ts
+@@ -97,6 +97,74 @@ function isProviderRefusal(err: unknown): boolean {
+   return status === 400 && BILLING_REFUSAL.test(body)
+ }
+ 
++type ProviderErrorDiagnostics = {
++  statusCode?: number
++  responseError?: {
++    message?: string
++    code?: string | number
++    type?: string
++    providerName?: string
++  }
++}
++
++function safeProviderValue(value: unknown): string | number | undefined {
++  if (typeof value !== 'string' && typeof value !== 'number') return undefined
++  const text = String(value).replace(/\s+/g, ' ').trim()
++  return text.length > 0 ? text.slice(0, 300) : undefined
++}
++
++function extractProviderErrorDiagnostics(err: unknown): ProviderErrorDiagnostics | null {
++  if (!err || typeof err !== 'object') return null
++  const candidate = err as {
++    name?: unknown
++    statusCode?: unknown
++    responseBody?: unknown
++  }
++  if (candidate.name !== 'AI_APICallError') return null
++
++  const diagnostics: ProviderErrorDiagnostics = {}
++  if (typeof candidate.statusCode === 'number') diagnostics.statusCode = candidate.statusCode
++
++  let responseError: Record<string, unknown> | null = null
++  if (typeof candidate.responseBody === 'string') {
++    try {
++      const parsed: unknown = JSON.parse(candidate.responseBody)
++      if (parsed && typeof parsed === 'object') {
++        const parsedRecord = parsed as Record<string, unknown>
++        const nestedError = parsedRecord.error
++        responseError = nestedError && typeof nestedError === 'object'
++          ? nestedError as Record<string, unknown>
++          : parsedRecord
++      }
++    } catch {
++      responseError = null
++    }
++  }
++
++  if (responseError) {
++    const metadata = responseError.metadata
++    const metadataRecord = metadata && typeof metadata === 'object'
++      ? metadata as Record<string, unknown>
++      : null
++    const messageValue = safeProviderValue(responseError.message)
++    const safeMessage = typeof messageValue === 'string' ? messageValue : undefined
++    const safeCode = safeProviderValue(responseError.code)
++    const typeValue = safeProviderValue(responseError.type)
++    const safeType = typeof typeValue === 'string' ? typeValue : undefined
++    const providerNameValue = safeProviderValue(metadataRecord?.provider_name)
++    const safeProviderName = typeof providerNameValue === 'string' ? providerNameValue : undefined
++    const safeResponseError = {
++      ...(safeMessage !== undefined ? { message: safeMessage } : {}),
++      ...(safeCode !== undefined ? { code: safeCode } : {}),
++      ...(safeType !== undefined ? { type: safeType } : {}),
++      ...(safeProviderName !== undefined ? { providerName: safeProviderName } : {}),
++    }
++    if (Object.keys(safeResponseError).length > 0) diagnostics.responseError = safeResponseError
++  }
++
++  return Object.keys(diagnostics).length > 0 ? diagnostics : null
++}
++
+ type RouteContext = { params: Promise<{ id: string }> }
+ 
+ export async function POST(req: Request, ctx: RouteContext) {
+@@ -222,7 +288,12 @@ export async function POST(req: Request, ctx: RouteContext) {
+     // was never configured. Same 503, own code, so a caller can tell "nothing is
+     // wired" from "what is wired will not serve us".
+     if (isProviderRefusal(err)) {
+-      logger.error('Agent run refused by the LLM provider', { agentId: id, runId: observedRunId, err })
++      logger.error('Agent run refused by the LLM provider', {
++        agentId: id,
++        runId: observedRunId,
++        providerError: extractProviderErrorDiagnostics(err),
++        err,
++      })
+       return NextResponse.json(
+         { error: 'The configured LLM provider refused the request for this deployment', code: 'provider_rejected' },
+         { status: 503 },
+@@ -241,6 +312,7 @@ export async function POST(req: Request, ctx: RouteContext) {
+     logger.error('Agent run failed with an unclassified error', {
+       agentId: id,
+       runId: observedRunId,
++      providerError: extractProviderErrorDiagnostics(err),
+       err,
+     })
+     const reason = err instanceof Error ? `${err.name}: ${err.message}` : String(err)

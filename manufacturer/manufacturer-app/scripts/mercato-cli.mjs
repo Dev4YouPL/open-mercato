@@ -11,7 +11,10 @@ import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const scriptsDir = path.dirname(fileURLToPath(import.meta.url))
-let currentDir = path.resolve(scriptsDir, '..')
+const appRoot = path.resolve(scriptsDir, '..')
+process.chdir(appRoot)
+
+let currentDir = appRoot
 let entry = null
 for (;;) {
   const candidate = path.join(currentDir, 'node_modules', '@open-mercato', 'cli', 'bin', 'mercato')

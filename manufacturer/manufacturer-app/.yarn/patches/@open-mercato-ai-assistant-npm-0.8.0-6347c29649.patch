@@ -1,0 +1,72 @@
+diff --git a/dist/modules/ai_assistant/lib/generated-registry-loader.js b/dist/modules/ai_assistant/lib/generated-registry-loader.js
+index 886058e4540946b9b1bf770cddd800c8cd8ab70f..9249b48376b7cdb51c38246d466b082b6e9b50a4 100644
+--- a/dist/modules/ai_assistant/lib/generated-registry-loader.js
++++ b/dist/modules/ai_assistant/lib/generated-registry-loader.js
+@@ -7,6 +7,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
+ const logger = createLogger("ai_assistant");
+ const requireFromHere = createRequire(import.meta.url);
+ function findGeneratedFile(fileName) {
++  const fromCwdDirect = path.resolve(process.cwd(), ".mercato", "generated", fileName);
++  if (fs.existsSync(fromCwdDirect)) return fromCwdDirect;
++
+   const here = (() => {
+     try {
+       return fileURLToPath(import.meta.url);
+@@ -26,8 +29,6 @@ function findGeneratedFile(fileName) {
+   }
+   const fromCwd = path.resolve(process.cwd(), "apps", "mercato", ".mercato", "generated", fileName);
+   if (fs.existsSync(fromCwd)) return fromCwd;
+-  const fromCwdDirect = path.resolve(process.cwd(), ".mercato", "generated", fileName);
+-  if (fs.existsSync(fromCwdDirect)) return fromCwdDirect;
+   return null;
+ }
+ async function compileAndImportGenerated(tsPath, options = {}) {
+diff --git a/dist/modules/ai_assistant/lib/llm-adapters/openai.js b/dist/modules/ai_assistant/lib/llm-adapters/openai.js
+index c9937b3ab997118dfe68a43468be2316df01eef5..f2c24c23b0bb22a7377ccbca6eb60e2352588e3b 100644
+--- a/dist/modules/ai_assistant/lib/llm-adapters/openai.js
++++ b/dist/modules/ai_assistant/lib/llm-adapters/openai.js
+@@ -57,7 +57,7 @@ function createOpenAICompatibleProvider(preset) {
+         apiKey: options.apiKey,
+         ...baseURL ? { baseURL } : {}
+       });
+-      return openai(options.modelId);
++      return openai.chat(options.modelId);
+     }
+   };
+   if (preset.supportsEndUserSafetyIdentifier) {
+diff --git a/src/modules/ai_assistant/lib/generated-registry-loader.ts b/src/modules/ai_assistant/lib/generated-registry-loader.ts
+index 31e2fb42297e6abd74c324737201ad7b7d9e394c..eb1bf98d6b0bc2b9b913826a3e9964f188093d97 100644
+--- a/src/modules/ai_assistant/lib/generated-registry-loader.ts
++++ b/src/modules/ai_assistant/lib/generated-registry-loader.ts
+@@ -32,6 +32,9 @@ const requireFromHere = createRequire(import.meta.url)
+  * falls back to cwd-relative lookups (standalone apps run from the app dir).
+  */
+ export function findGeneratedFile(fileName: string): string | null {
++  const fromCwdDirect = path.resolve(process.cwd(), '.mercato', 'generated', fileName)
++  if (fs.existsSync(fromCwdDirect)) return fromCwdDirect
++
+   const here = (() => {
+     try {
+       return fileURLToPath(import.meta.url)
+@@ -54,8 +57,6 @@ export function findGeneratedFile(fileName: string): string | null {
+   // app whose root holds `.mercato/generated`).
+   const fromCwd = path.resolve(process.cwd(), 'apps', 'mercato', '.mercato', 'generated', fileName)
+   if (fs.existsSync(fromCwd)) return fromCwd
+-  const fromCwdDirect = path.resolve(process.cwd(), '.mercato', 'generated', fileName)
+-  if (fs.existsSync(fromCwdDirect)) return fromCwdDirect
+   return null
+ }
+ 
+diff --git a/src/modules/ai_assistant/lib/llm-adapters/openai.ts b/src/modules/ai_assistant/lib/llm-adapters/openai.ts
+index 3b35f8cc9ef9cb641457b026bd6a3cb3445a47c6..f8717e7ef806643db5f8022f44ad261137811c43 100644
+--- a/src/modules/ai_assistant/lib/llm-adapters/openai.ts
++++ b/src/modules/ai_assistant/lib/llm-adapters/openai.ts
+@@ -166,7 +166,7 @@ export function createOpenAICompatibleProvider(
+         apiKey: options.apiKey,
+         ...(baseURL ? { baseURL } : {}),
+       })
+-      return openai(options.modelId)
++      return openai.chat(options.modelId)
+     },
+   }
+ 

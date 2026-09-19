@@ -63,7 +63,7 @@ export const setup: ModuleSetupConfig = {
         smtpPassword: config.password,
         fromAddress: config.address,
       },
-      pollIntervalSeconds: 300,
+      pollIntervalSeconds: 10,
       userId: user.id,
       scope: { tenantId, organizationId },
     }

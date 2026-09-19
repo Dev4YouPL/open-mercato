@@ -39,6 +39,16 @@ describe('modelPricing — Q8 minimal pricing config', () => {
     expect(resolveModelPrice('openai/gpt-4o-mini')).not.toBeNull()
   })
 
+  it('includes the OpenRouter Muse Spark Contributor price', () => {
+    delete process.env.OM_AGENT_MODEL_PRICING
+    delete process.env.OM_AGENT_COST_CURRENCY
+    expect(resolveModelPrice('meta/muse-spark-1.3-contributor')).toEqual({
+      inputPer1M: 0.1,
+      outputPer1M: 0.2,
+      currency: 'USD',
+    })
+  })
+
   it('env override wins over the code defaults and adds new models', () => {
     process.env.OM_AGENT_MODEL_PRICING = JSON.stringify({
       'gpt-5-mini': { inputPer1M: 1, outputPer1M: 2 },

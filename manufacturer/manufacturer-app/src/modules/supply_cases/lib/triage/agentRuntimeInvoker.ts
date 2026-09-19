@@ -1,6 +1,6 @@
 import type { AwilixContainer } from 'awilix'
 import type { StoreScope } from '../../data/repositories'
-import { INBOUND_TRIAGE_AGENT_ID } from '../../ai-agents'
+import { INBOUND_TRIAGE_AGENT_ID } from './agentId'
 import type { InboundTriageAgentInput } from './triageInput'
 import type { InboundTriageInvoker } from './runInboundTriage'
 

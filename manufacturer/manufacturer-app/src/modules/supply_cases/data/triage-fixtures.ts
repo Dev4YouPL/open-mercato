@@ -78,7 +78,7 @@ export const NEW_SUPPLY_PROPOSAL: TriageFixture = {
   candidates: NO_CANDIDATES,
   rawResult: {
     intent: 'SUPPLY_PROPOSAL',
-    correlation: { kind: 'NEW_CASE' },
+    correlation: { kind: 'NEW_CASE', candidateIndex: null },
     sku: 'MAT-42',
     commitments: [
       { quantity: 300, date: '2026-09-23' },
@@ -121,7 +121,7 @@ export const UNRELATED_CUSTOMER_MESSAGE: TriageFixture = {
   candidates: TWO_CANDIDATES,
   rawResult: {
     intent: 'UNRELATED',
-    correlation: { kind: 'NEW_CASE' },
+    correlation: { kind: 'NEW_CASE', candidateIndex: null },
     sku: null,
     commitments: [],
     price: null,

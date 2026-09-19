@@ -139,6 +139,7 @@ function isOfferedIndex(index: number, candidateCount: number): boolean {
 function resolveTarget(signal: InboundSignal, candidates: readonly InboundCandidate[]): TriageTarget {
   if (signal.correlation.kind === 'NEW_CASE') return { kind: 'NEW_CASE' }
   const candidateIndex = signal.correlation.candidateIndex
+  if (candidateIndex === null) throw new Error('[internal] Existing case target requires a candidate index')
   const candidate = candidates[candidateIndex]
   return {
     kind: 'EXISTING_CASE',

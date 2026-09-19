@@ -1,5 +1,6 @@
 import { getAgentEntry } from '@open-mercato/enterprise/modules/agent_orchestrator/lib/sdk/defineAgent'
-import aiAgents, { INBOUND_TRIAGE_AGENT_ID } from '../ai-agents'
+import aiAgents from '../ai-agents'
+import { INBOUND_TRIAGE_AGENT_ID } from '../lib/triage/agentId'
 import { runInboundTriage } from '../lib/triage/runInboundTriage'
 import { buildInboundTriageInput } from '../lib/triage/triageInput'
 import {
@@ -23,8 +24,11 @@ import {
 describe('supply_cases.inbound_triage_advisor registration', () => {
   const definition = aiAgents.find((agent) => agent.id === INBOUND_TRIAGE_AGENT_ID)
 
-  it('registers exactly one agent under the stable contract id', () => {
-    expect(aiAgents).toHaveLength(1)
+  it('keeps the inbound contract and registers the Phase 2 advisor additively', () => {
+    expect(aiAgents.map((agent) => agent.id)).toEqual([
+      INBOUND_TRIAGE_AGENT_ID,
+      'supply_cases.initial_impact_advisor',
+    ])
     expect(definition).toBeDefined()
     expect(INBOUND_TRIAGE_AGENT_ID).toBe('supply_cases.inbound_triage_advisor')
   })
@@ -121,7 +125,7 @@ describe('runInboundTriage', () => {
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(result.signal.intent).toBe('SUPPLY_PROPOSAL')
-    expect(result.signal.correlation).toEqual({ kind: 'NEW_CASE' })
+    expect(result.signal.correlation).toEqual({ kind: 'NEW_CASE', candidateIndex: null })
     expect(result.signal.commitments).toHaveLength(2)
     expect(invoke.calls).toHaveLength(1)
   })

@@ -43,10 +43,20 @@ export type ExtractedPrice = z.infer<typeof extractedPriceSchema>
  * invent, so message text cannot route a message into a record its sender has
  * no part in.
  */
-export const correlationChoiceSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('NEW_CASE') }).strict(),
-  z.object({ kind: z.literal('EXISTING_CASE'), candidateIndex: z.number().int().nonnegative() }).strict(),
-])
+export const correlationChoiceSchema = z
+  .object({
+    kind: z.enum(['NEW_CASE', 'EXISTING_CASE']),
+    candidateIndex: z.number().int().nonnegative().nullable(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (value.kind === 'NEW_CASE' && value.candidateIndex !== null) {
+      context.addIssue({ code: 'custom', message: '[internal] NEW_CASE must use a null candidateIndex' })
+    }
+    if (value.kind === 'EXISTING_CASE' && value.candidateIndex === null) {
+      context.addIssue({ code: 'custom', message: '[internal] EXISTING_CASE requires a candidateIndex' })
+    }
+  })
 export type CorrelationChoice = z.infer<typeof correlationChoiceSchema>
 
 const inboundSignalShape = z
@@ -107,7 +117,8 @@ export function createInboundSignalSchema(candidateCount: number) {
     .refine(priceOnlyOnOffer, PRICE_ISSUE)
     .refine(
       (value: InboundSignal) =>
-        value.correlation.kind !== 'EXISTING_CASE' || value.correlation.candidateIndex < candidateCount,
+        value.correlation.kind !== 'EXISTING_CASE'
+          || (value.correlation.candidateIndex !== null && value.correlation.candidateIndex < candidateCount),
       {
         message: '[internal] candidateIndex is outside the offered candidate list',
         path: ['correlation', 'candidateIndex'],

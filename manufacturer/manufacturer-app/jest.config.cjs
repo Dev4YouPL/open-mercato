@@ -37,6 +37,9 @@ module.exports = {
       },
     ],
   },
-  transformIgnorePatterns: ['/node_modules/(?!(@open-mercato|@mikro-orm|@tanstack/react-table|@tanstack/table-core|@tanstack/react-store|@tanstack/store)/)'],
-  testPathIgnorePatterns: ['/node_modules/', '/.next/', '/.mercato/', '/.ai/qa/'],
+  // `kysely` ships ESM only and is reached through `@mikro-orm/sql`. Tests that
+  // open a real Postgres connection (the workflow-engine durability suite) load
+  // that driver, so it has to be transformed like the rest.
+  transformIgnorePatterns: ['/node_modules/(?!(@open-mercato|@mikro-orm|kysely|@tanstack/react-table|@tanstack/table-core|@tanstack/react-store|@tanstack/store)/)'],
+  testPathIgnorePatterns: ['/node_modules/', '/.next/', '/.mercato/', '/.ai/qa/', '/__integration__/'],
 }

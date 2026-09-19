@@ -1,4 +1,5 @@
 import type {
+  ConfirmationRole,
   InboundMessage,
   InboundMessageAppendInput,
   InboundMessageTriageInput,
@@ -14,7 +15,11 @@ import type {
   SupplyCase,
   SupplyCaseCreateInput,
   SupplyCaseUpdateInput,
+  SupplyConfirmation,
+  SupplyConfirmationRecordInput,
+  AlternativeOfferSnapshot,
 } from './types'
+import type { ActivityAppendResult, SupplyActivityEntry, SupplyActivityEntryInput } from './activity'
 
 export type { StoreScope }
 
@@ -50,6 +55,18 @@ export type ProductionPlanRepository = ScopedRepository<
 
 export type SupplyCaseRepository = ScopedRepository<SupplyCase, SupplyCaseCreateInput, SupplyCaseUpdateInput> & {
   findByCorrelationId(scope: StoreScope, correlationId: string): Promise<SupplyCase | null>
+  createIfAbsentByInboundMessage(
+    scope: StoreScope,
+    inboundMessageId: string,
+    input: SupplyCaseCreateInput,
+  ): Promise<{ supplyCase: SupplyCase; created: boolean }>
+  compareAndSwap(scope: StoreScope, id: string, expectedUpdatedAt: string, patch: SupplyCaseUpdateInput): Promise<SupplyCase>
+  recordAlternativeOfferIfAbsent(
+    scope: StoreScope,
+    id: string,
+    expectedUpdatedAt: string,
+    offer: AlternativeOfferSnapshot,
+  ): Promise<{ status: 'recorded' | 'already_recorded'; supplyCase: SupplyCase }>
 }
 
 export type AppendedInboundMessage = {
@@ -79,6 +96,9 @@ export type InboundMessageRepository = {
    * workflow step cannot re-decide a case that is already linked.
    */
   recordTriage(scope: StoreScope, id: string, patch: InboundMessageTriageInput): Promise<InboundMessage>
+  claimProposalAnnouncement(scope: StoreScope, id: string): Promise<boolean>
+  completeProposalAnnouncement(scope: StoreScope, id: string): Promise<InboundMessage>
+  releaseProposalAnnouncement(scope: StoreScope, id: string): Promise<InboundMessage>
 }
 
 export type RecordedOutboundCorrelation = {
@@ -100,6 +120,40 @@ export type OutboundCorrelationRepository = {
   list(scope: StoreScope, filter?: ListFilter<OutboundCorrelation>): Promise<OutboundCorrelation[]>
 }
 
+export type RecordedSupplyConfirmation = {
+  confirmation: SupplyConfirmation
+  created: boolean
+  /** Recomputed against `requiredRoles` after this write, inside the same critical section. */
+  join: 'PENDING' | 'COMPLETE' | 'BLOCKED'
+  /** True exactly once per plan's lifetime: the call whose write closed the set. */
+  closedTheSet: boolean
+}
+
+/**
+ * Append-only, like `OutboundCorrelation`. `recordAndEvaluate` is the ONE
+ * method this repository exposes for writing, and deliberately does the join
+ * evaluation itself: `JsonCollection.mutate` only serializes for the duration
+ * of its mutator, so evaluating completeness after the write returns is a
+ * race — two concurrent closing confirmations could each observe an
+ * incomplete set and neither would dispatch `apply_confirmed`, or both could
+ * observe a complete one and both would dispatch it.
+ */
+export type SupplyConfirmationRepository = {
+  recordAndEvaluate(
+    scope: StoreScope,
+    input: SupplyConfirmationRecordInput,
+    requiredRoles: readonly ConfirmationRole[],
+  ): Promise<RecordedSupplyConfirmation>
+  findByCaseId(scope: StoreScope, caseId: string): Promise<SupplyConfirmation[]>
+  findByIdempotencyKey(scope: StoreScope, idempotencyKey: string): Promise<SupplyConfirmation | null>
+}
+
+export type SupplyActivityRepository = {
+  appendIfAbsent(scope: StoreScope, input: SupplyActivityEntryInput): Promise<ActivityAppendResult>
+  list(scope: StoreScope): Promise<SupplyActivityEntry[]>
+  purgeScope(scope: StoreScope): Promise<void>
+}
+
 export type SeedScenarioOptions = {
   includeAlternativeOffer?: boolean
 }
@@ -118,6 +172,8 @@ export type SupplyCasesStore = {
   supplyCases: SupplyCaseRepository
   inboundMessages: InboundMessageRepository
   outboundCorrelations: OutboundCorrelationRepository
+  supplyConfirmations: SupplyConfirmationRepository
+  activities: SupplyActivityRepository
   seedScenario(scope: StoreScope, options?: SeedScenarioOptions): Promise<SeededScenario>
   resetScenario(scope: StoreScope, options?: SeedScenarioOptions): Promise<SeededScenario>
   purgeScope(scope: StoreScope): Promise<void>

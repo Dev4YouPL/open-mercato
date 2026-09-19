@@ -25,6 +25,7 @@ export const enabledModules: ModuleEntry[] = [
   // (.ai/specs/2026-09-18-supplier-email-agent-workflow.md).
   { id: 'workflows', from: '@open-mercato/core' },
   { id: 'events', from: '@open-mercato/events' },
+  { id: 'scheduler', from: '@open-mercato/scheduler' },
   { id: 'search', from: '@open-mercato/search' },
   { id: 'attachments', from: '@open-mercato/core' },
   { id: 'customers', from: '@open-mercato/core' },
@@ -37,6 +38,7 @@ export const enabledModules: ModuleEntry[] = [
   { id: 'feature_toggles', from: '@open-mercato/core' },
   { id: 'currencies', from: '@open-mercato/core' },
   { id: 'integrations', from: '@open-mercato/core' },
+  { id: 'progress', from: '@open-mercato/core' },
   { id: 'communication_channels', from: '@open-mercato/core' },
   { id: 'channel_imap', from: '@open-mercato/channel-imap' },
   { id: 'mailbox_seed', from: '@app' },

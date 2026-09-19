@@ -73,9 +73,9 @@ const applyTriageCommand: CommandHandler<Record<string, unknown>, ApplyTriageCom
 
     // Post-commit: the disposition and the case are already durable, so nothing
     // downstream can be told about a link that was not written.
-    await announceProposal(scope, outcome)
+    const proposalRecovered = await announceProposal(scope, store, outcome)
 
-    return summarize(input.inboundMessageId, outcome)
+    return summarize(input.inboundMessageId, outcome, proposalRecovered)
   },
 }
 
@@ -119,32 +119,58 @@ function resolveInvoker(ctx: CommandRuntimeContext, scope: StoreScope): InboundT
  * The payload carries identifiers and scope only — the supplier's prose stays in
  * the intake record.
  */
-async function announceProposal(scope: StoreScope, outcome: ApplyTriageOutcome): Promise<void> {
-  if (outcome.status !== 'applied') return
-  if (outcome.decision.outcome !== 'AUTO_APPLY') return
-  if (outcome.decision.target.kind !== 'NEW_CASE') return
-  const supplyCase = outcome.supplyCase
-  if (!supplyCase) return
+async function announceProposal(
+  scope: StoreScope,
+  store: SupplyCasesStore,
+  outcome: ApplyTriageOutcome,
+): Promise<boolean> {
+  const candidate = outcome.status === 'applied'
+    ? outcome.decision.outcome === 'AUTO_APPLY' && outcome.decision.target.kind === 'NEW_CASE'
+      ? { message: outcome.message, supplyCase: outcome.supplyCase, signal: outcome.decision.signal }
+      : null
+    : outcome.message.triageOutcome === 'AUTO_APPLIED' && outcome.message.caseId && outcome.message.candidateIndexes.length === 0 && outcome.message.extraction
+      ? {
+          message: outcome.message,
+          supplyCase: await store.supplyCases.findById(scope, outcome.message.caseId),
+          signal: outcome.message.extraction,
+        }
+      : null
+  if (!candidate?.supplyCase) return false
 
-  await emitSupplyCasesEvent(
-    'supply_cases.case.proposal_received',
-    {
-      id: supplyCase.id,
-      caseId: supplyCase.id,
-      correlationId: supplyCase.correlationId,
-      inboundMessageId: outcome.message.id,
-      rfcMessageId: outcome.message.rfcMessageId,
-      senderEmail: outcome.message.senderEmail,
-      sku: outcome.decision.signal.sku,
-      caseCreated: true,
-      tenantId: scope.tenantId,
-      organizationId: scope.organizationId,
-    },
-    { persistent: true },
-  )
+  const claimed = await store.inboundMessages.claimProposalAnnouncement(scope, candidate.message.id)
+  if (!claimed) return false
+
+  try {
+    await emitSupplyCasesEvent(
+      'supply_cases.case.proposal_received',
+      {
+        id: candidate.supplyCase.id,
+        caseId: candidate.supplyCase.id,
+        correlationId: candidate.supplyCase.correlationId,
+        inboundMessageId: candidate.message.id,
+        rfcMessageId: candidate.message.rfcMessageId,
+        senderEmail: candidate.message.senderEmail,
+        sku: candidate.signal.sku,
+        commitments: candidate.signal.commitments.map((commitment) => ({
+          quantity: commitment.quantity,
+          date: commitment.date,
+        })),
+        caseCreated: true,
+        occurredAt: candidate.message.receivedAt ?? candidate.message.createdAt,
+        tenantId: scope.tenantId,
+        organizationId: scope.organizationId,
+      },
+      { persistent: true, tenantId: scope.tenantId, organizationId: scope.organizationId },
+    )
+    await store.inboundMessages.completeProposalAnnouncement(scope, candidate.message.id)
+    return true
+  } catch (error) {
+    await store.inboundMessages.releaseProposalAnnouncement(scope, candidate.message.id)
+    throw error
+  }
 }
 
-function summarize(inboundMessageId: string, outcome: ApplyTriageOutcome): ApplyTriageCommandResult {
+function summarize(inboundMessageId: string, outcome: ApplyTriageOutcome, proposalRecovered = false): ApplyTriageCommandResult {
   if (outcome.status === 'already_settled') {
     return {
       status: outcome.status,
@@ -152,7 +178,7 @@ function summarize(inboundMessageId: string, outcome: ApplyTriageOutcome): Apply
       caseId: outcome.message.caseId,
       correlationId: outcome.message.correlationId,
       disposition: outcome.disposition,
-      outcome: null,
+      outcome: proposalRecovered ? 'AUTO_APPLY' : null,
       reason: null,
       caseCreated: false,
     }
@@ -166,7 +192,7 @@ function summarize(inboundMessageId: string, outcome: ApplyTriageOutcome): Apply
     disposition: decision.disposition,
     outcome: decision.outcome,
     reason: decision.outcome === 'AUTO_APPLY' ? null : decision.reason,
-    caseCreated: decision.outcome === 'AUTO_APPLY' && decision.target.kind === 'NEW_CASE',
+    caseCreated: outcome.caseCreated,
   }
 }
 

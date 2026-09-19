@@ -13,6 +13,7 @@ Route first; never probe unmatched context.
 ## Always
 
 - Route all axes; missing context: `yarn mercato agentic:init --update-harness`.
+- For work explicitly scoped as a demo/showcase, prioritize getting one happy path end-to-end first. Classify findings as `demo blocker` or `production follow-up`; production hardening, rare races, and crash recovery do not block the showcase unless they break that happy path, tenant/data security, or the required build/typecheck gate. Report deferred hardening explicitly instead of silently expanding the demo scope.
 - Lessons: scan `.ai/lessons.md` tags; open/update one matching record + row.
 - App code: `src/modules/<id>/`; framework context only for named gaps.
 - Derive trusted `tenantId` + `organizationId` and fail closed. Only an installed contract may use system scope (`organizationId: null`).

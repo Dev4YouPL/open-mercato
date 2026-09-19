@@ -7,6 +7,7 @@ import cli from '@open-mercato/core/modules/auth/cli'
 const testModules: Module[] = [
   { id: 'auth', setup: { defaultRoleFeatures: { superadmin: ['auth.admin'], admin: ['auth.*'], employee: ['auth.view'] } } },
   { id: 'customers', setup: { defaultRoleFeatures: { admin: ['customers.*'], employee: ['customers.view'] } } },
+  { id: 'customer_accounts' },
   { id: 'reports', setup: { defaultRoleFeatures: { reports_viewer: ['reports.view'] } } },
   // A module whose feature is a PORTAL one — the half that used to be reachable
   // only at tenant bootstrap, so it never landed on roles that already existed.
@@ -230,6 +231,20 @@ describe('auth CLI sync-role-acls', () => {
     await cmd.run(['--tenant', 't-1'])
 
     expect(persistedAcls.find((a) => a.role?.name === 'admin')).toBeDefined()
+  })
+
+  it('skips customer role sync when customer_accounts is disabled', async () => {
+    const cmd = cli.find((c: any) => c.command === 'sync-role-acls')!
+    seedRoles('t-1')
+
+    registerCliModules(testModules.filter((module) => module.id !== 'customer_accounts'))
+    try {
+      await cmd.run(['--tenant', 't-1'])
+
+      expect(findOne.mock.calls.some(([entity]) => entity?.name === 'CustomerRole')).toBe(false)
+    } finally {
+      registerCliModules(testModules)
+    }
   })
 
   it('errors and writes nothing when --tenant points at a non-existent tenant', async () => {

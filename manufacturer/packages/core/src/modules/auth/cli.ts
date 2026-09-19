@@ -799,6 +799,8 @@ async function syncCustomerRoleAcls(
   tenantId: string,
   modules: Module[],
 ): Promise<{ updatedRoleSlugs: string[]; addedFeatures: string[] } | null> {
+  if (!modules.some((module) => module.id === 'customer_accounts')) return null
+
   let ensure: typeof import('@open-mercato/core/modules/customer_accounts/lib/customerRoleAcls').ensureDefaultCustomerRoleAcls
   try {
     ;({ ensureDefaultCustomerRoleAcls: ensure } = await import(

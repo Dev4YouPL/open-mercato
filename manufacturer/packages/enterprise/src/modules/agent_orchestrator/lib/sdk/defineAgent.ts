@@ -84,6 +84,11 @@ export interface DefineAgentInput {
   subAgents?: string[]
   defaultProvider?: string
   defaultModel?: string
+  /**
+   * When false, request and tenant model overrides are ignored for this agent.
+   * Environment-level provider/model settings remain available to operators.
+   */
+  allowRuntimeOverride?: boolean
   /** Object-safe loop subset only. */
   loop?: { maxSteps?: number }
   /**
@@ -279,6 +284,7 @@ export function defineAgent(input: DefineAgentInput): AiAgentDefinition {
     mutationPolicy: 'read-only',
     defaultProvider: input.defaultProvider,
     defaultModel: input.defaultModel,
+    allowRuntimeOverride: input.allowRuntimeOverride,
     loop: input.loop,
     output: { schemaName: input.id.replace(/\W+/g, '_'), schema: input.result.schema },
   })

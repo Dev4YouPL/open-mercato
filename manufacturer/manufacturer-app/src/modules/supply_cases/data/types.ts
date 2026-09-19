@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { inboundSignalSchema, messageIntentSchema } from './inbound-signal'
+import { extractedCommitmentSchema, inboundSignalSchema, messageIntentSchema } from './inbound-signal'
 
 export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue }
 
@@ -129,8 +129,117 @@ export const supplyCaseStatusSchema = z.enum([
 ])
 export type SupplyCaseStatus = z.infer<typeof supplyCaseStatusSchema>
 
-export const needsAttentionReasonSchema = z.enum(['WAIT_TIMEOUT', 'DELIVERY_FAILED', 'CONFIRMATION_MISMATCH'])
+export const needsAttentionReasonSchema = z.enum([
+  'WAIT_TIMEOUT',
+  'DELIVERY_FAILED',
+  'CONFIRMATION_MISMATCH',
+  'MISSING_DATA',
+  'ANALYSIS_FAILED',
+  'STALE_DECISION',
+  'OFFER_INVALID',
+  'OFFER_CONFLICT',
+  'DECISION_UNAUTHORIZED',
+])
 export type NeedsAttentionReason = z.infer<typeof needsAttentionReasonSchema>
+
+const calendarDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
+  const parsed = new Date(`${value}T00:00:00.000Z`)
+  return parsed.toISOString().slice(0, 10) === value
+}, '[internal] Expected a valid calendar date')
+
+export const alternativeOfferCommitmentSchema = z.object({
+  quantity: z.number().int().positive(),
+  date: calendarDateSchema,
+}).strict()
+export type AlternativeOfferCommitment = z.infer<typeof alternativeOfferCommitmentSchema>
+
+export const alternativeOfferPriceSchema = z.object({
+  amount: z.number().finite().nonnegative(),
+  currency: z.string().regex(/^[A-Z]{3}$/),
+}).strict()
+
+export const alternativeOfferSnapshotSchema = z.object({
+  schemaVersion: z.literal(1),
+  supplierId: identifierSchema,
+  sku: identifierSchema,
+  sourceInboundMessageId: identifierSchema,
+  sourceRfcMessageId: identifierSchema,
+  sourceOutboundCorrelationId: identifierSchema,
+  requestedQuantity: z.number().int().positive(),
+  offeredQuantity: z.number().int().positive(),
+  commitments: z.array(alternativeOfferCommitmentSchema).min(1),
+  priceTotal: alternativeOfferPriceSchema,
+  offerHash: identifierSchema,
+  recordedAt: isoDateTimeSchema,
+}).strict()
+export type AlternativeOfferSnapshot = z.infer<typeof alternativeOfferSnapshotSchema>
+
+export const resolutionCommitmentSchema = z.object({
+  quantity: z.number().int().positive(),
+  date: calendarDateSchema,
+  status: z.enum(['ACCEPT', 'DECLINE', 'CANCEL']),
+}).strict()
+
+export const resolutionOutboundEffectSchema = z.object({
+  effectId: identifierSchema,
+  recipientEmail: z.string().email(),
+  phase: z.literal('SUPPLY_ACCEPTANCE'),
+  decision: z.enum(['ACCEPT', 'DECLINE', 'AMEND']),
+  commitments: z.array(resolutionCommitmentSchema),
+}).strict()
+
+export const resolutionPlanIdSchema = z.enum(['ACCEPT_DELAY', 'USE_STOCK', 'USE_ALTERNATIVE'])
+
+export const resolutionPlanSchema = z.object({
+  schemaVersion: z.literal(1),
+  id: resolutionPlanIdSchema,
+  factsHash: identifierSchema,
+  offerHash: identifierSchema,
+  planHash: identifierSchema,
+  feasibility: z.enum(['FEASIBLE', 'INFEASIBLE']),
+  infeasibilityReasons: z.array(identifierSchema),
+  supplier1Commitments: z.array(resolutionCommitmentSchema),
+  supplier2Commitments: z.array(resolutionCommitmentSchema),
+  stock: z.object({ allocated: z.number().int().nonnegative(), remaining: z.number().int().nonnegative() }).strict(),
+  coverage: z.object({
+    onTimeQuantity: z.number().int().nonnegative(),
+    shortage: z.number().int().nonnegative(),
+    productionImpact: z.enum(['ON_TIME', 'AT_RISK', 'BREACHED', 'UNKNOWN']),
+    customerImpact: z.enum(['ON_TIME', 'AT_RISK', 'BREACHED', 'UNKNOWN']),
+  }).strict(),
+  additionalCost: z.object({ amount: z.number().finite().nonnegative(), currency: z.string().regex(/^[A-Z]{3}$/), basis: identifierSchema }).strict(),
+  requiredConfirmations: z.array(z.enum(['SUPPLIER_1', 'SUPPLIER_2'])),
+  outboundEffects: z.array(resolutionOutboundEffectSchema),
+  action: z.object({ commandId: z.literal('supply_cases.resolution.apply_decision'), planId: resolutionPlanIdSchema }).strict(),
+}).strict().refine((plan) => plan.action.planId === plan.id, {
+  message: '[internal] Resolution action planId must match the plan id',
+  path: ['action', 'planId'],
+})
+export type ResolutionPlan = z.infer<typeof resolutionPlanSchema>
+
+export const finalResolutionFactsSchema = z.object({
+  schemaVersion: z.literal(1),
+  requiredQuantity: z.number().int().nonnegative(),
+  requiredDate: calendarDateSchema,
+  availableStock: z.number().int().nonnegative(),
+  supplier1Commitments: z.array(alternativeOfferCommitmentSchema),
+  supplier1OnTimeQuantity: z.number().int().nonnegative(),
+  supplier1LateQuantity: z.number().int().nonnegative(),
+  offerQuantity: z.number().int().positive(),
+  offerPrice: alternativeOfferPriceSchema,
+  customerDeadline: calendarDateSchema.nullable(),
+}).strict()
+export type FinalResolutionFacts = z.infer<typeof finalResolutionFactsSchema>
+
+export const finalResolutionAnalysisSchema = z.object({
+  schemaVersion: z.literal(1),
+  finalFactsHash: identifierSchema,
+  offerHash: identifierSchema,
+  facts: finalResolutionFactsSchema,
+  plans: z.array(resolutionPlanSchema).length(3),
+  recordedAt: isoDateTimeSchema,
+}).strict()
+export type FinalResolutionAnalysis = z.infer<typeof finalResolutionAnalysisSchema>
 
 export const supplyCaseSchema = z.object({
   id: identifierSchema,
@@ -148,12 +257,18 @@ export const supplyCaseSchema = z.object({
   customerCommitmentSnapshot: jsonValueSchema,
   originalCommitment: jsonValueSchema,
   supplier1Proposal: jsonValueSchema,
-  alternativeOffer: jsonValueSchema,
+  alternativeOffer: alternativeOfferSnapshotSchema.nullable(),
   initialAnalysis: jsonValueSchema,
   initialOptions: jsonValueSchema,
   selectedInitialOptionId: z.string().nullable(),
-  finalAnalysis: jsonValueSchema,
-  resolutionPlans: jsonValueSchema,
+  initialProposalId: z.string().nullable().default(null),
+  initialAnalyzedAt: isoDateTimeSchema.nullable().default(null),
+  initialFactsHash: z.string().nullable().default(null),
+  initialDecisionIdempotencyKey: z.string().nullable().default(null),
+  initialDecisionKind: z.enum(['SELECT', 'REJECT', 'EDIT']).nullable().default(null),
+  initialDecisionReason: z.string().nullable().default(null),
+  finalAnalysis: finalResolutionAnalysisSchema.nullable(),
+  resolutionPlans: z.array(resolutionPlanSchema).length(3).nullable(),
   selectedResolutionPlanId: z.string().nullable(),
   pendingResolutionPlan: jsonValueSchema,
   estimatedAdditionalCost: z.number().nullable(),
@@ -186,6 +301,12 @@ export const supplyCaseCreateSchema = supplyCaseSchema
     initialAnalysis: true,
     initialOptions: true,
     selectedInitialOptionId: true,
+    initialProposalId: true,
+    initialAnalyzedAt: true,
+    initialFactsHash: true,
+    initialDecisionIdempotencyKey: true,
+    initialDecisionKind: true,
+    initialDecisionReason: true,
     finalAnalysis: true,
     resolutionPlans: true,
     selectedResolutionPlanId: true,
@@ -225,6 +346,9 @@ export type TriageDisposition = z.infer<typeof triageDispositionSchema>
 export const triageOutcomeSchema = z.enum(['AUTO_APPLIED', 'NEEDS_ATTENTION', 'QUARANTINED'])
 export type TriageOutcome = z.infer<typeof triageOutcomeSchema>
 
+export const proposalAnnouncementStateSchema = z.enum(['NONE', 'CLAIMED', 'EMITTED'])
+export type ProposalAnnouncementState = z.infer<typeof proposalAnnouncementStateSchema>
+
 /**
  * Every accepted inbound message, recorded BEFORE business classification. It
  * is deliberately neutral: at this point the message may be a supplier
@@ -255,6 +379,7 @@ export const inboundMessageSchema = z.object({
   extractionConfidence: z.number().min(0).max(1).nullable(),
   triageDisposition: triageDispositionSchema.nullable(),
   triageOutcome: triageOutcomeSchema.nullable().default(null),
+  proposalAnnouncementState: proposalAnnouncementStateSchema.optional(),
   candidateIndexes: z.array(z.number().int().nonnegative()).default([]),
   needsAttention: z.boolean().default(false),
   providerMessageId: z.string().nullable(),
@@ -280,6 +405,7 @@ export const inboundMessageAppendSchema = inboundMessageSchema
     extractionConfidence: true,
     triageDisposition: true,
     triageOutcome: true,
+    proposalAnnouncementState: true,
     candidateIndexes: true,
     needsAttention: true,
     providerMessageId: true,
@@ -370,3 +496,82 @@ export function storeFileSchema<TRecord>(recordSchema: z.ZodType<TRecord>) {
     records: z.array(recordSchema),
   })
 }
+
+/**
+ * The two roles a case can wait on. A role, not a supplier row: `ACCEPT_DELAY`
+ * carries two deliveries for `SUPPLIER_1` and one role can still hold a
+ * `CANCEL` alongside a `COMMIT` (`USE_STOCK`), so the join tracks roles, never
+ * individual commitment rows.
+ */
+export const confirmationRoleSchema = z.enum(['SUPPLIER_1', 'SUPPLIER_2'])
+export type ConfirmationRole = z.infer<typeof confirmationRoleSchema>
+
+export const confirmationVerdictSchema = z.enum(['MATCHES_PLAN', 'DIFFERS_FROM_PLAN'])
+export type ConfirmationVerdict = z.infer<typeof confirmationVerdictSchema>
+
+/**
+ * One durable record per role per plan (`idempotencyKey` enforces it). Append
+ * only, like `OutboundCorrelation`: a supplier's confirmation is a historical
+ * fact, and the join is computed by reading the set, never by rewriting one row
+ * in place.
+ */
+export const supplyConfirmationSchema = z.object({
+  id: identifierSchema,
+  ...scopeShape,
+  caseId: identifierSchema,
+  planId: z.string().min(1),
+  planHash: z.string().min(1),
+  role: confirmationRoleSchema,
+  supplierEmail: z.string().min(1),
+  inboundMessageId: identifierSchema,
+  rfcMessageId: identifierSchema,
+  confirmedCommitments: z.array(extractedCommitmentSchema),
+  verdict: confirmationVerdictSchema,
+  mismatchReasons: z.array(z.string()),
+  /** `{caseId}:{planHash}:{role}` — one confirmation per role per plan. */
+  idempotencyKey: identifierSchema,
+  createdAt: isoDateTimeSchema,
+})
+export type SupplyConfirmation = z.infer<typeof supplyConfirmationSchema>
+
+export const supplyConfirmationRecordSchema = supplyConfirmationSchema
+  .omit({ tenantId: true, organizationId: true, createdAt: true })
+  .partial({ id: true })
+export type SupplyConfirmationRecordInput = z.infer<typeof supplyConfirmationRecordSchema>
+
+export const commitmentIntentSchema = z.enum(['COMMIT', 'CANCEL'])
+export type CommitmentIntent = z.infer<typeof commitmentIntentSchema>
+
+export const confirmationPlanIdSchema = z.enum(['ACCEPT_DELAY', 'USE_STOCK', 'USE_ALTERNATIVE'])
+export type ConfirmationPlanId = z.infer<typeof confirmationPlanIdSchema>
+
+const planSupplierCommitmentSchema = z.object({
+  role: confirmationRoleSchema,
+  supplierEmail: z.string().min(1),
+  quantity: z.number().nonnegative(),
+  deliveryDate: isoDateTimeSchema,
+  intent: commitmentIntentSchema,
+})
+export type ConfirmationPlanSupplierCommitment = z.infer<typeof planSupplierCommitmentSchema>
+
+/**
+ * The narrow, Zod-parsed slice of `SupplyCase.pendingResolutionPlan` the
+ * confirmation join is allowed to read. The column itself stays
+ * `jsonValueSchema` (Phase 3's contract), so this is parsed on every read,
+ * never assumed from the stored type.
+ *
+ * `requiredConfirmations` is carried on the plan rather than derived from
+ * `supplierCommitments`, because the set a case is waiting on is a decision a
+ * human already made when the plan was selected, not something a later code
+ * change should get to recompute retroactively for a case already in flight.
+ */
+export const confirmationPlanContractSchema = z.object({
+  planId: confirmationPlanIdSchema,
+  planHash: z.string().min(1),
+  supplierCommitments: z.array(planSupplierCommitmentSchema),
+  /** Absolute target allocation, never a delta — see coverage semantics in `data/coverage.ts`. */
+  internalStockAllocation: z.number().nonnegative(),
+  requiredConfirmations: z.array(confirmationRoleSchema),
+  additionalCost: z.number().nullable(),
+})
+export type ConfirmationPlanContract = z.infer<typeof confirmationPlanContractSchema>

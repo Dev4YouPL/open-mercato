@@ -8,6 +8,16 @@
 
 Manufacturer A odbiera prawdziwy e-mail o problemie dostawy, koreluje go z lokalnym zapotrzebowaniem i uruchamia trwały workflow. Propose-only agent analizuje wpływ na zapotrzebowanie, zapas, zlecenia produkcyjne i terminy klientów; człowiek najpierw wybiera sprawdzenie Supplier 2, a po otrzymaniu realnej oferty wybiera kompletny plan rezolucji. System wysyła decyzje do obu dostawców, czeka na wymagane potwierdzenia i dopiero wtedy atomowo aktualizuje lokalny plan, przelicza ryzyko oraz zamyka case jako `RESOLVED`.
 
+## 🎯 Nadrzędny cel biznesowy (core)
+
+Cały projekt ma doprowadzić każdy zweryfikowany problem z dostawą do potwierdzonego planu, który zabezpiecza pełne wymagane pokrycie, albo do jawnego zamknięcia sprawy bez zmian. Samo wykrycie problemu, rekomendacja agenta, wybór operatora, wysłanie akceptacji ani częściowa dostawa nie są sukcesem biznesowym.
+
+Jedynym zielonym warunkiem sukcesu jest komplet wymaganych potwierdzeń od dostawców oraz potwierdzenie przez system, że zapotrzebowanie jest w pełni pokryte. W scenariuszu demonstracyjnym oznacza to: `500 wymagane → potwierdzone 500/500 → PROTECTED → RESOLVED`.
+
+Główna ścieżka biznesowa, na której opieramy rozwój, wygląda tak: Supplier 1 zgłasza częściową dostawę, operator wybiera sprawdzenie Supplier 2, system odbiera i analizuje realną ofertę, operator wybiera ostateczny plan, dostawcy potwierdzają wykonanie, a dopiero potem system zamyka sprawę jako rozwiązaną. Opóźnienie, zapas magazynowy i alternatywny dostawca są odnogami tej samej zdolności, a nie osobnymi produktami.
+
+Każdy nowy agent, workflow, komenda, ekran i test musi wspierać ten cel albo być jasno oznaczony jako infrastruktura pomocnicza. Nie wolno pokazywać zielonego sukcesu przed końcowym potwierdzeniem pokrycia; brak pełnego pokrycia oznacza sprawę nadal otwartą, wymagającą uwagi albo zamkniętą bez sukcesu.
+
 ## 📣 Problem Statement
 
 Wiadomość od Supplier 1 informuje, że pierwotne zobowiązanie `500 × MAT-42` na środę jest zagrożone, a realna dostępność wynosi `300` w środę i `200` w piątek. Manufacturer A musi ustalić wpływ na swoje zlecenia produkcyjne i terminy klientów, rozważyć alternatywy, pozyskać prawdziwą ofertę Supplier 2 oraz uzyskać dwie decyzje człowieka bez przedwczesnego zapisu niepotwierdzonego planu.
@@ -17,6 +27,7 @@ Transport e-mail jest zawodny i co najmniej jednokrotny: wiadomości mogą być 
 ## 📣 Goals
 
 - **REQ-001:** Prawdziwa, napisana naturalnym jezykiem wiadomosc od `supplier@hackon-om-wro.cloud` tworzy jeden zweryfikowany i zdeduplikowany `SupplyCase` w zakresie tenant + organization; fakty wyciaga propose-only agent triazu, a czlowiek widzi je obok oryginalnej tresci.
+- **REQ-001A:** Jeżeli wiadomość jest pewnie rozpoznana jako `SUPPLY_PROPOSAL` dla `NEW_CASE`, SKU jest jawne i wskazuje dokładnie jeden lokalny `ProductionPlan`, brakujące pola oferty nie pozostawiają wiadomości poza kolejką: system tworzy i podłącza jeden `SupplyCase` w statusie `NEEDS_ATTENTION`, bez wymyślania dat lub commitments i bez uruchamiania workflow, initial-impact ani outbound.
 - **REQ-002:** Pierwsze uruchomienie agenta analizuje wpływ na zapotrzebowanie, zapas, zlecenia produkcyjne i terminy klientów, po czym proponuje trzy następne kroki bez mutacji.
 - **REQ-003:** Pierwsza decyzja człowieka pozwala wybrać `CHECK_ALTERNATIVE_SUPPLIER`; dopiero ta dyspozycja wysyła zapytanie do Supplier 2.
 - **REQ-004:** Workflow trwale czeka na prawdziwy `ALTERNATIVE_SUPPLY_OFFER` od `supplier2@hackon-om-wro.cloud` i wznawia się idempotentnie po jego korelacji.
@@ -268,14 +279,28 @@ The body is reduced to the author's NEW text: HTML is converted to plain text, q
 
 RFC 5322 `In-Reply-To` / `References` are resolved against our own recorded outbound `Message-ID`s and mark matching candidates as `threadMatch`. A thread match is strong evidence - we sent the message being answered - but it does not override the agent, because a supplier commonly replies to an old thread simply to reuse the address. The agent sees the flag and may select a different candidate, in which case it must state why.
 
-The message is auto-applied only when the agent's `confidence` clears the configured threshold, its `unresolved` list is empty, and thread evidence and agent choice do not contradict each other. Otherwise the case enters `NEEDS_ATTENTION` and a human picks the target from the same candidate list. Ambiguity is never resolved by guessing.
+The message is auto-applied only when the agent's `confidence` clears the configured threshold, its `unresolved` list is empty, and thread evidence and agent choice do not contradict each other. Otherwise it requires attention. Existing-case correlation remains fail-closed: low confidence, unresolved fields or contradictory thread evidence never links or mutates a candidate case, and a human picks the target from the same bounded candidate list. Ambiguity is never resolved by guessing.
+
+There is one narrow `NEW_CASE` exception for visibility, not for automatic processing. When all of the following hold, the deterministic apply step creates a case shell and links the message even though `unresolved` is non-empty:
+
+- intent is exactly `SUPPLY_PROPOSAL`;
+- correlation is exactly `NEW_CASE`;
+- confidence still clears the configured threshold;
+- `sku` is present and resolves, within the same tenant + organization, to exactly one local `ProductionPlan`;
+- there is no thread contradiction.
+
+The created case takes `sku`, `requiredQuantity`, `requiredDate`, production-plan/order references and customer snapshot only from that local plan. It is created directly as `NEEDS_ATTENTION` with the existing case reason `MISSING_DATA`; the linked `InboundMessage` retains `triageOutcome = NEEDS_ATTENTION`, `needsAttention = true` and `failureReason = NEEDS_ATTENTION:UNRESOLVED_FIELDS`. `triageDisposition` remains null because no human has confirmed the extraction. `supplier1Proposal` may contain only schema-valid facts actually extracted from the mail; absent quantities, dates or commitments stay absent/empty and are never copied from the local demand or synthesized.
+
+This branch emits no `supply_cases.case.proposal_received`, starts no `WorkflowInstance`, leaves `workflowInstanceId` null, runs no initial-impact analysis and sends no RFQ or other outbound message. It only makes the accepted mail visible and actionable as a case. A later, explicitly guarded human remediation flow may complete the facts and start processing; defining that remediation command is outside this minimal change.
+
+If SKU is absent, confidence is below threshold, no local plan matches, or multiple local plans make the target non-deterministic, no case is created. Existing-case replies, including replies with unresolved fields, keep their current correlation and review behavior unchanged.
 
 `causationId` is no longer carried in the body. For every message that answers one of ours - the Supplier 2 offer and both confirmations - the reply chain supplies causation directly, which is what prevents a stale offer from resuming a newer wait. A reply whose `In-Reply-To` resolves to a superseded request is rejected for resumption and recorded.
 
 **Invariants across all stages.**
 
 - Every outbound message uses a durable idempotency key derived from case + phase + recipient, and its `Message-ID` is persisted so replies can be correlated later.
-- Extraction failure, sender mismatch, an unusable body, or an unavailable/invalid LLM provider enter quarantine or `NEEDS_ATTENTION` without changing the case. No path fabricates domain values to keep the demo moving.
+- Extraction failure, sender mismatch, an unusable body, or an unavailable/invalid LLM provider enter quarantine or `NEEDS_ATTENTION` without changing an existing case. The bounded `NEW_CASE` visibility branch may create a non-actionable case shell from a uniquely resolved local plan, but no path fabricates supplier commitments or dates to keep the demo moving.
 - The human reviewing a case always sees the original message text next to the extracted facts, so an extraction error is visible rather than silently authoritative.
 - Every wait has a configurable timeout. On expiry the case enters `NEEDS_ATTENTION`; manual resume re-enters the same wait without changing its correlation identity, while cancel moves it to terminal `CANCELLED`. A timeout never marks the case `RESOLVED`.
 
@@ -304,7 +329,7 @@ The triage agent's entire output surface. Validated with Zod; anything failing v
 ```
 
 - `correlation.kind` is `EXISTING_CASE` or `NEW_CASE`. `candidateIndex` addresses the code-built candidate list by position - never a free-form case ID.
-- `unresolved` names every field the agent could not determine from the text. A non-empty list forces human review.
+- `unresolved` names every field the agent could not determine from the text. A non-empty list always forces human review; only the bounded `NEW_CASE` visibility branch may additionally create a linked, non-actionable `NEEDS_ATTENTION` case shell.
 - `price` is present only for an offer intent. Amounts and dates are extracted, never invented; a value absent from the text is `unresolved`, not a default.
 - `rationale` quotes or paraphrases the deciding sentence so a reviewer can check the extraction against the original in one glance.
 
@@ -347,6 +372,8 @@ Outbound messages are written as readable prose addressed to a person. They carr
 | `supplier_1_confirmed_at`, `supplier_2_confirmed_at` | confirmation evidence |
 | `workflow_instance_id` | scalar reference, no ORM relation |
 | `resolved_at`, `created_at`, `updated_at`, `deleted_at` | optimistic locking and lifecycle |
+
+For the bounded unresolved `NEW_CASE` branch, no schema or migration is added. Existing fields represent the state: `status = NEEDS_ATTENTION`, `needs_attention_reason = MISSING_DATA`, `workflow_instance_id = null`, local-demand fields come from the uniquely matched `ProductionPlan`, and `supplier_1_proposal` contains only validated facts extracted from the mail. Missing supplier dates/commitments remain absent or empty rather than being populated from `required_date`.
 
 ### InboundMessage
 
@@ -518,15 +545,17 @@ Dialogs support Cmd/Ctrl+Enter and Escape. All copy uses i18n. Statuses use sema
 | TEST-001B | reply to an existing case | no second case, message links to the offered candidate, existing workflow receives a signal, no duplicate effect |
 | TEST-001C | customer/unrelated message | `QUARANTINED`, reason persisted, inbound audit retained, no case proposal event or business workflow |
 | TEST-001D | low confidence | `NEEDS_ATTENTION`, `needs_attention=true`, candidate indexes retained, no case mutation |
-| TEST-001E | unresolved data | `NEEDS_ATTENTION`; no quantity, date, price or SKU is fabricated |
+| TEST-001E | unresolved data for an existing-case target, ambiguous target or unresolved SKU | `NEEDS_ATTENTION`; no candidate case is linked or mutated and no quantity, date, price or SKU is fabricated |
 | TEST-001F | agent contradicts `threadMatch` | `NEEDS_ATTENTION`; no automatic assignment to the conflicting case |
 | TEST-001G | provider unavailable/schema-invalid | `QUARANTINED`, `needs_attention=true`, no case or workflow effect |
 | TEST-001H | replay of the same event | one inbound message, one triage invocation, one case, one workflow and one business event |
 | TEST-001I | prompt-injection-like message text | body cannot select arbitrary `caseId`, bypass `candidateIndex`, invoke tools, send email or mutate data outside the system decision |
+| TEST-001J | confident `SUPPLY_PROPOSAL` + `NEW_CASE` + resolved SKU/local plan, but missing dates or commitments | exactly one case shell is created from local-demand facts with `NEEDS_ATTENTION:MISSING_DATA`; inbound message links to it and retains `NEEDS_ATTENTION:UNRESOLVED_FIELDS`; extracted missing facts remain absent/empty; no `proposal_received`, workflow instance, initial-impact run, decision proposal, RFQ or outbound message; replay creates nothing else |
+| TEST-001K | unresolved `NEW_CASE` without SKU, below confidence threshold, with zero plans or with ambiguous plan matches | no case is created or linked; message remains reviewable and no workflow/outbound side effect occurs |
 | TEST-002 | duplicate proposal | no duplicate case, workflow or outbound effect |
 | TEST-003 | HTML body, quoted reply history and channel footer | sanitizer yields only the author's new text; superseded quantities never reach the agent |
 | TEST-003A | prose proposal with all facts present | extraction matches expected SKU, quantities and dates; `unresolved` empty |
-| TEST-003B | vague prose with a missing date, and an unrelated message | `unresolved` non-empty -> NEEDS_ATTENTION; `UNRELATED` -> quarantine; neither mutates a case |
+| TEST-003B | vague prose with a missing date, and an unrelated message | `unresolved` non-empty always requires attention; only TEST-001J's bounded `NEW_CASE` branch may create a non-actionable case shell; `UNRELATED` -> quarantine |
 | TEST-003C | message text instructing the agent to reassign, approve or contact a supplier | no effect; instruction text is extracted as data or ignored, never obeyed |
 | TEST-003D | LLM provider unavailable or returning schema-invalid output | quarantine plus NEEDS_ATTENTION; no fabricated values, no case mutation |
 | TEST-004 | unauthorized sender / cross-org lookup | fail closed, no data leak |
@@ -570,6 +599,16 @@ Ships a safe vertical slice in which a real Supplier 1 proposal creates exactly 
 12. Add TEST-001 through TEST-004B and run generation, typecheck and targeted tests.
 
 **Exit gate:** a live, plain-language proposal from Supplier 1 produces one scoped case with reviewable extracted facts after repeated polling, and remains inspectable after restart.
+
+> **Exit gate status (audited 2026-09-19): NOT MET. Phase 1 is `IN_PROGRESS`.**
+> Every deterministic oracle is green, including one durable `WorkflowInstance` per case verified on a
+> live database (TEST-002A) and the read-only browser slice (3/3). Three things are missing:
+> (1) **no live agent provider run** — `OPENAI_API_KEY`/`ANTHROPIC_API_KEY` are empty in this
+> environment, so `createAgentRuntimeInvoker` has never executed and every triage test injects a fake
+> invoker; (2) **no live inbound mail run** — nothing records a real message from
+> `supplier@hackon-om-wro.cloud` traversing the gate, so "after repeated polling" is unproven;
+> (3) **TEST-UI-009/010/012 have no browser evidence.** Full record:
+> [`../runs/2026-09-19-phase1-phase2-closure/STATE.md`](../runs/2026-09-19-phase1-phase2-closure/STATE.md).
 
 #### Phase 1 delivery notes — step 1 (activation prerequisites)
 
@@ -622,11 +661,12 @@ Each row is one commit-sized task that must leave the app buildable. `Oracle` is
 | T-08b | `DONE` | 8 | Thread resolution from `In-Reply-To` / `References` against persisted outbound `Message-ID`s; `threadMatch` flag | TEST-004B |
 | T-09a | `DONE` | 9 | Register `inbound_triage_advisor`: no tools, no actions, no network; `InboundSignal` as outcome contract | TEST-003A, TEST-003C pass over T-08a's real `InboundCandidate`; a live provider run is still unexercised (no key in this environment) |
 | T-09b | `DONE` | 9 | `supply_cases.inbound.apply_triage`: auto-apply bar (confidence + empty `unresolved` + no thread contradiction), else NEEDS_ATTENTION | TEST-003B, TEST-003D pass against the real JSON store, including idempotent redelivery and the no-mutation assertions |
+| T-09c | `TODO` | 9 | Add the bounded unresolved `NEW_CASE` visibility branch: resolve one local plan by SKU, create/link a `NEEDS_ATTENTION:MISSING_DATA` case shell from local facts, preserve unresolved extraction and suppress every downstream effect | TEST-001J and TEST-001K pass; focused existing-correlation tests remain green |
 | T-10a | `DONE` | 10 | Emit `supply_cases.inbound_message.accepted` after the gate and `supply_cases.case.proposal_received` after deterministic triage apply, both post-commit | TEST-001A–C and TEST-001H pass; proposal event is declared and emitted only for a valid auto-applied supplier proposal |
-| T-10b | `WIP` | 10 | Start exactly one inbound workflow instance for a valid supplier proposal; persist `workflow_instance_id`; signal an existing scoped workflow for replies | Production code resolves the real `workflowExecutor`/`signalHandler` and the deterministic event E2E verifies one start/signal boundary; live database-backed WorkflowInstance restart coverage remains |
-| T-11 | `TODO` | 11 | Case list + detail read surfaces: `RECEIVED`, original message text beside extracted facts, loading/empty/error states | manual verification against the exit gate |
+| T-10b | `DONE` | 10 | Start exactly one inbound workflow instance for a valid supplier proposal; persist `workflow_instance_id`; signal an existing scoped workflow for replies | TEST-002A passes on the real engine over a live database: one `WorkflowInstance` per case, `workflow_instance_id` persisted, the run parked on `await-reply`, still there after a process restart, the next correlated message signalling that same instance, a replay creating no second instance and repeating no effect, and the instance unreachable from another tenant |
+| T-11 | `WIP` | 11 | Case list + detail read surfaces: `RECEIVED`, original message text beside extracted facts, loading/empty/error states | Implementation ships and is covered: `read-model.test.ts` (scoped pagination, derived coverage, cross-tenant isolation, redaction without `messages.view`, degraded state), `read-api.test.ts` (auth/feature metadata, scoped list, invalid-filter rejection, 404 out of org) and `__integration__/supply-cases-read-only.spec.ts` 3/3 in the browser. NOT `DONE`: the row's oracle is manual verification against the Phase 1 exit gate, and that gate is unmet (no live provider run, no live inbound mail run, TEST-UI-009/010/012 unexecuted) |
 
-**Ordering constraints.** T-02 precedes everything. The JSON repository's scoped dedupe contract (`BACKLOG-001`) enables T-07 for the demo; production T-03b must preserve the same unique claim invariant before the ORM backend is enabled. T-04a precedes T-06 (the allowlist compares normalized addresses). T-04b precedes T-09a (the schema is the agent's outcome contract). T-05a precedes T-05b. T-08a and T-08b precede T-09a (both feed the agent's input). T-09b precedes T-10a/T-10b. T-11 is last.
+**Ordering constraints.** T-02 precedes everything. The JSON repository's scoped dedupe contract (`BACKLOG-001`) enables T-07 for the demo; production T-03b must preserve the same unique claim invariant before the ORM backend is enabled. T-04a precedes T-06 (the allowlist compares normalized addresses). T-04b precedes T-09a (the schema is the agent's outcome contract). T-05a precedes T-05b. T-08a and T-08b precede T-09a (both feed the agent's input). T-09b precedes T-09c and T-10a/T-10b. T-11 is last.
 
 #### Implementation audit — 2026-09-18
 
@@ -677,11 +717,14 @@ Each row is one commit-sized task that must leave the app buildable. `Oracle` is
   respective persistence boundaries, from ONE site each. `proposal_received` fires only
   when a case is opened — TEST-001A asserts one event for a new proposal, TEST-001B
   asserts none for a reply onto an existing case.
-- `T-10b` is `WIP`: the subscriber resolves the real `workflowExecutor`/`signalHandler`
+- `T-10b` is `DONE`: the subscriber resolves the real `workflowExecutor`/`signalHandler`
   through DI, starts one instance per case, persists `workflow_instance_id` before
-  executing it and signals the existing instance for a reply. What remains is verification
-  against a live database-backed `WorkflowInstance` — the E2E drives a workflow harness,
-  so restart and signal delivery are asserted at the boundary, not through the engine.
+  executing it and signals the existing instance for a reply — and that is now verified
+  against the engine itself. `__tests__/inbound-workflow-engine.db.test.ts` resolves the
+  workflows module's own DI registrations over a live MikroORM connection, so the facts it
+  asserts are persisted `workflow_instances` rows rather than harness call counts. The
+  restart is a real one: the ORM connection and the JSON store are closed and rebuilt from
+  the same durable state between the start and the reply.
 - `T-11` remains `TODO`: there is no API or UI for supply cases.
 - IMAP transport is connected: `channel_imap`, `communication_channels` and the
   app-owned `mailbox_seed` connect the configured mailbox. `supply_cases` consumes
@@ -699,15 +742,12 @@ Phase 1 is joined end to end. A live message now travels transport gate -> claim
 `SupplyCase` + `supply_cases.case.proposal_received` -> one workflow instance, and a reply
 signals that instance instead of starting a second one.
 
-Three things are left before Phase 1 closes, in this order:
+Two things are left before Phase 1 closes, in this order:
 
-1. **Finish `T-10b` against a real engine.** The E2E asserts start/signal at the DI
-   boundary with a workflow harness. A database-backed `WorkflowInstance` is what proves
-   the restart requirement, and it is the one Phase 1 claim currently resting on a fake.
-2. **Exercise a live provider.** Every triage test injects the agent through
+1. **Exercise a live provider.** Every triage test injects the agent through
    `inboundTriageInvokerFactory`, so `createAgentRuntimeInvoker` itself has never run. The
    first real run is where a prompt or schema mismatch will surface.
-3. **`T-11`**: case list and detail read surfaces — `RECEIVED`, the original message text
+2. **`T-11`**: case list and detail read surfaces — `RECEIVED`, the original message text
    beside the extracted facts, explicit loading/empty/error states. That is also the
    phase's exit gate, a manual check against a live mailbox.
 
@@ -832,22 +872,329 @@ Ships the first useful agent loop and real RFQ to Supplier 2.
 
 **Exit gate:** the user selects `CHECK_ALTERNATIVE_SUPPLIER`, exactly one real RFQ is delivered, and the durable workflow waits after restart.
 
+> **Exit gate status (audited 2026-09-19): NOT MET. Phase 2 is `IN_PROGRESS`.**
+> The durability half is proven on a live database: `TEST-006` in
+> `__tests__/inbound-workflow-engine.db.test.ts` runs SELECT C through one send, delivery evidence,
+> a real restart and a replay, ending with one workflow, one logical RFQ and `already_applied`.
+> TEST-005, TEST-005B, TEST-006A, TEST-006C and TEST-006D (browser) are green too, as are the atomic
+> concurrent decision claim, the optimistic-lock decision route and the explicit workflow transitions.
+> Missing: (1) **no real RFQ has ever been delivered** — every outbound assertion injects a fake
+> `SupplierOutboundPorts.send`, and `communicationChannelsSendAsUser` has never carried an
+> `ALTERNATIVE_SUPPLY_REQUEST`; (2) **no live provider run** for `initial_impact_advisor`;
+> (3) **TEST-006B is partial** — `REJECT` and `EDIT` have no test; (4) **step 4's `INVOKE_AGENT` step
+> and P2-07's Caseload disposition bridge were not built** — the implementation uses a
+> `WAIT_FOR_SIGNAL` step plus the app's own guarded decision route, which needs to be accepted here or
+> implemented. Full record:
+> [`../runs/2026-09-19-phase1-phase2-closure/STATE.md`](../runs/2026-09-19-phase1-phase2-closure/STATE.md).
+
 ### Phase 3: Offer correlation and final decision
 
 Ships the second analysis based on real supplier evidence.
 
-1. Atomically claim the inbound reply by its RFC 5322 `Message-ID` and run it through sanitization and triage.
-2. Validate sender and scope, resolve the reply chain to the RFQ we sent, and validate the extracted quantity, date, amount and currency; an offer whose price or date is `unresolved` goes to NEEDS_ATTENTION rather than into the comparison.
-3. Persist the encrypted offer and resume/read-through the waiting workflow.
-4. Recompute impacts with actual offer values.
-5. Define the typed in-process `final_resolution_advisor` and three complete `ResolutionPlan` options.
-6. Add the second `INVOKE_AGENT` step and forced human disposition.
-7. Render plan comparison including both suppliers, stock, cost, production and customer impact.
-8. Implement `resolution.request_confirmation` to persist the immutable pending plan.
-9. Send plan-specific `SUPPLY_ACCEPTANCE` messages only after the second disposition.
-10. Add TEST-007 through TEST-009 and TEST-015/016.
+#### Entry gate and ownership
 
-**Exit gate:** a real Supplier 2 offer yields three grounded plans; approving plan C sends two acceptances but leaves production data unchanged.
+Phase 3 is app-owned. All runtime changes belong below
+`manufacturer-app/src/modules/supply_cases`; it must not modify `packages/core`,
+`packages/enterprise`, or the contracts owned by those packages. It extends the existing
+`InboundMessage`, `OutboundCorrelation`, `SupplyCase`, command bus, event bus, workflow and
+Caseload contracts instead of introducing a parallel orchestration or messaging layer.
+
+Implementation may start only after the Phase 2 exit gate is green: the SAME durable workflow
+instance must have created and delivered exactly one `ALTERNATIVE_SUPPLY_REQUEST`, persisted its
+correlation anchor, and be paused waiting for Supplier 2. The current repository does not yet meet
+that gate: `src/modules/supply_cases/workflows.ts` still implements only
+`START -> WAIT_FOR_SIGNAL(await-reply) -> END`. Phase 3 must extend the completed Phase 2 graph,
+not replace or bypass it.
+
+The local JSON backend remains a demo/test adapter behind the existing repositories. It is not
+encrypted production storage and must never be described as such. Phase 3 tests and the demo use
+synthetic, non-sensitive mailbox content. The future ORM adapter must map offer/body fields through
+Open Mercato encryption helpers and `findWithDecryption`/`findOneWithDecryption`; do not add custom
+cryptography to the JSON adapter.
+
+#### Inbound offer correlation, claim and triage
+
+The existing intake path remains authoritative:
+
+1. `communication_channels.message.received` passes the deterministic channel, scope and sender
+   gate, then `InboundMessageRepository.appendIfAbsent` atomically claims the normalized RFC 5322
+   `Message-ID` within tenant and organization scope. A replay returns the existing record and
+   produces no second triage, offer, signal or workflow effect.
+2. `prepareInboundBody` stores the raw synthetic demo body and sends only sanitized new author text
+   to the triage agent. Quote-only text is empty and is quarantined; quoted quantities are never
+   re-read as a new offer.
+3. `assembleTriageContext` builds the closed candidate list. A Supplier 2 offer is eligible only if
+   the normalized sender is a participant of the case, the case is in the same tenant and
+   organization, and `In-Reply-To`/`References` resolves to the current, non-superseded
+   `ALTERNATIVE_SUPPLY_REQUEST` `OutboundCorrelation` for that case and recipient.
+4. The existing `supply_cases.inbound.apply_triage` command invokes the propose-only triage agent.
+   It must return `ALTERNATIVE_SUPPLY_OFFER` plus the candidate index and extracted commitments;
+   free-form case IDs remain forbidden.
+
+The current narrow `AUTO_APPLY` path continues unchanged for ordinary messages. Phase 3 adds one
+deterministic audit exception: when a message resolves uniquely to the current Supplier 2 RFQ but
+its offer fields are incomplete or invalid, it may set `InboundMessage.caseId` to that resolved case
+while retaining `triageDisposition = NEEDS_ATTENTION`. This makes the original message visible in
+the case timeline without treating it as accepted evidence. Ambiguous, stale, superseded,
+cross-scope or wrong-sender messages remain unlinked/quarantined.
+
+#### Offer validation and atomic persistence
+
+Add strict schemas beside the existing inbound schemas, and a pure validator under
+`lib/resolution/`. A usable Supplier 2 offer requires all of the following:
+
+- intent is `ALTERNATIVE_SUPPLY_OFFER` and the candidate is the uniquely correlated open case;
+- extracted SKU equals the case SKU;
+- quantity is a positive integer and equals the outstanding RFQ quantity; this MVP cannot safely
+  prorate a total offer price;
+- each commitment date is a valid `YYYY-MM-DD` calendar date and quantities sum to the offered
+  quantity;
+- total amount is finite and non-negative;
+- currency is exactly three uppercase letters and equals the case currency; no FX conversion is
+  available in this phase;
+- the correlated RFQ is current, not superseded, and the case is waiting for this alternative offer.
+
+A later-than-required date is valid evidence and is persisted; it makes `USE_ALTERNATIVE`
+infeasible during recomputation rather than making the message malformed. Missing/unresolved
+quantity, date, amount or currency; a quantity/currency mismatch; conflicting second offer; or an
+invalid calendar date sets the case to `NEEDS_ATTENTION`, records a bounded reason, emits no resume
+signal and creates no resolution plans. Raw bodies and amounts must not be copied into events or
+logs.
+
+Extend `SupplyCase.alternativeOffer` as a typed snapshot containing at least:
+`schemaVersion`, `supplierId`, `sourceInboundMessageId`, `sourceRfcMessageId`,
+`sourceOutboundCorrelationId`, `requestedQuantity`, `offeredQuantity`, normalized commitments,
+`priceTotal { amount, currency }`, `offerHash`, and `recordedAt`. `offerHash` is a canonical hash of
+the decision-relevant normalized fields, not the raw body.
+
+Implement repository operation `recordAlternativeOfferIfAbsent(scope, caseId, expectedUpdatedAt,
+offer)` inside the SupplyCase collection's existing serialized write lock. The compare-and-set,
+empty-slot check and write are one critical section:
+
+- same source message and same `offerHash` is an idempotent no-op;
+- a different source/hash never overwrites accepted evidence and yields `OFFER_CONFLICT`;
+- stale `expectedUpdatedAt` yields the standard optimistic-lock conflict;
+- a scope mismatch is indistinguishable from not found.
+
+After the offer commits, emit `supply_cases.alternative_offer.received` and signal the already
+persisted `workflowInstanceId`. If the workflow has not reached its wait yet, the engine's durable
+signal/read-through contract must consume the recorded offer when entering the step. A signal may
+be retried; the `(workflowInstanceId, stepId, offerHash)` effect is idempotent. Never create a second
+workflow instance for the offer.
+
+#### Recompute and immutable resolution plans
+
+Re-run the existing deterministic impact service using the persisted offer snapshot. Code, not the
+LLM, creates exactly three complete plans and their action payloads. Add the strict `ResolutionPlan`
+schema to `data/types.ts` (or a dedicated schema imported there) and pure construction under
+`lib/resolution/`. Every plan contains:
+
+- `schemaVersion`, stable `id`, `factsHash`, `offerHash` and canonical `planHash`;
+- feasibility plus bounded infeasibility reasons;
+- Supplier 1 accepted/cancelled commitments and Supplier 2 accepted/declined commitments;
+- stock allocation and remaining stock;
+- on-time quantity, shortage, production impact and customer/deadline impact;
+- `additionalCost { amount, currency, basis }`;
+- the exact required confirmation set;
+- ordered outbound effects with recipient, technical phase and expected quantities/dates;
+- the exact namespaced command action later allowed for that plan.
+
+For the frozen `SC-001` demo fixture the plans are:
+
+| ID | Supplier 1 | Supplier 2 | Stock | Coverage / customer | Additional cost | Required confirmations |
+|---|---|---|---|---|---|---|
+| `ACCEPT_DELAY` | accept 300 Wednesday + 200 Friday | decline offer | 0 | late 200; customer risk remains exposed | `0 PLN` | Supplier 1 |
+| `USE_STOCK` | accept 300 Wednesday; cancel 200 Friday | decline offer | allocate 200 | 500 on time; protected | `300 PLN` demo stock policy | Supplier 1 |
+| `USE_ALTERNATIVE` | accept 300 Wednesday; cancel 200 Friday | accept 200 using actual offer commitments | 0 | 500 on time only when offer dates satisfy the deadline | actual persisted offer total, `1400 PLN` in the fixture | Supplier 1 and Supplier 2 |
+
+The `300 PLN` stock basis is an app-owned deterministic demo policy, isolated in a named
+resolution policy module; it is not a platform pricing rule. An infeasible plan remains visible and
+labelled but cannot be approved. Persist the final facts snapshot, all three plans, their hashes and
+`finalFactsHash` on `SupplyCase` before invoking the agent. A repeat with equal facts/offer hashes is
+a no-op; changed facts invalidate the earlier analysis and proposal.
+
+#### `final_resolution_advisor` and second human disposition
+
+Register `supply_cases.final_resolution_advisor` in the existing `ai-agents.ts` using the in-process
+runtime and canonical `kind: 'proposal'` envelope. It receives only the bounded deterministic facts
+and three code-built plans, has no tools, no mutation policy, and may explain/rank but may not create
+or alter plans. Validate its output against the persisted options: every option ID, `planHash` and
+action payload must match exactly; unknown, missing, duplicated or mutated plans fail closed with
+`ANALYSIS_FAILED` and `NEEDS_ATTENTION`. There is no actionable LLM-generated fallback.
+
+Add the second stable `INVOKE_AGENT` workflow step with the installed contract:
+`agentId: 'supply_cases.final_resolution_advisor'`, a bounded input mapping, strict output mapping,
+and `onResult: { alwaysAsk: true }`. Its subject identifies the SupplyCase without embedding mail
+bodies or customer/supplier-private text. Forced review creates one Caseload proposal and parks the
+same workflow; replay must resolve the existing run/proposal, not create another.
+
+Use app-owned persistent subscribers for the installed proposal events:
+
+- `agent_orchestrator.proposal.created` binds the proposal ID to this case only when agent ID,
+  workflow instance, stable final step ID and scope all match;
+- `agent_orchestrator.proposal.disposed` is the authoritative bridge for `selectedOptionId`, because
+  `agent_orchestrator.proposal.ready` does not carry it. Locate the bound case in scope, verify the
+  proposal/workflow/step, and invoke `supply_cases.resolution.apply_decision` idempotently.
+
+The Caseload user needs both `agent_orchestrator.proposals.dispose` and
+`supply_cases.decisions.apply`. The app subscriber must re-authorize `dispositionBy` for the latter
+before any app side effect; enterprise authorization alone is insufficient. `approved` accepts only
+an exact feasible persisted option. `edited` cannot safely supply the edited payload through the
+current event contract, so it sends nothing and moves the case to `NEEDS_ATTENTION` for reanalysis.
+`rejected` records a terminal human decision and sends nothing. Unauthorized, stale, malformed,
+guardrail-blocked, timed-out or errored dispositions send nothing and remain non-green.
+
+#### Decision effect and plan-specific communication
+
+Add these app command handlers using strict zod inputs and the existing command bus:
+
+- `supply_cases.offer.record_alternative`
+- `supply_cases.analysis.record_final`
+- `supply_cases.analysis.bind_final_proposal`
+- `supply_cases.resolution.apply_decision`
+- `supply_cases.resolution.request_confirmation`
+- `supply_cases.case.mark_needs_attention`
+
+`resolution.apply_decision` reloads the case, proposal binding and exact selected plan; verifies
+scope, disposition, actor authorization, `updatedAt`, `factsHash`, `offerHash`, `planHash` and case
+status; then calls `resolution.request_confirmation`. No command accepts a caller-supplied plan body
+as authority.
+
+`resolution.request_confirmation` performs a scoped compare-and-set that persists
+`selectedResolutionPlanId`, an immutable copy in `pendingResolutionPlan`, the decision/proposal
+identity and a sending status before any network side effect. It then uses the existing
+`sendSupplierMessage` seam with phase `SUPPLY_ACCEPTANCE`. The selected plan is the sole source of
+recipients, quantities and dates:
+
+- `ACCEPT_DELAY`: send Supplier 1 its accepted delayed commitments and Supplier 2 a decline notice;
+- `USE_STOCK`: send Supplier 1 the 300-unit accepted/amended commitment and Supplier 2 a decline;
+- `USE_ALTERNATIVE`: send Supplier 1 the 300-unit accepted/amended commitment and Supplier 2 the
+  200-unit acceptance using the actual persisted offer.
+
+The existing technical phase name `SUPPLY_ACCEPTANCE` covers both acceptance/amendment and the
+Supplier 2 decision notice; the rendered message states the business decision explicitly. Decline
+notices require no confirmation. Every outbound effect has a deterministic idempotency key derived
+from case, selected plan/effect, phase and normalized recipient, and persists its
+`OutboundCorrelation` before send. A replay reuses the RFC Message-ID and cannot create a second
+logical send. If plan C's second send fails, retain the first result and retry only the missing
+effect. Do not roll back or mutate production data.
+
+Case state advances to `WAITING_FOR_SUPPLIER_CONFIRMATIONS` only after
+`communication_channels.message.sent` evidence exists for every declared effect. Acceptance by the
+communication hub is not SMTP delivery evidence. Delivery failure/timeout records the failed
+effect, remains non-green, and exposes an idempotent retry. Phase 3 never updates production plans,
+production orders, inventory allocation or supplier commitments; those remain Phase 4 work after
+the confirmation join.
+
+#### Events, privacy and failure reasons
+
+Extend `events.ts` with scoped, additive event IDs:
+
+- `supply_cases.alternative_offer.received`
+- `supply_cases.final_analysis.recorded`
+- `supply_cases.resolution_decision.applied`
+- `supply_cases.plan_acceptance.requested`
+- `supply_cases.plan_acceptance.sent`
+
+Payloads contain tenant/organization identifiers plus record IDs, bounded status, hashes and effect
+counts only. They must not contain raw/sanitized bodies, addresses beyond existing correlation IDs,
+customer data, offer amounts or complete plans. Emit after successful persistence. Consumers and
+handlers re-read scoped state and are replay-safe.
+
+Reuse existing failure reasons where they are semantically exact (`MISSING_DATA`,
+`ANALYSIS_FAILED`, `STALE_DECISION`, `WAIT_TIMEOUT`, `DELIVERY_FAILED`) and add only the bounded
+app-level reasons needed to distinguish `OFFER_INVALID`, `OFFER_CONFLICT` and
+`DECISION_UNAUTHORIZED`. Each path records an auditable reason without leaking raw content.
+
+#### UI, ACL and i18n
+
+Extend the existing detail API and `/backend/supply-cases/[id]`; do not add a parallel decision
+screen. The scoped read model exposes the alternative offer summary, recomputed impact, exactly
+three plans, feasibility, supplier/stock/cost/production/customer comparison, decision state,
+delivery state and proposal link. It does not expose raw email bodies by default.
+
+The comparison must:
+
+- show actual Supplier 2 price/currency and commitments, the `300 PLN` stock-cost basis, affected
+  quantities/dates, required confirmations and infeasibility reasons;
+- make all options neutral with no preselection and disable infeasible approval;
+- deep-link to the canonical Caseload route `/backend/caseload/[proposalId]` for disposition rather
+  than implementing a second approval endpoint;
+- show `NEEDS_ATTENTION`, stale/conflict, timeout, partial-send and retry states; never show green
+  before Phase 4 completes;
+- use `LoadingMessage`, `ErrorMessage`, `apiCall`, guarded mutations where applicable, semantic
+  design-system tokens, keyboard operation, focus management and accessible labels.
+
+Keep the existing app ACL IDs. Viewing requires `supply_cases.view`; message evidence requires
+`supply_cases.messages.view`; retry/operational actions require `supply_cases.manage`; final
+disposition requires both the enterprise dispose feature and `supply_cases.decisions.apply`.
+Add every Phase 3 label, status, failure reason, field, action, toast and conflict message to all five
+existing module locale files. No user-facing string or status color is hard-coded.
+
+#### Failure, concurrency and timeout behavior
+
+- Offer arrives before the workflow wait: persist once and consume by read-through on wait entry.
+- Duplicate message/signal/event: no new case, offer, analysis, proposal, disposition or send.
+- Two different offers race: one compare-and-set wins; the other records `OFFER_CONFLICT` and cannot
+  overwrite the accepted snapshot.
+- Facts or offer change after analysis: hashes fail, the proposal is stale, no send occurs and a new
+  analysis is required.
+- Two dispositions race: proposal optimistic locking plus SupplyCase compare-and-set permits one
+  decision effect; the loser receives/records conflict without duplicate sends.
+- Agent malformed output, guardrail stop, error or timeout: `NEEDS_ATTENTION`, no actionable
+  fallback and no outbound side effect.
+- Proposal rejected/edited/unauthorized: audited non-green outcome and no outbound side effect.
+- Workflow restart at either wait: same instance, persisted offer/proposal/plan and replay-safe
+  continuation.
+- Partial delivery: retain successful anchors/evidence, retry missing effects only, and never advance
+  until every required Phase 3 outbound effect has delivery evidence.
+
+#### Implementation slices and verification
+
+Implement in this order, keeping each slice testable:
+
+1. Offer schemas, pure validation, typed snapshot and repository compare-and-set.
+2. Correlated inbound command/subscriber path, NEEDS_ATTENTION mapping and same-instance resume.
+3. Recompute service and deterministic construction/hash validation of all three plans.
+4. Typed `final_resolution_advisor`, final `INVOKE_AGENT`, proposal binding and forced human wait.
+5. Disposition bridge, dual authorization, decision/request-confirmation commands and idempotent
+   plan-specific sends.
+6. Detail read model/API/UI, ACL-aware actions, i18n and failure/retry presentation.
+7. Focused unit, integration and browser suites, then the Phase 3 exit gate.
+
+Required unit coverage includes strict offer validation (quantity/date/amount/currency), canonical
+hashes, exact three-plan math/feasibility, tampered agent output rejection, event redaction and
+idempotency-key stability. Required integration coverage is self-contained and includes:
+
+- duplicate, stale, superseded, wrong-sender and cross-scope offer intake;
+- atomic competing-offer and optimistic-lock races;
+- uniquely correlated invalid offer linked for audit but not applied/resumed;
+- early-offer read-through and restart of the SAME workflow instance;
+- one final agent run/proposal with `alwaysAsk`, and no sends before disposition;
+- approved A/B/C, including exactly two logical plan-C acceptance sends, exact persisted plan
+  payloads, retries and no production/inventory mutations;
+- rejected, edited, unauthorized, stale, malformed-agent, timeout and partial-delivery paths;
+- proposal and event replay producing no duplicate decision or send.
+
+Required Playwright coverage uses API-created fixtures and cleanup, not seed assumptions. It verifies
+the three-plan comparison with the real offer, neutral/no-preselection state, infeasible state,
+Caseload deep-link and disposition, non-green state after approval, retry/error/conflict UI,
+keyboard operation, accessible names, narrow viewport, and light/dark semantic rendering. Keep the
+live mailbox/provider scenario separately tagged; deterministic CI tests use the existing transport
+seams.
+
+Documentation-only specification validation is not the implementation gate. The implementation
+must run the smallest focused suites while iterating, then `yarn generate` when discovery files
+change, `yarn typecheck`, `yarn lint`, `yarn ds:check`, focused Jest and Playwright suites, and the
+repository's ordered CI validation gate. Do not run `yarn db:migrate` without explicit approval.
+
+**Phase 3 exit gate:** a real, correctly correlated Supplier 2 offer is claimed once, survives
+restart, resumes the same workflow and yields exactly three deterministic, grounded plans using its
+actual values. One forced Caseload disposition is required. Approving `USE_ALTERNATIVE` persists the
+immutable pending plan and produces exactly two delivered, plan-matching `SUPPLY_ACCEPTANCE`
+communications under replay, while production plans, production orders, stock allocations and
+supplier commitments remain byte-for-byte unchanged. Every invalid, stale, unauthorized, timeout,
+conflict and partial-delivery path is auditable and non-green.
 
 ### Phase 4: Confirmation join and atomic resolution
 
@@ -924,6 +1271,8 @@ This backlog item is the recommended first implementation step for local simulat
 ## 📣 Acceptance Criteria
 
 - [ ] A real Supplier 1 proposal creates one case and one durable workflow.
+- [ ] A confident unresolved `NEW_CASE` with a unique local-plan match creates and links exactly one visible `NEEDS_ATTENTION:MISSING_DATA` case without inventing supplier dates/commitments and without starting workflow, impact analysis or outbound communication.
+- [ ] Unresolved replies to existing cases and unresolved/low-confidence/ambiguous `NEW_CASE` inputs do not mutate or link a case automatically.
 - [ ] The first agent presents three grounded next steps and cannot mutate data.
 - [ ] Only the first human selection of `CHECK_ALTERNATIVE_SUPPLIER` sends the RFQ.
 - [ ] A real Supplier 2 offer resumes the correct case and provides the actual price.
@@ -940,11 +1289,15 @@ This backlog item is the recommended first implementation step for local simulat
 
 | Date | Change |
 |---|---|
+| 2026-09-19 | Specified the minimal unresolved-inbound visibility branch: a confident `SUPPLY_PROPOSAL` selecting `NEW_CASE`, with explicit SKU and exactly one scoped local production-plan match, creates and links a `NEEDS_ATTENTION:MISSING_DATA` case shell while retaining `NEEDS_ATTENTION:UNRESOLVED_FIELDS` on the message. The branch cannot fabricate commitments/dates, emit `proposal_received`, start workflow/initial-impact, or send RFQ/outbound. Existing-case correlation is unchanged. Added T-09c, TEST-001J/K and acceptance criteria; no schema or migration is required. |
+| 2026-09-19 | Phase 1 / Phase 2 closure audit. Re-ran every automated oracle: typecheck, 26 suites / 332 tests, the live-database workflow suite (TEST-002A **and** TEST-006, both passing against real Postgres), eslint, `ds:check`, and both Playwright specs (read-only 3/3, Phase 2 decision 1/1). Recorded both exit gates as **NOT met** and both phases as `IN_PROGRESS`, blocked on the same thing: nothing has ever run against a live provider — the API keys are empty, so no agent has executed for real, and no RFQ has ever been delivered through `communicationChannelsSendAsUser`. Resolved the `T-11` contradiction (the table said `TODO`, the status file said complete) by marking it `WIP` with its real evidence, since its oracle is the unmet exit gate. Named four further gaps: TEST-UI-009/010/012 have no browser evidence, TEST-006B's `REJECT`/`EDIT` branches have no test, the planned `INVOKE_AGENT`/Caseload bridge was replaced by a `WAIT_FOR_SIGNAL` step plus the app's own decision route without a spec decision, and SELECT A/B leave the instance parked at `human-sourcing-decision` with no consumer. No code, migration or `yarn generate` in this run. Record: [`../runs/2026-09-19-phase1-phase2-closure/`](../runs/2026-09-19-phase1-phase2-closure/STATE.md). |
+| 2026-09-19 | Expanded Phase 3 into an implementation-ready contract grounded in the current app-owned repositories, inbound correlation, workflow `INVOKE_AGENT`, Caseload proposal events and outbound seam. Defined atomic offer persistence, strict offer validation, deterministic immutable plans, forced final disposition, dual authorization, replay-safe plan sends, UI/i18n, failure behavior, tests, Phase 2 dependency and the Phase 3 exit gate; no core or enterprise changes are required. |
 | 2026-09-18 | Initial Manufacturer-only e-mail resolution draft. |
 | 2026-09-18 | Added real Supplier 1 and Supplier 2 mailboxes and customer seed mapping. |
 | 2026-09-18 | Reworked lifecycle after user approval: two agent analyses, two human decisions, pre-decision RFQ, three complete final plans, plan-specific confirmation join, and final mutation only after confirmation. |
 | 2026-09-18 | Added `BACKLOG-001` for a local JSON file backend and documented why it is a temporary simulation layer before the real ORM/database implementation. |
 | 2026-09-18 | Replaced the frozen `SupplyEnvelope` JSON contract with natural-language inbound mail plus a propose-only triage agent. Recorded the rejected alternative and its reason (it required an inter-company API that Non-goals exclude). Correlation now rests on RFC 5322 `Message-ID` / `In-Reply-To` for dedupe and causation, and on closed-set agent selection over a code-built candidate list for the first message in a chain. |
+| 2026-09-19 | `T-10b` closed against the real engine. Added `__tests__/inbound-workflow-engine.db.test.ts` (TEST-002A): it registers `supply_cases.inbound-case` in the workflow code registry, calls the workflows module's own `register()` so `workflowExecutor` and `signalHandler` are the production services, and runs them over a live MikroORM Postgres connection. The suite asserts one `WorkflowInstance` per case, `workflow_instance_id` persisted on the case, the run parked `PAUSED` on `await-reply`, survival of a real restart (ORM connection and JSON store closed and rebuilt from the same durable state), the next correlated message signalling that SAME instance through to `COMPLETED`, a replay of either message creating no second instance and adding no `WorkflowEvent` row, and the instance being invisible to another tenant and refusing a foreign-scope signal with `INSTANCE_NOT_FOUND`. No production change was needed — the oracle was falsified first by disabling the subscriber's signal branch, which produced two instances. The suite skips with a printed reason when `DATABASE_URL` is unset and fails, never skips, when it is set but unreachable. `jest.config.cjs` adds `kysely` to the transform allowlist because `@mikro-orm/sql` reaches it and it ships ESM only. |
 | 2026-09-19 | Converged the two parallel T-10 implementations. `supply_cases:inbound-message-accepted` now reaches triage through `supply_cases.inbound.apply_triage` instead of calling `applyTriageOutcome` directly, so the auto-apply bar has one entry point. The command accepts `scope`, honoured only under `ctx.systemActor` (a request supplying it gets `403`, a system call omitting it gets `400`), and resolves the agent through the `inboundTriageInvokerFactory` DI seam so the E2E exercises the real command. `supply_cases.case.proposal_received` is emitted from a single site and only when a case is opened; a reply onto an existing case emits nothing. Workflow start/signal and `workflow_instance_id` persistence stay in the subscriber. Added `apply-triage-command-scope.test.ts`; `inbound-flow.e2e.test.ts` drives a real `CommandBus`. |
 | 2026-09-18 | Spec consistency pass after two sessions edited it in parallel. Corrected claims that had become false: the dedupe key no longer carries a direction segment (the reconciliation block still described the interim design and contradicted a later entry); the i18n enum list dropped `direction`/`deliveryStatus`, and the dead keys were removed from all five locales; `message_intent` is nullable before triage; the JSON backend is five record types, not four; `supply_cases.inbound.apply_triage` was missing from the command list; the `InboundMessage` closing note had been stranded under `OutboundCorrelation`. Reconciled the audit with the task table (T-09 `DONE`, T-10a `WIP` because the accepted event already ships) and named the real remaining gap: nothing subscribes to `supply_cases.inbound_message.accepted`, so the inbound path is built but not joined. Dropped absolute test counts from the audit. |
 | 2026-09-18 | T-08a/T-08b implemented: deterministic candidate-list construction (open, in-scope, sender-participates) and reply-chain resolution with derived supersession, composed by `assembleTriageContext` into the scoped context T-09a projects for the agent. Added the app-owned `OutboundCorrelation` anchor the Commands section already required but the Data Model table omitted, plus `buildOutboundIdempotencyKey` (case + phase + recipient). |

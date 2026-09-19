@@ -1,0 +1,75 @@
+diff --git a/dist/modules/communication_channels/commands/ingest-inbound-message.js b/dist/modules/communication_channels/commands/ingest-inbound-message.js
+index 18b22cb5c9fe0740d9c829b4d5a2d48a713285b8..ca68a357e05d62d6083a132ef96a7d1d0793b9ae 100644
+--- a/dist/modules/communication_channels/commands/ingest-inbound-message.js
++++ b/dist/modules/communication_channels/commands/ingest-inbound-message.js
+@@ -228,9 +228,10 @@ const ingestInboundMessageCommand = {
+     const rawBody = m.bodyFormat === "html" ? plainAlternative || convertHtmlBody() : sourceBody;
+     const truncatedBody = rawBody.length > MAX_COMPOSE_BODY ? rawBody.slice(0, MAX_COMPOSE_BODY - TRUNCATE_MARKER.length) + TRUNCATE_MARKER : rawBody;
+     const safeSubject = (m.subject ?? "").trim() || "(no subject)";
++    const inboundRecipientUserId = input.channelType === "email" && contactHint?.email ? mapping?.assignedUserId ?? channel.userId ?? null : null;
+     const composeInput = {
+       type: `channel.${input.providerKey}`,
+-      visibility: "public",
++      visibility: inboundRecipientUserId ? "internal" : "public",
+       sourceEntityType: "communication_channels.external_conversation",
+       sourceEntityId: conversation.id,
+       externalEmail: contactHint?.email ?? void 0,
+@@ -240,7 +241,7 @@ const ingestInboundMessageCommand = {
+       // senders have no address (Discord, Slack, SMS…) are validated without it.
+       // The messages validator fails closed on any type it does not recognize.
+       sourceChannelType: input.channelType,
+-      recipients: [],
++      recipients: inboundRecipientUserId ? [{ userId: inboundRecipientUserId, type: "to" }] : [],
+       subject: safeSubject,
+       body: truncatedBody,
+       bodyFormat: m.bodyFormat === "html" ? "text" : m.bodyFormat,
+@@ -261,7 +262,7 @@ const ingestInboundMessageCommand = {
+       userId: await resolveCommunicationChannelsSystemUserId(
+         em,
+         input.scope.tenantId,
+-        mapping?.assignedUserId ?? null
++        inboundRecipientUserId
+       )
+     };
+     const commandBus = ctx.container.resolve("commandBus");
+diff --git a/src/modules/communication_channels/commands/ingest-inbound-message.ts b/src/modules/communication_channels/commands/ingest-inbound-message.ts
+index 283cc28f4f47a16e30feff5141cd9aac1b8e31dc..5cce2075eb07c017428b522bc38c651a6a9bbe4e 100644
+--- a/src/modules/communication_channels/commands/ingest-inbound-message.ts
++++ b/src/modules/communication_channels/commands/ingest-inbound-message.ts
+@@ -378,9 +378,12 @@ const ingestInboundMessageCommand: CommandHandler<IngestInboundMessageInput, Ing
+         : rawBody
+     const safeSubject = (m.subject ?? '').trim() || '(no subject)'
+ 
++    const inboundRecipientUserId = input.channelType === 'email' && contactHint?.email
++      ? mapping?.assignedUserId ?? channel.userId ?? null
++      : null
+     const composeInput = {
+       type: `channel.${input.providerKey}`,
+-      visibility: 'public' as const,
++      visibility: inboundRecipientUserId ? 'internal' as const : 'public' as const,
+       sourceEntityType: 'communication_channels.external_conversation',
+       sourceEntityId: conversation.id,
+       externalEmail: contactHint?.email ?? undefined,
+@@ -390,10 +393,9 @@ const ingestInboundMessageCommand: CommandHandler<IngestInboundMessageInput, Ing
+       // senders have no address (Discord, Slack, SMS…) are validated without it.
+       // The messages validator fails closed on any type it does not recognize.
+       sourceChannelType: input.channelType,
+-      // Inbound mail is a public message addressed to the external
+-      // correspondent. Assignment is conversation metadata, not an internal
+-      // message recipient; public messages must keep this list empty.
+-      recipients: [],
++      recipients: inboundRecipientUserId
++        ? [{ userId: inboundRecipientUserId, type: 'to' as const }]
++        : [],
+       subject: safeSubject,
+       body: truncatedBody,
+       bodyFormat: (m.bodyFormat === 'html' ? 'text' : m.bodyFormat) as 'text' | 'markdown',
+@@ -416,7 +418,7 @@ const ingestInboundMessageCommand: CommandHandler<IngestInboundMessageInput, Ing
+       userId: await resolveCommunicationChannelsSystemUserId(
+         em,
+         input.scope.tenantId,
+-        mapping?.assignedUserId ?? null,
++        inboundRecipientUserId,
+       ),
+     }
+ 

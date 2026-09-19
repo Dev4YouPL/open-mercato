@@ -8,6 +8,7 @@ import {
 import { computeBackoffMs } from '../lib/error-classification'
 import { COMMUNICATION_CHANNELS_QUEUES, getCommunicationChannelsQueue } from '../lib/queue'
 import { createLogger } from '@open-mercato/shared/lib/logger'
+import { emitCommunicationChannelsEvent } from '../events'
 
 const logger = createLogger('communication_channels').child({ component: 'outbound-delivery' })
 
@@ -134,6 +135,14 @@ export default async function handle(
       // Permanent or attempts exhausted — `.delivery_failed` was already emitted
       // by the command, so we stop here.
       logger.error('giving up on message delivery', { messageId, attempt, providerKey: outcome.providerKey, reason: outcome.error })
+      await emitCommunicationChannelsEvent('communication_channels.message.delivery_exhausted', {
+        messageId,
+        providerKey: outcome.providerKey,
+        attempt,
+        transient: outcome.transient,
+        tenantId: scope.tenantId,
+        organizationId: scope.organizationId,
+      }, { persistent: true })
       return
     }
   }

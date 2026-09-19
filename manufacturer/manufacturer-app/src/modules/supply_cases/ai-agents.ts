@@ -1,6 +1,9 @@
 import type { AiAgentDefinition } from '@open-mercato/ai-assistant/modules/ai_assistant/lib/ai-agent-definition'
 import { defineAgent } from '@open-mercato/enterprise/modules/agent_orchestrator/lib/sdk/defineAgent'
 import { inboundSignalSchema } from './data/inbound-signal'
+import { initialImpactAdvisorResultSchema } from './data/initial-impact'
+import { INBOUND_TRIAGE_AGENT_ID } from './lib/triage/agentId'
+import { INITIAL_IMPACT_ADVISOR_AGENT_ID } from './lib/triage/agentId'
 
 /**
  * `supply_cases.inbound_triage_advisor` is the ONLY LLM step on the inbound
@@ -34,8 +37,6 @@ import { inboundSignalSchema } from './data/inbound-signal'
  * `createInboundSignalSchema(candidates.length)` before anything reads it. That
  * wrapper is the only supported way to invoke this agent.
  */
-export const INBOUND_TRIAGE_AGENT_ID = 'supply_cases.inbound_triage_advisor'
-
 export const aiAgents: AiAgentDefinition[] = [
   defineAgent({
     id: INBOUND_TRIAGE_AGENT_ID,
@@ -58,7 +59,7 @@ export const aiAgents: AiAgentDefinition[] = [
       'SUPPLY_COMMITMENT_CONFIRMED when a supplier confirms a plan we sent, and UNRELATED when the',
       'message is not about material supply at all (customer traffic, marketing, noise).',
       'Correlate by POSITION only: return { "kind": "EXISTING_CASE", "candidateIndex": N } where N is',
-      'the `candidateIndex` of one listed candidate, or { "kind": "NEW_CASE" }. Never return a case',
+      'the `candidateIndex` of one listed candidate, or { "kind": "NEW_CASE", "candidateIndex": null }. Never return a case',
       'identifier, and never an index that is not in the list. An UNRELATED message is always',
       'NEW_CASE — it attaches to nothing.',
       'A candidate marked `threadMatch: true` is the case whose message this one replies to. That is',
@@ -77,6 +78,8 @@ export const aiAgents: AiAgentDefinition[] = [
     tools: [],
     allowedActions: [],
     result: { kind: 'research', schema: inboundSignalSchema },
+    defaultProvider: 'openrouter',
+    defaultModel: 'meta/muse-spark-1.3-contributor',
     sampleInput: {
       senderEmail: 'supplier@hackon-om-wro.cloud',
       sanitizedBody:
@@ -93,6 +96,56 @@ export const aiAgents: AiAgentDefinition[] = [
           threadMatch: true,
         },
       ],
+    },
+  }),
+  defineAgent({
+    id: INITIAL_IMPACT_ADVISOR_AGENT_ID,
+    moduleId: 'supply_cases',
+    label: 'Initial supply impact advisor',
+    description: 'Explain the deterministic supply impact and recommend one of three human-reviewed sourcing options.',
+    agentType: 'decision_maker',
+    instructions: [
+      'You advise a human operator on an initial supply shortage. The input is a complete, trusted snapshot built by code.',
+      'Use ONLY the supplied facts, options and evidence references. Never recalculate, edit or replace quantities, dates, recipients, SKU, costs or feasibility.',
+      'Explain that an on-time primary quantity of 300 plus a late quantity of 200 does not meet a customer Thursday deadline when the late delivery is Friday.',
+      'Assess every one of the three options exactly once: ACCEPT_PRIMARY_DELAY, USE_INTERNAL_STOCK and CHECK_ALTERNATIVE_SUPPLIER.',
+      'For each option explain concrete good and bad consequences. Recommend only an option whose canonical feasibility is not INFEASIBLE.',
+      'CHECK_ALTERNATIVE_SUPPLIER buys information rather than solving the shortage: mention that the RFQ quantity is the canonical shortage and that Supplier 2 price and availability are unknown.',
+      'If customer or other facts are unknown, say so in unresolved and do not infer them. Confidence describes evidence quality, never permission to act.',
+      'Return strict JSON matching the result schema, preserve factsHash exactly, and use only evidence refs from the supplied facts or option paths.',
+    ].join(' '),
+    tools: [],
+    allowedActions: [],
+    result: { kind: 'research', schema: initialImpactAdvisorResultSchema },
+    defaultProvider: 'openrouter',
+    defaultModel: 'meta/muse-spark-1.3-contributor',
+    facts: [
+      { label: 'Required quantity', source: 'input', path: 'demand.requiredQuantity', format: 'number' },
+      { label: 'Required date', source: 'input', path: 'demand.requiredDate', format: 'text' },
+      { label: 'Primary on-time quantity', source: 'input', path: 'impact.onTimePrimaryQuantity', format: 'number' },
+      { label: 'Shortage without stock', source: 'input', path: 'impact.shortageWithoutStock', format: 'number' },
+      { label: 'Customer deadline status', source: 'input', path: 'impact.customerDeadlineStatus', format: 'text' },
+    ],
+    sampleInput: {
+      schemaVersion: 1,
+      caseRef: { correlationId: 'SC-001', sku: 'MAT-42', status: 'ANALYZING_INITIAL_IMPACT' },
+      factsHash: 'fixture-facts-hash',
+      demand: { requiredQuantity: 500, requiredDate: '2026-09-23T12:00:00.000Z', productionOrders: [] },
+      primaryProposal: { supplierEmail: 'supplier@example.com', deliveries: [
+        { quantity: 300, deliveryDate: '2026-09-23T12:00:00.000Z' },
+        { quantity: 200, deliveryDate: '2026-09-25T12:00:00.000Z' },
+      ] },
+      stock: { availableQuantity: 200, sourceUpdatedAt: '2026-09-19T12:00:00.000Z' },
+      impact: {
+        requiredQuantity: 500, requiredDate: '2026-09-23T12:00:00.000Z', onTimePrimaryQuantity: 300,
+        latePrimaryQuantity: 200, coverageWithoutStock: 300, shortageWithoutStock: 200, coverageWithStock: 500,
+        shortageAfterStock: 0, availableStock: 200, stockRemainingAfterCoverage: 0,
+        customerDeadline: '2026-09-24T12:00:00.000Z', customerDeadlineStatus: 'BREACHED',
+        latestPrimaryDeliveryDate: '2026-09-25T12:00:00.000Z', latestSafeDecisionAt: '2026-09-23T12:00:00.000Z',
+        reasonCodes: ['PRIMARY_DELIVERY_LATE', 'CUSTOMER_DEADLINE_BREACHED', 'STOCK_BUFFER_EXHAUSTED', 'ALTERNATIVE_PRICE_UNKNOWN'],
+      },
+      options: [],
+      unresolved: [],
     },
   }),
 ]

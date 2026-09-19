@@ -3,10 +3,12 @@ import { randomUUID } from 'node:crypto'
 import type { z } from 'zod'
 import {
   AppendOnlyViolationError,
+  AlternativeOfferConflictError,
   DuplicateRfcMessageIdError,
   DuplicateRecordKeyError,
   RecordNotFoundError,
   ScopeMismatchError,
+  VersionConflictError,
 } from '../errors'
 import type {
   AppendedInboundMessage,
@@ -16,11 +18,20 @@ import type {
   RecordedOutboundCorrelation,
   ProductionOrderRepository,
   ProductionPlanRepository,
+  RecordedSupplyConfirmation,
   SeedScenarioOptions,
   SeededScenario,
   SupplyCaseRepository,
   SupplyCasesStore,
+  SupplyConfirmationRepository,
 } from '../repositories'
+import type { ActivityAppendResult, SupplyActivityEntry, SupplyActivityEntryInput } from '../activity'
+import {
+  activityEntryInputSchema,
+  activityEntrySchema,
+  compareActivityDesc,
+  createActivityId,
+} from '../activity'
 import {
   productionOrderCreateSchema,
   productionOrderSchema,
@@ -31,13 +42,17 @@ import {
   inboundMessageAppendSchema,
   inboundMessageSchema,
   inboundMessageTriageSchema,
+  alternativeOfferSnapshotSchema,
   outboundCorrelationRecordSchema,
   outboundCorrelationSchema,
   supplyCaseCreateSchema,
   supplyCaseSchema,
   supplyCaseUpdateSchema,
+  supplyConfirmationRecordSchema,
+  supplyConfirmationSchema,
 } from '../types'
 import type {
+  ConfirmationRole,
   InboundMessage,
   InboundMessageAppendInput,
   InboundMessageTriageInput,
@@ -53,9 +68,13 @@ import type {
   SupplyCase,
   SupplyCaseCreateInput,
   SupplyCaseUpdateInput,
+  SupplyConfirmation,
+  SupplyConfirmationRecordInput,
+  AlternativeOfferSnapshot,
 } from '../types'
 import { JsonCollection, type AtomicWriter } from './collection'
 import { buildScenarioFixtures } from '../fixtures'
+import { evaluateConfirmationJoin } from '../../lib/resolution/confirmationJoin'
 
 export const DEFAULT_DATA_DIR = path.join('.mercato', 'supply-cases')
 
@@ -65,6 +84,8 @@ export const STORE_FILE_NAMES = {
   supplyCases: 'supply-cases.json',
   inboundMessages: 'inbound-messages.json',
   outboundCorrelations: 'outbound-correlations.json',
+  supplyConfirmations: 'supply-confirmations.json',
+  activities: 'activity-entries.json',
 } as const
 
 export type StoreClock = {
@@ -93,6 +114,13 @@ type ScopedRecord = {
 
 function stripUndefined<T extends object>(value: T): Record<string, unknown> {
   return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined))
+}
+
+function parsePatch<T extends object>(schema: z.ZodType<T>, rawPatch: T): Record<string, unknown> {
+  const parsed = stripUndefined(schema.parse(rawPatch))
+  return Object.fromEntries(
+    Object.entries(parsed).filter(([key]) => Object.prototype.hasOwnProperty.call(rawPatch, key)),
+  )
 }
 
 function isInScope(record: { tenantId: string; organizationId: string }, scope: StoreScope): boolean {
@@ -173,6 +201,43 @@ function createScopedRepository<TRecord extends ScopedRecord, TCreate extends ob
     })
   }
 
+  async function createIfAbsent(
+    scope: StoreScope,
+    rawInput: TCreate,
+    isExisting: (record: TRecord) => boolean,
+  ): Promise<{ record: TRecord; created: boolean }> {
+    const input = stripUndefined(createSchema.parse(rawInput))
+    const timestamp = clock.now()
+    const candidate: unknown = {
+      ...buildDefaults(),
+      ...input,
+      id: typeof input.id === 'string' && input.id.length > 0 ? input.id : clock.newId(),
+      tenantId: scope.tenantId,
+      organizationId: scope.organizationId,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      deletedAt: null,
+    }
+    const record = recordSchema.parse(candidate)
+
+    return collection.mutate<{ record: TRecord; created: boolean }>((records) => {
+      const existing = records.find((entry) => isInScope(entry, scope) && entry.deletedAt === null && isExisting(entry))
+      if (existing) return { records, result: { record: existing, created: false } }
+
+      const existingById = records.find((entry) => entry.id === record.id)
+      if (existingById) {
+        if (!isInScope(existingById, scope)) throw new ScopeMismatchError(entity)
+        throw new DuplicateRecordKeyError(entity, 'id', record.id)
+      }
+
+      const uniqueValue = record[uniqueField]
+      const duplicate = liveInScope(records, scope, true).find((entry) => entry[uniqueField] === uniqueValue)
+      if (duplicate) throw new DuplicateRecordKeyError(entity, uniqueField, String(uniqueValue))
+
+      return { records: [...records, record], result: { record, created: true } }
+    })
+  }
+
   async function findById(scope: StoreScope, id: string): Promise<TRecord | null> {
     const records = await collection.readAll()
     return liveInScope(records, scope).find((record) => record.id === id) ?? null
@@ -197,13 +262,37 @@ function createScopedRepository<TRecord extends ScopedRecord, TCreate extends ob
   }
 
   async function update(scope: StoreScope, id: string, rawPatch: TUpdate): Promise<TRecord> {
-    const patch = stripUndefined(updateSchema.parse(rawPatch))
+    const patch = parsePatch(updateSchema, rawPatch)
     return collection.mutate((records) => {
       const index = records.findIndex(
         (record) => record.id === id && isInScope(record, scope) && record.deletedAt === null,
       )
       if (index === -1) throw new RecordNotFoundError(entity, id)
-      const candidate: unknown = { ...records[index], ...patch, updatedAt: clock.now() }
+      const candidate: unknown = {
+        ...records[index],
+        ...patch,
+        updatedAt: nextVersion(records[index].updatedAt, clock.now()),
+      }
+      const next = recordSchema.parse(candidate)
+      const updated = [...records]
+      updated[index] = next
+      return { records: updated, result: next }
+    })
+  }
+
+  async function compareAndSwap(scope: StoreScope, id: string, expectedUpdatedAt: string, rawPatch: TUpdate): Promise<TRecord> {
+    const patch = parsePatch(updateSchema, rawPatch)
+    return collection.mutate((records) => {
+      const index = records.findIndex(
+        (record) => record.id === id && isInScope(record, scope) && record.deletedAt === null,
+      )
+      if (index === -1) throw new RecordNotFoundError(entity, id)
+      if (records[index].updatedAt !== expectedUpdatedAt) throw new VersionConflictError(entity)
+      const candidate: unknown = {
+        ...records[index],
+        ...patch,
+        updatedAt: nextVersion(records[index].updatedAt, clock.now()),
+      }
       const next = recordSchema.parse(candidate)
       const updated = [...records]
       updated[index] = next
@@ -231,7 +320,18 @@ function createScopedRepository<TRecord extends ScopedRecord, TCreate extends ob
     }))
   }
 
-  return { create, findById, requireById, findByUniqueField, list, update, softDelete, purgeScope }
+  return { create, createIfAbsent, findById, requireById, findByUniqueField, list, update, compareAndSwap, softDelete, purgeScope, collection }
+}
+
+function nextVersion(current: string, candidate: string): string {
+  if (Date.parse(candidate) > Date.parse(current)) return candidate
+  return new Date(Date.parse(current) + 1).toISOString()
+}
+
+function hasInboundMessageSource(supplyCase: SupplyCase, inboundMessageId: string): boolean {
+  const proposal = supplyCase.supplier1Proposal
+  if (!proposal || typeof proposal !== 'object' || Array.isArray(proposal)) return false
+  return (proposal as Record<string, unknown>).sourceInboundMessageId === inboundMessageId
 }
 
 class JsonInboundMessageRepository implements InboundMessageRepository {
@@ -278,11 +378,52 @@ class JsonInboundMessageRepository implements InboundMessageRepository {
       const current = records[index]
       // A disposed message is settled. Re-deciding it would let a redelivery or
       // a replayed step move a message off the case it is already linked to.
-      if (current.triageDisposition !== null || current.triageOutcome !== null) {
+      if (current.triageDisposition !== null) {
         throw new AppendOnlyViolationError('InboundMessage', 're-triaged')
+      }
+      if (current.triageOutcome !== null) {
+        const sameClaim = current.triageOutcome === patch.triageOutcome
+          && JSON.stringify(current.extraction) === JSON.stringify(patch.extraction)
+          && current.extractionConfidence === patch.extractionConfidence
+          && current.messageIntent === patch.messageIntent
+        if (!sameClaim) throw new AppendOnlyViolationError('InboundMessage', 're-triaged')
       }
       const updated = [...records]
       updated[index] = inboundMessageSchema.parse({ ...current, ...patch })
+      return { records: updated, result: updated[index] }
+    })
+  }
+
+  async claimProposalAnnouncement(scope: StoreScope, id: string): Promise<boolean> {
+    return this.collection.mutate((records) => {
+      const index = records.findIndex((record) => record.id === id && isInScope(record, scope))
+      if (index === -1) throw new RecordNotFoundError('InboundMessage', id)
+      const current = records[index]
+      if ((current.proposalAnnouncementState ?? 'NONE') !== 'NONE') return { records, result: false }
+      const updated = [...records]
+      updated[index] = inboundMessageSchema.parse({ ...current, proposalAnnouncementState: 'CLAIMED' })
+      return { records: updated, result: true }
+    })
+  }
+
+  async completeProposalAnnouncement(scope: StoreScope, id: string): Promise<InboundMessage> {
+    return this.collection.mutate((records) => {
+      const index = records.findIndex((record) => record.id === id && isInScope(record, scope))
+      if (index === -1) throw new RecordNotFoundError('InboundMessage', id)
+      const updated = [...records]
+      updated[index] = inboundMessageSchema.parse({ ...records[index], proposalAnnouncementState: 'EMITTED' })
+      return { records: updated, result: updated[index] }
+    })
+  }
+
+  async releaseProposalAnnouncement(scope: StoreScope, id: string): Promise<InboundMessage> {
+    return this.collection.mutate((records) => {
+      const index = records.findIndex((record) => record.id === id && isInScope(record, scope))
+      if (index === -1) throw new RecordNotFoundError('InboundMessage', id)
+      const updated = [...records]
+      if ((records[index].proposalAnnouncementState ?? 'NONE') === 'CLAIMED') {
+        updated[index] = inboundMessageSchema.parse({ ...records[index], proposalAnnouncementState: 'NONE' })
+      }
       return { records: updated, result: updated[index] }
     })
   }
@@ -328,6 +469,7 @@ class JsonInboundMessageRepository implements InboundMessageRepository {
       extractionConfidence: null,
       triageDisposition: null,
       triageOutcome: null,
+      proposalAnnouncementState: 'NONE',
       candidateIndexes: [],
       needsAttention: false,
       providerMessageId: null,
@@ -467,6 +609,152 @@ class JsonOutboundCorrelationRepository implements OutboundCorrelationRepository
   }
 }
 
+/**
+ * Append-only, mirroring `JsonOutboundCorrelationRepository`: a supplier's
+ * confirmation is a historical fact, so the only write path is
+ * `recordAndEvaluate`, and `update`/`softDelete` are refused at runtime for
+ * callers that reach the implementation without the narrower contract type.
+ *
+ * The join is evaluated INSIDE the mutator, on the full scoped, same-plan
+ * record set including the write just made — see `RecordedSupplyConfirmation`
+ * on the repository contract for why evaluating after `mutate` returns would
+ * be a race.
+ */
+class JsonSupplyConfirmationRepository implements SupplyConfirmationRepository {
+  private readonly collection: JsonCollection<SupplyConfirmation>
+  private readonly clock: StoreClock
+
+  constructor(collection: JsonCollection<SupplyConfirmation>, clock: StoreClock) {
+    this.collection = collection
+    this.clock = clock
+  }
+
+  async recordAndEvaluate(
+    scope: StoreScope,
+    rawInput: SupplyConfirmationRecordInput,
+    requiredRoles: readonly ConfirmationRole[],
+  ): Promise<RecordedSupplyConfirmation> {
+    const input = stripUndefined(supplyConfirmationRecordSchema.parse(rawInput))
+    const candidate: unknown = {
+      ...input,
+      id: typeof input.id === 'string' && input.id.length > 0 ? input.id : this.clock.newId(),
+      tenantId: scope.tenantId,
+      organizationId: scope.organizationId,
+      createdAt: this.clock.now(),
+    }
+    const record = supplyConfirmationSchema.parse(candidate)
+
+    return this.collection.mutate<RecordedSupplyConfirmation>((records) => {
+      const samePlan = records.filter(
+        (entry) => isInScope(entry, scope) && entry.caseId === record.caseId && entry.planHash === record.planHash,
+      )
+
+      // The idempotency key is one confirmation per role per plan. A replay of
+      // the same role's message finds its own earlier write and reports the
+      // join as it stood then, without ever closing the set a second time.
+      const byKey = records.find((entry) => isInScope(entry, scope) && entry.idempotencyKey === record.idempotencyKey)
+      if (byKey) {
+        return {
+          records,
+          result: {
+            confirmation: byKey,
+            created: false,
+            join: evaluateConfirmationJoin(requiredRoles, samePlan),
+            closedTheSet: false,
+          },
+        }
+      }
+
+      const idCollision = records.find((entry) => entry.id === record.id)
+      if (idCollision) {
+        if (!isInScope(idCollision, scope)) throw new ScopeMismatchError('SupplyConfirmation')
+        throw new DuplicateRecordKeyError('SupplyConfirmation', 'id', record.id)
+      }
+
+      const before = evaluateConfirmationJoin(requiredRoles, samePlan)
+      const after = evaluateConfirmationJoin(requiredRoles, [...samePlan, record])
+      const closedTheSet = before !== 'COMPLETE' && after === 'COMPLETE'
+
+      return {
+        records: [...records, record],
+        result: { confirmation: record, created: true, join: after, closedTheSet },
+      }
+    })
+  }
+
+  async findByCaseId(scope: StoreScope, caseId: string): Promise<SupplyConfirmation[]> {
+    const records = await this.collection.readAll()
+    return records
+      .filter((record) => isInScope(record, scope) && record.caseId === caseId)
+      .sort(byCreationOrder)
+  }
+
+  async findByIdempotencyKey(scope: StoreScope, idempotencyKey: string): Promise<SupplyConfirmation | null> {
+    const records = await this.collection.readAll()
+    return records.find((record) => isInScope(record, scope) && record.idempotencyKey === idempotencyKey) ?? null
+  }
+
+  update(): never {
+    throw new AppendOnlyViolationError('SupplyConfirmation', 'updated')
+  }
+
+  delete(): never {
+    throw new AppendOnlyViolationError('SupplyConfirmation', 'deleted')
+  }
+
+  async purgeScope(scope: StoreScope): Promise<void> {
+    await this.collection.mutate((records) => ({
+      records: records.filter((record) => !isInScope(record, scope)),
+      result: undefined,
+    }))
+  }
+}
+
+class JsonSupplyActivityRepository {
+  private readonly collection: JsonCollection<SupplyActivityEntry>
+  private readonly clock: StoreClock
+
+  constructor(collection: JsonCollection<SupplyActivityEntry>, clock: StoreClock) {
+    this.collection = collection
+    this.clock = clock
+  }
+
+  async appendIfAbsent(scope: StoreScope, rawInput: SupplyActivityEntryInput): Promise<ActivityAppendResult> {
+    const input = activityEntryInputSchema.parse(rawInput)
+    const candidate = activityEntrySchema.parse({
+      ...input,
+      id: input.id ?? createActivityId(),
+      tenantId: scope.tenantId,
+      organizationId: scope.organizationId,
+      recordedAt: input.recordedAt ?? this.clock.now(),
+    })
+
+    return this.collection.mutate<ActivityAppendResult>((records) => {
+      const existing = records.find(
+        (entry) => entry.tenantId === scope.tenantId
+          && entry.organizationId === scope.organizationId
+          && entry.dedupeKey === candidate.dedupeKey,
+      )
+      if (existing) return { records, result: { status: 'already_recorded', entry: existing } }
+      return { records: [...records, candidate], result: { status: 'recorded', entry: candidate } }
+    })
+  }
+
+  async list(scope: StoreScope): Promise<SupplyActivityEntry[]> {
+    const records = await this.collection.readAll()
+    return records
+      .filter((entry) => entry.tenantId === scope.tenantId && entry.organizationId === scope.organizationId)
+      .sort(compareActivityDesc)
+  }
+
+  async purgeScope(scope: StoreScope): Promise<void> {
+    await this.collection.mutate((records) => ({
+      records: records.filter((entry) => entry.tenantId !== scope.tenantId || entry.organizationId !== scope.organizationId),
+      result: undefined,
+    }))
+  }
+}
+
 export type JsonSupplyCasesStoreOptions = {
   dataDir?: string
   clock?: StoreClock
@@ -529,6 +817,12 @@ export function createJsonSupplyCasesStore(options: JsonSupplyCasesStoreOptions 
       initialAnalysis: null,
       initialOptions: null,
       selectedInitialOptionId: null,
+      initialProposalId: null,
+      initialAnalyzedAt: null,
+      initialFactsHash: null,
+      initialDecisionIdempotencyKey: null,
+      initialDecisionKind: null,
+      initialDecisionReason: null,
       finalAnalysis: null,
       resolutionPlans: null,
       selectedResolutionPlanId: null,
@@ -554,6 +848,16 @@ export function createJsonSupplyCasesStore(options: JsonSupplyCasesStoreOptions 
     clock,
   )
 
+  const confirmations = new JsonSupplyConfirmationRepository(
+    collectionFor(STORE_FILE_NAMES.supplyConfirmations, supplyConfirmationSchema),
+    clock,
+  )
+
+  const activities = new JsonSupplyActivityRepository(
+    collectionFor(STORE_FILE_NAMES.activities, activityEntrySchema),
+    clock,
+  )
+
   const productionOrders: ProductionOrderRepository = {
     create: orders.create,
     findById: orders.findById,
@@ -576,10 +880,35 @@ export function createJsonSupplyCasesStore(options: JsonSupplyCasesStoreOptions 
 
   const supplyCases: SupplyCaseRepository = {
     create: cases.create,
+    createIfAbsentByInboundMessage: async (scope, inboundMessageId, input) => {
+      const result = await cases.createIfAbsent(scope, input, (record) => hasInboundMessageSource(record, inboundMessageId))
+      return { supplyCase: result.record, created: result.created }
+    },
     findById: cases.findById,
     requireById: cases.requireById,
     list: cases.list,
     update: cases.update,
+    compareAndSwap: cases.compareAndSwap,
+    async recordAlternativeOfferIfAbsent(scope, id, expectedUpdatedAt, offer: AlternativeOfferSnapshot) {
+      const parsedOffer = alternativeOfferSnapshotSchema.parse(offer)
+      return cases.collection.mutate<{ status: 'recorded' | 'already_recorded'; supplyCase: SupplyCase }>((records) => {
+        const index = records.findIndex((record) => record.id === id && isInScope(record, scope) && record.deletedAt === null)
+        if (index === -1) throw new RecordNotFoundError('SupplyCase', id)
+        const current = records[index]
+        if (current.alternativeOffer) {
+          if (current.alternativeOffer.offerHash === parsedOffer.offerHash && current.alternativeOffer.sourceInboundMessageId === parsedOffer.sourceInboundMessageId) {
+            return { records, result: { status: 'already_recorded' as const, supplyCase: current } }
+          }
+          throw new AlternativeOfferConflictError()
+        }
+        if (current.updatedAt !== expectedUpdatedAt) throw new VersionConflictError('SupplyCase')
+        const timestamp = nextVersion(current.updatedAt, clock.now())
+        const updated = supplyCaseSchema.parse({ ...current, alternativeOffer: parsedOffer, updatedAt: timestamp })
+        const next = [...records]
+        next[index] = updated
+        return { records: next, result: { status: 'recorded' as const, supplyCase: updated } }
+      })
+    },
     softDelete: cases.softDelete,
     findByCorrelationId: cases.findByUniqueField,
   }
@@ -590,6 +919,8 @@ export function createJsonSupplyCasesStore(options: JsonSupplyCasesStoreOptions 
     supplyCases,
     inboundMessages: messages,
     outboundCorrelations: correlations,
+    supplyConfirmations: confirmations,
+    activities,
 
     async purgeScope(scope: StoreScope): Promise<void> {
       // Sequential on purpose: each collection serializes its own writes, and a
@@ -599,6 +930,8 @@ export function createJsonSupplyCasesStore(options: JsonSupplyCasesStoreOptions 
       await cases.purgeScope(scope)
       await messages.purgeScope(scope)
       await correlations.purgeScope(scope)
+      await confirmations.purgeScope(scope)
+      await activities.purgeScope(scope)
     },
 
     async seedScenario(scope: StoreScope, seedOptions: SeedScenarioOptions = {}): Promise<SeededScenario> {

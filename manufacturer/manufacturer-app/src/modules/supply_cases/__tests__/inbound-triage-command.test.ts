@@ -2,11 +2,12 @@ import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import type { AwilixContainer } from 'awilix'
+import { setGlobalEventBus } from '@open-mercato/shared/modules/events'
 import type { CommandRuntimeContext } from '@open-mercato/shared/lib/commands'
 import type { StoreScope, SupplyCasesStore } from '../data/repositories'
 import { createJsonSupplyCasesStore, type StoreClock } from '../data/json/store'
 import applyTriageCommand, { APPLY_TRIAGE_COMMAND_ID } from '../commands/inbound-triage'
-import { INBOUND_TRIAGE_AGENT_ID } from '../ai-agents'
+import { INBOUND_TRIAGE_AGENT_ID } from '../lib/triage/agentId'
 import { NEW_SUPPLY_PROPOSAL, TRIAGE_FIXTURE_SENDERS } from '../data/triage-fixtures'
 
 /**
@@ -77,12 +78,13 @@ describe(APPLY_TRIAGE_COMMAND_ID, () => {
     await fs.rm(dataDir, { recursive: true, force: true })
   })
 
-  async function seedMessage() {
+  async function seedMessage(overrides: Partial<Parameters<SupplyCasesStore['inboundMessages']['append']>[1]> = {}) {
     return store.inboundMessages.append(scope, {
       rfcMessageId: '<proposal-1@supplier.example>',
       senderEmail: TRIAGE_FIXTURE_SENDERS.supplier1,
       recipientEmail: 'manufacturer@hackon-om-wro.cloud',
       sanitizedBody: NEW_SUPPLY_PROPOSAL.sanitizedBody,
+      ...overrides,
     })
   }
 
@@ -104,6 +106,77 @@ describe(APPLY_TRIAGE_COMMAND_ID, () => {
     expect(result.outcome).toBe('AUTO_APPLY')
     expect(result.disposition).toBe('AUTO_APPLIED')
     expect(result.correlationId).toBe('SC-001')
+  })
+
+  it('reports a newly created needs-attention shell as caseCreated', async () => {
+    const message = await seedMessage({ rfcMessageId: '<missing-date@supplier.example>' })
+    const ctx = createContext({
+      store,
+      runtimeResult: {
+        ...(NEW_SUPPLY_PROPOSAL.rawResult as Record<string, unknown>),
+        commitments: [],
+        unresolved: ['commitments[0].date'],
+        correlation: { kind: 'NEW_CASE', candidateIndex: null },
+      },
+    })
+
+    const result = await applyTriageCommand.execute({ inboundMessageId: message.id }, ctx)
+    const cases = await store.supplyCases.list(scope)
+
+    expect(result.outcome).toBe('NEEDS_ATTENTION')
+    expect(result.reason).toBe('UNRESOLVED_FIELDS')
+    expect(result.caseCreated).toBe(true)
+    expect(result.caseId).toBe(cases[0]?.id)
+    expect(cases[0]).toMatchObject({ status: 'NEEDS_ATTENTION', needsAttentionReason: 'MISSING_DATA' })
+  })
+
+  it('recovers a failed proposal announcement exactly once without rerunning the agent', async () => {
+    const message = await seedMessage({ rfcMessageId: '<announcement-recovery@supplier.example>' })
+    const emitted: string[] = []
+    let failProposalOnce = true
+    setGlobalEventBus({
+      emit: async (eventId: string) => {
+        if (eventId === 'supply_cases.case.proposal_received' && failProposalOnce) {
+          failProposalOnce = false
+          throw new Error('[internal] injected proposal event failure')
+        }
+        emitted.push(eventId)
+      },
+    })
+
+    try {
+      const firstCalls: RuntimeCall[] = []
+      await expect(applyTriageCommand.execute(
+        { inboundMessageId: message.id },
+        createContext({ store, runtimeCalls: firstCalls, runtimeResult: NEW_SUPPLY_PROPOSAL.rawResult }),
+      )).rejects.toThrow('injected proposal event failure')
+      expect(firstCalls).toHaveLength(1)
+
+      const secondCalls: RuntimeCall[] = []
+      const retry = await applyTriageCommand.execute(
+        { inboundMessageId: message.id },
+        createContext({
+          store,
+          runtimeCalls: secondCalls,
+          runtimeResult: { ...(NEW_SUPPLY_PROPOSAL.rawResult as Record<string, unknown>), sku: 'MAT-99' },
+        }),
+      )
+
+      expect(retry.status).toBe('already_settled')
+      expect(retry.outcome).toBe('AUTO_APPLY')
+      expect(secondCalls).toHaveLength(0)
+      expect(emitted.filter((eventId) => eventId === 'supply_cases.case.proposal_received')).toHaveLength(1)
+      expect((await store.inboundMessages.findById(scope, message.id))?.proposalAnnouncementState).toBe('EMITTED')
+
+      const replay = await applyTriageCommand.execute(
+        { inboundMessageId: message.id },
+        createContext({ store, runtimeResult: { ...(NEW_SUPPLY_PROPOSAL.rawResult as Record<string, unknown>), sku: 'MAT-88' } }),
+      )
+      expect(replay.outcome).toBeNull()
+      expect(emitted.filter((eventId) => eventId === 'supply_cases.case.proposal_received')).toHaveLength(1)
+    } finally {
+      setGlobalEventBus({ emit: async () => undefined })
+    }
   })
 
   it('accepts nothing but a message id', async () => {

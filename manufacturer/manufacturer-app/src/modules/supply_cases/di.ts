@@ -3,6 +3,8 @@ import type { AppContainer } from '@open-mercato/shared/lib/di/container'
 import type { SupplyCasesStore } from './data/repositories'
 import { createJsonSupplyCasesStore } from './data/json/store'
 import { createAgentRuntimeInvoker } from './lib/triage/agentRuntimeInvoker'
+import { createInitialImpactAdvisorInvoker } from './lib/impact/runInitialImpactAdvisor'
+import { buildSupplierOutboundPorts } from './lib/outbound/ports'
 import type { InboundTriageInvoker } from './lib/triage/runInboundTriage'
 
 let store: SupplyCasesStore | null = null
@@ -30,9 +32,18 @@ export function register(container: AppContainer) {
     supplyCaseRepository: asValue(resolved.supplyCases),
     supplyCaseInboundMessages: asValue(resolved.inboundMessages),
     supplyCaseOutboundCorrelations: asValue(resolved.outboundCorrelations),
+    supplyCaseConfirmations: asValue(resolved.supplyConfirmations),
     inboundTriageInvokerFactory: asValue(
       (scope: { tenantId: string; organizationId: string }, userId = 'system:supply_cases'): InboundTriageInvoker =>
         createAgentRuntimeInvoker({ container, scope, userId }),
+    ),
+    initialImpactAdvisorInvokerFactory: asValue(
+      (scope: { tenantId: string; organizationId: string }, userId = 'system:supply_cases') =>
+        createInitialImpactAdvisorInvoker({ container, scope, userId }),
+    ),
+    supplyCaseOutboundPortsFactory: asValue(
+      (resolvedContainer: unknown, resolvedStore: SupplyCasesStore) =>
+        buildSupplierOutboundPorts(resolvedContainer as { resolve: <T = unknown>(name: string) => T }, resolvedStore),
     ),
   })
 }

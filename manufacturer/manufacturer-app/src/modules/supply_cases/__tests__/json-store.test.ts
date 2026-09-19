@@ -299,7 +299,7 @@ describe('supply_cases JSON store', () => {
           triageDisposition: 'AUTO_APPLIED',
           extraction: {
             intent: 'SUPPLY_PROPOSAL',
-            correlation: { kind: 'NEW_CASE' },
+            correlation: { kind: 'NEW_CASE', candidateIndex: null },
             sku: 'MAT-42',
             commitments: [{ quantity: 300, date: '2026-09-23' }],
             price: null,

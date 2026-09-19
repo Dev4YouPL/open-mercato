@@ -21,6 +21,8 @@ import type { CommandBus, CommandRuntimeContext } from '@open-mercato/shared/lib
 import type { StoreScope, SupplyCasesStore } from '../data/repositories'
 import type { SupplyCase } from '../data/types'
 import { APPLY_TRIAGE_COMMAND_ID, type ApplyTriageCommandResult } from '../commands/inbound-triage'
+import { RECORD_INITIAL_IMPACT_COMMAND_ID, type RecordInitialImpactResult } from '../commands/initial-impact'
+import { RECORD_CONFIRMATION_COMMAND_ID, type RecordConfirmationResult } from '../commands/resolution'
 import { INBOUND_CASE_REPLY_SIGNAL, INBOUND_CASE_WORKFLOW_ID } from '../workflows'
 
 export const metadata = {
@@ -93,6 +95,59 @@ export default async function handler(payload: AcceptedPayload, ctx: SubscriberC
   if (!supplyCase) return
 
   await ensureWorkflow(container, store, scope, supplyCase, inboundMessageId)
+  await recordInitialImpactIfAvailable(container, scope, supplyCase.id)
+
+  // A supplier's confirmation reply is settled through the SAME command bar as
+  // every other Phase 4 entry point (the CLI, a future operator action): this
+  // subscriber only decides that a confirmed message deserves a call, never
+  // what the call does with it.
+  const message = await store.inboundMessages.findById(scope, inboundMessageId)
+  if (message?.messageIntent === 'SUPPLY_COMMITMENT_CONFIRMED') {
+    await recordConfirmationCommand(container, scope, inboundMessageId)
+  }
+}
+
+async function recordConfirmationCommand(
+  container: ResolverContainer,
+  scope: StoreScope,
+  inboundMessageId: string,
+): Promise<void> {
+  const commandBus = container.resolve<CommandBus>('commandBus')
+  const commandCtx: CommandRuntimeContext = {
+    container: container as unknown as AwilixContainer,
+    auth: null,
+    organizationScope: null,
+    selectedOrganizationId: scope.organizationId,
+    organizationIds: [scope.organizationId],
+    systemActor: true,
+  }
+  await commandBus.execute<{ inboundMessageId: string; scope: StoreScope }, RecordConfirmationResult>(
+    RECORD_CONFIRMATION_COMMAND_ID,
+    { input: { inboundMessageId, scope }, ctx: commandCtx },
+  )
+}
+
+async function recordInitialImpactIfAvailable(container: ResolverContainer, scope: StoreScope, caseId: string): Promise<void> {
+  let advisorFactory: unknown
+  try {
+    advisorFactory = container.resolve('initialImpactAdvisorInvokerFactory')
+  } catch {
+    return
+  }
+  if (typeof advisorFactory !== 'function') return
+  const commandBus = container.resolve<CommandBus>('commandBus')
+  const commandCtx: CommandRuntimeContext = {
+    container: container as unknown as AwilixContainer,
+    auth: null,
+    organizationScope: null,
+    selectedOrganizationId: scope.organizationId,
+    organizationIds: [scope.organizationId],
+    systemActor: true,
+  }
+  await commandBus.execute<{ caseId: string; scope: StoreScope }, RecordInitialImpactResult>(RECORD_INITIAL_IMPACT_COMMAND_ID, {
+    input: { caseId, scope },
+    ctx: commandCtx,
+  })
 }
 
 /**

@@ -30,7 +30,7 @@ function createTestClock(): StoreClock {
 /** Classifies everything as unrelated: these tests are about scope, not triage. */
 const unrelatedInvoker: InboundTriageInvoker = async () => ({
   intent: 'UNRELATED',
-  correlation: { kind: 'NEW_CASE' },
+  correlation: { kind: 'NEW_CASE', candidateIndex: null },
   sku: null,
   commitments: [],
   price: null,

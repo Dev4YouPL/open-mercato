@@ -3949,6 +3949,32 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@open-mercato/ai-assistant@patch:@open-mercato/ai-assistant@npm%3A0.8.0#~/.yarn/patches/@open-mercato-ai-assistant-npm-0.8.0-6347c29649.patch":
+  version: 0.8.0
+  resolution: "@open-mercato/ai-assistant@patch:@open-mercato/ai-assistant@npm%3A0.8.0#~/.yarn/patches/@open-mercato-ai-assistant-npm-0.8.0-6347c29649.patch::version=0.8.0&hash=c34f92"
+  dependencies:
+    "@ai-sdk/anthropic": "npm:^4.0.44"
+    "@ai-sdk/azure": "npm:^4.0.0"
+    "@ai-sdk/google": "npm:^4.0.56"
+    "@ai-sdk/openai": "npm:^4.0.50"
+    "@modelcontextprotocol/sdk": "npm:^1.30.0"
+    ai: "npm:^7.0.83"
+    cmdk: "npm:^1.0.0"
+    framer-motion: "npm:^13.1.1"
+    isolated-vm: "npm:^7.0.1"
+    react-json-view-lite: "npm:^2.5.0"
+    react-markdown: "npm:^10.1.0"
+    zod-to-json-schema: "npm:^3.25.2"
+  peerDependencies:
+    "@open-mercato/shared": 0.8.0
+    "@open-mercato/ui": 0.8.0
+    react: ^19.0.0
+    react-dom: ^19.0.0
+    zod: ">=3.23.0"
+  checksum: 10/93664f1792c5e5dfbf5c495920b7f548491598d766ebc451de799b8d33e1c2769623e7e31414d03b85cc1819039d0e82d28c04139159032fe471610ba5579bb6
+  languageName: node
+  linkType: hard
+
 "@open-mercato/cache@npm:0.8.0":
   version: 0.8.0
   resolution: "@open-mercato/cache@npm:0.8.0"
@@ -4224,6 +4250,80 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@open-mercato/core@patch:@open-mercato/core@npm%3A0.8.0#./.yarn/patches/@open-mercato-core-npm-0.8.0-41c770ae92.patch::version=0.8.0&hash=2061a1&locator=manufacturer-app%40workspace%3A.":
+  version: 0.8.0
+  resolution: "@open-mercato/core@patch:@open-mercato/core@npm%3A0.8.0#./.yarn/patches/@open-mercato-core-npm-0.8.0-41c770ae92.patch::version=0.8.0&hash=2061a1&locator=manufacturer-app%40workspace%3A."
+  dependencies:
+    "@dagrejs/dagre": "npm:^3.0.0"
+    "@mikro-orm/core": "npm:^7.1.14"
+    "@mikro-orm/decorators": "npm:^7.1.14"
+    "@mikro-orm/postgresql": "npm:^7.1.14"
+    "@types/leaflet": "npm:^1.9.12"
+    "@types/leaflet.markercluster": "npm:^1.5.5"
+    "@types/sanitize-html": "npm:^2.13.0"
+    "@types/semver": "npm:^7.8.0"
+    "@xyflow/react": "npm:^12.11.5"
+    ai: "npm:^7.0.83"
+    date-fns: "npm:4.4.0"
+    date-fns-tz: "npm:^3.2.0"
+    leaflet: "npm:^1.9.4"
+    leaflet.markercluster: "npm:^1.5.3"
+    mammoth: "npm:^1.9.0"
+    pdfjs-dist: "npm:^6.2.108"
+    resend: "npm:^6.24.0"
+    sanitize-html: "npm:2.17.5"
+    semver: "npm:^7.8.5"
+    sharp: "npm:^0.35.3"
+    svix: "npm:^1.99.1"
+    ts-pattern: "npm:^5.0.0"
+    zod: "npm:^4.4.3"
+  peerDependencies:
+    "@open-mercato/ai-assistant": 0.8.0
+    "@open-mercato/shared": 0.8.0
+    "@open-mercato/ui": 0.8.0
+    react: ^19.0.0
+    react-dom: ^19.0.0
+  checksum: 10/b0424365d891a30533d94dec0ec616e9b273a2f7f578f168d8d379330d1c49d3d12084aab4a218241f7b6fefa5890424b473c48d70197bdba5926d3cc9c96e66
+  languageName: node
+  linkType: hard
+
+"@open-mercato/core@patch:@open-mercato/core@patch%3A@open-mercato/core@npm%253A0.8.0%23./.yarn/patches/@open-mercato-core-npm-0.8.0-41c770ae92.patch%3A%3Aversion=0.8.0&hash=2061a1&locator=manufacturer-app%2540workspace%253A.#~/.yarn/patches/@open-mercato-core-patch-72b38b64a1.patch":
+  version: 0.8.0
+  resolution: "@open-mercato/core@patch:@open-mercato/core@patch%3A@open-mercato/core@npm%253A0.8.0%23./.yarn/patches/@open-mercato-core-npm-0.8.0-41c770ae92.patch%3A%3Aversion=0.8.0&hash=2061a1&locator=manufacturer-app%2540workspace%253A.#~/.yarn/patches/@open-mercato-core-patch-72b38b64a1.patch::version=0.8.0&hash=f9eb9b"
+  dependencies:
+    "@dagrejs/dagre": "npm:^3.0.0"
+    "@mikro-orm/core": "npm:^7.1.14"
+    "@mikro-orm/decorators": "npm:^7.1.14"
+    "@mikro-orm/postgresql": "npm:^7.1.14"
+    "@types/leaflet": "npm:^1.9.12"
+    "@types/leaflet.markercluster": "npm:^1.5.5"
+    "@types/sanitize-html": "npm:^2.13.0"
+    "@types/semver": "npm:^7.8.0"
+    "@xyflow/react": "npm:^12.11.5"
+    ai: "npm:^7.0.83"
+    date-fns: "npm:4.4.0"
+    date-fns-tz: "npm:^3.2.0"
+    leaflet: "npm:^1.9.4"
+    leaflet.markercluster: "npm:^1.5.3"
+    mammoth: "npm:^1.9.0"
+    pdfjs-dist: "npm:^6.2.108"
+    resend: "npm:^6.24.0"
+    sanitize-html: "npm:2.17.5"
+    semver: "npm:^7.8.5"
+    sharp: "npm:^0.35.3"
+    svix: "npm:^1.99.1"
+    ts-pattern: "npm:^5.0.0"
+    zod: "npm:^4.4.3"
+  peerDependencies:
+    "@open-mercato/ai-assistant": 0.8.0
+    "@open-mercato/shared": 0.8.0
+    "@open-mercato/ui": 0.8.0
+    react: ^19.0.0
+    react-dom: ^19.0.0
+  checksum: 10/743f11d6c456fb1349a01cb3d2177ffb300506f6a7ef86730f20bb36c5b5eed4af330d7979597cb0e83c27fef56839a4a0ff13ca677acb7bde6c385d03258725
+  languageName: node
+  linkType: hard
+
 "@open-mercato/documents@npm:0.8.0":
   version: 0.8.0
   resolution: "@open-mercato/documents@npm:0.8.0"
@@ -4311,6 +4411,39 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@open-mercato/enterprise@patch:@open-mercato/enterprise@npm%3A0.8.0#~/.yarn/patches/@open-mercato-enterprise-npm-0.8.0-f62b97ab55.patch":
+  version: 0.8.0
+  resolution: "@open-mercato/enterprise@patch:@open-mercato/enterprise@npm%3A0.8.0#~/.yarn/patches/@open-mercato-enterprise-npm-0.8.0-f62b97ab55.patch::version=0.8.0&hash=1add29"
+  dependencies:
+    "@ai-sdk/anthropic": "npm:^4.0.1"
+    "@ai-sdk/openai": "npm:^4.0.2"
+    "@dnd-kit/core": "npm:^6.3.1"
+    "@dnd-kit/sortable": "npm:^10.0.0"
+    "@dnd-kit/utilities": "npm:^3.2.2"
+    "@open-mercato/ai-assistant": "npm:0.8.0"
+    "@open-mercato/core": "npm:0.8.0"
+    "@open-mercato/queue": "npm:0.8.0"
+    "@open-mercato/scheduler": "npm:0.8.0"
+    "@open-mercato/ui": "npm:0.8.0"
+    "@open-mercato/web-research": "npm:0.8.0"
+    "@simplewebauthn/browser": "npm:^13.3.0"
+    "@simplewebauthn/server": "npm:^13.3.2"
+    "@simplewebauthn/types": "npm:^12.0.0"
+    "@types/qrcode": "npm:^1.5.5"
+    ai: "npm:^7.0.4"
+    openid-client: "npm:^6.8.4"
+    otpauth: "npm:9.5.1"
+    qrcode: "npm:^1.5.4"
+  peerDependencies:
+    "@mikro-orm/core": ^7.0.14
+    "@open-mercato/shared": 0.8.0
+    react: ^19.0.0
+    react-dom: ^19.0.0
+    zod: ">=3.23.0"
+  checksum: 10/39f6c6c0d6b294aa734eabcecd01bc2ca35e31b38af9e9ba884c623ae4bfed251c17c6bb240ee4bc84e05555bdd9da5ffce355f820cac2d73733631f5e9c031e
+  languageName: node
+  linkType: hard
+
 "@open-mercato/events@npm:0.8.0":
   version: 0.8.0
   resolution: "@open-mercato/events@npm:0.8.0"
@@ -4387,6 +4520,28 @@ __metadata:
     ioredis:
       optional: true
   checksum: 10/2fe1c9ec435aa42d83dec7dd4c02a2f5e0750d2c96377fd788f84764624e8903a778aaa5fdc6168e79205ed271f88a749d1e35c13dd856b337e2d0245886276d
+  languageName: node
+  linkType: hard
+
+"@open-mercato/scheduler@patch:@open-mercato/scheduler@npm%3A0.8.0#~/.yarn/patches/@open-mercato-scheduler-npm-0.8.0-eea6713fdc.patch":
+  version: 0.8.0
+  resolution: "@open-mercato/scheduler@patch:@open-mercato/scheduler@npm%3A0.8.0#~/.yarn/patches/@open-mercato-scheduler-npm-0.8.0-eea6713fdc.patch::version=0.8.0&hash=17dea3"
+  dependencies:
+    "@open-mercato/events": "npm:0.8.0"
+    "@open-mercato/queue": "npm:0.8.0"
+    cron-parser: "npm:^5.6.2"
+  peerDependencies:
+    "@mikro-orm/core": ^7.0.14
+    "@open-mercato/shared": 0.8.0
+    bullmq: ^5.0.0 || ^6.0.0
+    ioredis: ^5.0.0 || ^6.0.0
+    zod: ">=3.23.0"
+  peerDependenciesMeta:
+    bullmq:
+      optional: true
+    ioredis:
+      optional: true
+  checksum: 10/dee8e4d2893b4ad8894552c0a7d0f68ffc4bde6d0bcc0dc43c3420dacffd3335dd24981ed0fd85744d0024a1f9cbce2ecb765531fa1bdb9f17a8311e58d41397
   languageName: node
   linkType: hard
 
@@ -15838,7 +15993,7 @@ __metadata:
     "@mikro-orm/postgresql": "npm:^7.1.14"
     "@modelcontextprotocol/sdk": "npm:^1.29.0"
     "@napi-rs/canvas": "npm:^1.0.8"
-    "@open-mercato/ai-assistant": "npm:0.8.0"
+    "@open-mercato/ai-assistant": "patch:@open-mercato/ai-assistant@npm%3A0.8.0#~/.yarn/patches/@open-mercato-ai-assistant-npm-0.8.0-6347c29649.patch"
     "@open-mercato/cache": "npm:0.8.0"
     "@open-mercato/channel-apns": "npm:0.8.0"
     "@open-mercato/channel-discord": "npm:0.8.0"
@@ -15851,14 +16006,14 @@ __metadata:
     "@open-mercato/checkout": "npm:0.8.0"
     "@open-mercato/cli": "patch:@open-mercato/cli@npm%3A0.8.0#~/.yarn/patches/@open-mercato-cli-npm-0.8.0-352e8c707b.patch"
     "@open-mercato/content": "npm:0.8.0"
-    "@open-mercato/core": "npm:0.8.0"
+    "@open-mercato/core": "patch:@open-mercato/core@patch%3A@open-mercato/core@npm%253A0.8.0%23./.yarn/patches/@open-mercato-core-npm-0.8.0-41c770ae92.patch%3A%3Aversion=0.8.0&hash=2061a1&locator=manufacturer-app%2540workspace%253A.#~/.yarn/patches/@open-mercato-core-patch-72b38b64a1.patch"
     "@open-mercato/documents": "npm:0.8.0"
-    "@open-mercato/enterprise": "npm:0.8.0"
+    "@open-mercato/enterprise": "patch:@open-mercato/enterprise@npm%3A0.8.0#~/.yarn/patches/@open-mercato-enterprise-npm-0.8.0-f62b97ab55.patch"
     "@open-mercato/events": "npm:0.8.0"
     "@open-mercato/gateway-stripe": "npm:0.8.0"
     "@open-mercato/onboarding": "npm:0.8.0"
     "@open-mercato/queue": "npm:0.8.0"
-    "@open-mercato/scheduler": "npm:0.8.0"
+    "@open-mercato/scheduler": "patch:@open-mercato/scheduler@npm%3A0.8.0#~/.yarn/patches/@open-mercato-scheduler-npm-0.8.0-eea6713fdc.patch"
     "@open-mercato/search": "npm:0.8.0"
     "@open-mercato/shared": "npm:0.8.0"
     "@open-mercato/sync-akeneo": "npm:0.8.0"

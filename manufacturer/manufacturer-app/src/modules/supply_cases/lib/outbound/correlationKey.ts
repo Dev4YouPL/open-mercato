@@ -6,10 +6,13 @@ import type { OutboundPhase } from '../../data/types'
  * phase + recipient, and nothing else.
  *
  * Deriving it rather than generating one per attempt is what makes a retry
- * safe. The retry computes the same key, finds the anchor the first attempt
- * recorded, and reuses its `Message-ID` — so the supplier is not mailed twice,
- * and the reply they eventually send still resolves to the request we think
- * they are answering.
+ * safe. A second attempt computes the same key and finds the anchor the first
+ * one recorded: `sendSupplierMessage` then sends nothing at all, because it
+ * cannot tell a delivered attempt from one that died before SMTP. An explicit
+ * human retry (`resend`) does deliver again, reusing that anchor's
+ * `Message-ID` — so the supplier sees one message identity rather than two, and
+ * the reply they eventually send still resolves to the request we think they
+ * are answering.
  *
  * The recipient is normalized first: `Supplier2@Example.com` and
  * `supplier2@example.com` are one mailbox, and treating them as two keys would

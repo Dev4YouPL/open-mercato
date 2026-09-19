@@ -1,0 +1,56 @@
+diff --git a/dist/modules/auth/cli.js b/dist/modules/auth/cli.js
+index e18353572a247f7969dc4d47232e4b5c6e5cc0ca..75b1b3dfb877ab544a63d27de1427a1b45b08bc3 100644
+--- a/dist/modules/auth/cli.js
++++ b/dist/modules/auth/cli.js
+@@ -676,6 +676,8 @@ const setPassword = {
+   }
+ };
+ async function syncCustomerRoleAcls(em, tenantId, modules) {
++  if (!modules.some((module) => module.id === "customer_accounts")) return null;
++
+   let ensure;
+   try {
+     ;
+diff --git a/dist/modules/communication_channels/commands/ingest-inbound-message.js b/dist/modules/communication_channels/commands/ingest-inbound-message.js
+index dd31a686964f8b4faf882faf98cb59303908e6d5..f4b20248c650ebc2ce55fe15768bb503eb84949b 100644
+--- a/dist/modules/communication_channels/commands/ingest-inbound-message.js
++++ b/dist/modules/communication_channels/commands/ingest-inbound-message.js
+@@ -240,7 +240,7 @@ const ingestInboundMessageCommand = {
+       // senders have no address (Discord, Slack, SMS…) are validated without it.
+       // The messages validator fails closed on any type it does not recognize.
+       sourceChannelType: input.channelType,
+-      recipients: mapping?.assignedUserId ? [{ userId: mapping.assignedUserId, type: "to" }] : [],
++      recipients: [],
+       subject: safeSubject,
+       body: truncatedBody,
+       bodyFormat: m.bodyFormat === "html" ? "text" : m.bodyFormat,
+diff --git a/src/modules/auth/cli.ts b/src/modules/auth/cli.ts
+index 972b57ada9d120c85b00f8c93b8828fe1549dc29..bfae31460602455590c52392d80a38d05347608a 100644
+--- a/src/modules/auth/cli.ts
++++ b/src/modules/auth/cli.ts
+@@ -799,6 +799,8 @@ async function syncCustomerRoleAcls(
+   tenantId: string,
+   modules: Module[],
+ ): Promise<{ updatedRoleSlugs: string[]; addedFeatures: string[] } | null> {
++  if (!modules.some((module) => module.id === 'customer_accounts')) return null
++
+   let ensure: typeof import('@open-mercato/core/modules/customer_accounts/lib/customerRoleAcls').ensureDefaultCustomerRoleAcls
+   try {
+     ;({ ensureDefaultCustomerRoleAcls: ensure } = await import(
+diff --git a/src/modules/communication_channels/commands/ingest-inbound-message.ts b/src/modules/communication_channels/commands/ingest-inbound-message.ts
+index 5f04399fe6c827c288a22a90ba902cc0df80180b..445d58d25dec0ba9c7919c60a11924dc30f2e9fc 100644
+--- a/src/modules/communication_channels/commands/ingest-inbound-message.ts
++++ b/src/modules/communication_channels/commands/ingest-inbound-message.ts
+@@ -390,8 +390,9 @@ const ingestInboundMessageCommand: CommandHandler<IngestInboundMessageInput, Ing
+       // senders have no address (Discord, Slack, SMS…) are validated without it.
+       // The messages validator fails closed on any type it does not recognize.
+       sourceChannelType: input.channelType,
+-      recipients: mapping?.assignedUserId
+-        ? [{ userId: mapping.assignedUserId, type: 'to' as const }]
+-        : [],
++      // Inbound mail is a public message addressed to the external
++      // correspondent. Assignment is conversation metadata, not an internal
++      // message recipient; public messages must keep this list empty.
++      recipients: [],
+       subject: safeSubject,
+       body: truncatedBody,

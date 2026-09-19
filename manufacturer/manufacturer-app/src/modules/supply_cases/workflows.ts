@@ -2,6 +2,9 @@ import { createWorkflowsModuleConfig, defineWorkflow } from '@open-mercato/share
 
 export const INBOUND_CASE_WORKFLOW_ID = 'supply_cases.inbound-case'
 export const INBOUND_CASE_REPLY_SIGNAL = 'supply_cases.inbound.reply'
+export const INITIAL_IMPACT_READY_SIGNAL = 'supply_cases.initial-impact.ready'
+export const SOURCING_DECISION_SIGNAL = 'supply_cases.sourcing.decision-recorded'
+export const ALTERNATIVE_REQUEST_DELIVERED_SIGNAL = 'supply_cases.alternative-request.delivered'
 
 const inboundCase = defineWorkflow({
   workflowId: INBOUND_CASE_WORKFLOW_ID,
@@ -20,11 +23,32 @@ const inboundCase = defineWorkflow({
       description: 'Start after deterministic transport and triage acceptance.',
     },
     {
-      stepId: 'await-reply',
-      stepName: 'Await supplier reply',
+      stepId: 'initial-impact-advisor',
+      stepName: 'Calculate impact and prepare advice',
       stepType: 'WAIT_FOR_SIGNAL',
-      description: 'Pause until another scoped inbound message is correlated to the case.',
-      signalConfig: { signalName: INBOUND_CASE_REPLY_SIGNAL },
+      description: 'Pause until deterministic impact and the advisory result are stored on the case.',
+      signalConfig: { signalName: INITIAL_IMPACT_READY_SIGNAL },
+    },
+    {
+      stepId: 'human-sourcing-decision',
+      stepName: 'Await human sourcing decision',
+      stepType: 'WAIT_FOR_SIGNAL',
+      description: 'Pause until an authorized user selects one of the canonical sourcing options.',
+      signalConfig: { signalName: SOURCING_DECISION_SIGNAL },
+    },
+    {
+      stepId: 'alternative-request-delivery',
+      stepName: 'Await alternative request delivery evidence',
+      stepType: 'WAIT_FOR_SIGNAL',
+      description: 'Pause until the outbound request has trusted delivery evidence.',
+      signalConfig: { signalName: ALTERNATIVE_REQUEST_DELIVERED_SIGNAL },
+    },
+    {
+      stepId: 'await-reply',
+      stepName: 'Await alternative supplier offer',
+      stepType: 'WAIT_FOR_SIGNAL',
+      description: 'Pause for at most three days after confirmed request delivery.',
+      signalConfig: { signalName: INBOUND_CASE_REPLY_SIGNAL, timeout: 'P3D' },
     },
     {
       stepId: 'end',
@@ -35,9 +59,33 @@ const inboundCase = defineWorkflow({
   ] as const,
   transitions: [
     {
-      transitionId: 'start-to-await-reply',
-      transitionName: 'Wait for a reply',
+      transitionId: 'start-to-initial-impact',
+      transitionName: 'Calculate initial impact',
       fromStepId: 'start',
+      toStepId: 'initial-impact-advisor',
+      trigger: 'auto',
+      priority: 100,
+    },
+    {
+      transitionId: 'impact-to-sourcing-decision',
+      transitionName: 'Ask for sourcing decision',
+      fromStepId: 'initial-impact-advisor',
+      toStepId: 'human-sourcing-decision',
+      trigger: 'auto',
+      priority: 100,
+    },
+    {
+      transitionId: 'decision-to-delivery-evidence',
+      transitionName: 'Send request to alternative supplier',
+      fromStepId: 'human-sourcing-decision',
+      toStepId: 'alternative-request-delivery',
+      trigger: 'auto',
+      priority: 100,
+    },
+    {
+      transitionId: 'delivery-to-await-reply',
+      transitionName: 'Wait for the alternative offer',
+      fromStepId: 'alternative-request-delivery',
       toStepId: 'await-reply',
       trigger: 'auto',
       priority: 100,

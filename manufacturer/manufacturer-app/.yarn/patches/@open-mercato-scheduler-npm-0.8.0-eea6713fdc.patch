@@ -1,0 +1,23 @@
+diff --git a/dist/modules/scheduler/lib/intervalParser.js b/dist/modules/scheduler/lib/intervalParser.js
+index b6d9bf05157a00d7a1d49f7a733977989302e683..7824c79228e4386a784503c5a44635e65db0fd5c 100644
+--- a/dist/modules/scheduler/lib/intervalParser.js
++++ b/dist/modules/scheduler/lib/intervalParser.js
+@@ -1,4 +1,4 @@
+-const MIN_SCHEDULE_INTERVAL_MS = 60 * 1e3;
++const MIN_SCHEDULE_INTERVAL_MS = 10 * 1e3;
+ function parseInterval(interval) {
+   const regex = /^(\d+)(s|m|h|d)$/;
+   const match = interval.match(regex);
+diff --git a/src/modules/scheduler/lib/intervalParser.ts b/src/modules/scheduler/lib/intervalParser.ts
+index cc61e78a21f661b4aa2397125ba856a6a2569712..9e1c6e8215d2e237944c9bf4e9a587253f66b1b6 100644
+--- a/src/modules/scheduler/lib/intervalParser.ts
++++ b/src/modules/scheduler/lib/intervalParser.ts
+@@ -1,7 +1,7 @@
+ /**
+  * Parse simple interval strings like '15m', '2h', '1d' into milliseconds
+  */
+-export const MIN_SCHEDULE_INTERVAL_MS = 60 * 1000
++export const MIN_SCHEDULE_INTERVAL_MS = 10 * 1000
+ 
+ export function parseInterval(interval: string): number {
+   const regex = /^(\d+)(s|m|h|d)$/

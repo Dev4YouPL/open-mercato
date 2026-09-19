@@ -1,7 +1,7 @@
 # UI spraw dostawowych dla manufacturer-app
 
 **Data**: 2026-09-18  
-**Status**: Ready for implementation  
+**Status**: In progress — Phase 1 read-only slice and browser matrix implemented; formal exit gate remains open
 **Parent spec**: `.ai/specs/2026-09-18-supplier-email-agent-workflow.md`  
 **Data/store spec**: `.ai/specs/2026-09-18-supply-cases-local-json-store.md`
 
@@ -292,9 +292,9 @@ Timeline, `currentWait`, attention rank i customer impact są polami projekcyjny
 
 ## API, Command, and Error Contracts
 
-W repo nie ma dziś poniższych routes. Implementacja ma je dodać jako minimalne, scoped read APIs z per-method `metadata` i `openApi`; nazwy są nową addytywną powierzchnią kontraktową.
+W repo nie ma dziś poniższych routes. Implementacja ma je dodać jako minimalne, scoped read APIs z per-method `metadata` i `openApi`; nazwy są nową addytywną powierzchnią kontraktową. Generator Open Mercato montuje moduł `supply_cases` pod kanonicznym prefiksem `/api/supply_cases`; UI i testy używają tej ścieżki runtime.
 
-### `GET /api/supply-cases`
+### `GET /api/supply_cases` (semanticzny odpowiednik `/api/supply-cases`)
 
 Auth: staff auth + `supply_cases.view`.
 
@@ -326,7 +326,7 @@ type SupplyCaseListResponse = {
 }
 ```
 
-### `GET /api/supply-cases/{id}`
+### `GET /api/supply_cases/{id}` (semanticzny odpowiednik `/api/supply-cases/{id}`)
 
 Auth: staff auth + `supply_cases.view`; message body fields są dołączane tylko z `supply_cases.messages.view`.
 
@@ -423,6 +423,35 @@ API tests obejmują osobno oba nowe GET routes. Mutacyjne testy są aktywowane d
 - **Validation:** focused workflow/API/browser integration, `yarn generate`, pełny configured gate i `yarn test:integration:ephemeral`.
 - **Exit gate:** scenariusz w obu kolejnościach potwierdzeń kończy się dokładnie jednym `500/500`, `PROTECTED`, `RESOLVED`; brak/mismatch nigdy nie pokazuje sukcesu.
 
+## Implementation Status
+
+Source doc: .ai/specs/2026-09-18-supply-cases-ui.md
+
+| Phase | State | Dependencies | Acceptance IDs | Focused validation | Exit gate |
+|---|---|---|---|---|---|
+| Phase 1 — Read-only operational queue | in_progress | existing repositories, coverage, ACL, i18n | AC-001, AC-002, read-only AC-003/AC-006 | Closure run 2026-09-19: Playwright read-only 3/3, TEST-UI-009 1/1, TEST-UI-010 2/2 and TEST-UI-012 1/1 passed against the local QA runtime; fixtures are scoped and purged. | **NOT met.** The requested browser matrix is now evidenced, but the formal gate still requires live provider and real inbound-mail evidence; neither was run without explicit credentials and approval. |
+| Phase 2 — Decision projection and guarded actions | in_progress | Phase 1; parent Caseload proposals and command contracts | AC-003, AC-004, AC-006 | Closure run 2026-09-19: Playwright `supply-cases-phase2-decision.spec.ts` 1/1 passed; three options are unselected initially, Supplier 2 is selected, stale submit returns `409`, the detail refetches, only the decision POST mutates and no false success is shown. | **Partially met.** The first guarded decision point is browser-evidenced. The final decision point (TEST-UI-006) and the remaining parent Phase 2 exit-gate evidence (live provider/RFQ plus other documented contract gaps) remain open. |
+| Phase 3 — Confirmation and resolved-state demo | pending | Phase 2; parent confirmation join and resolution command | AC-003, AC-005, AC-006 | blocked by declared dependencies | both confirmation orders produce one safe resolved result |
+
+### Phase 1 progress
+
+- [x] read API slice: `src/modules/supply_cases/data/read-model.ts`, `src/modules/supply_cases/api/route.ts`, `src/modules/supply_cases/api/[id]/route.ts`, `src/modules/supply_cases/api/openapi.ts`; scoped filters, derived coverage, 404 isolation and message redaction covered — `yarn test src/modules/supply_cases/__tests__/read-model.test.ts src/modules/supply_cases/__tests__/read-api.test.ts --runInBand` passed
+- [x] list surface: `src/modules/supply_cases/components/SupplyCasesTable.tsx`, `src/modules/supply_cases/backend/supply-cases/page.tsx`, `src/modules/supply_cases/backend/supply-cases/page.meta.ts`; DataTable filters, server pagination/sort, URL state, localized loading/empty/error states and navigation metadata are wired — `yarn generate`, `yarn typecheck`, `yarn lint`, `yarn ds:check` passed
+- [x] detail surface: `src/modules/supply_cases/components/SupplyCaseDetail.tsx`, `src/modules/supply_cases/backend/supply-cases/[id]/page.tsx`, `src/modules/supply_cases/backend/supply-cases/[id]/page.meta.ts`; derived coverage, degraded states, redacted timeline, customer impact, analysis/proposal summaries and responsive sections are rendered read-only — `yarn test`, `yarn build` passed
+- [x] browser integration evidence for TEST-UI-002/004: `src/modules/supply_cases/__integration__/supply-cases-read-only.spec.ts` passed 3/3 against the local runtime; the scenario creates and purges its scoped JSON fixture, covers search, risk filter, URL state, detail coverage, customer risk, timeline translation and read-only actions; Chrome computer-use walkthrough verified the same `SC-001`-equivalent at `300/500` with missing `200`
+- [x] browser closure evidence for TEST-UI-009/010/012: `supply-cases-permission.spec.ts` 1/1 covers forbidden list/detail without leakage; `supply-cases-failure-states.spec.ts` 2/2 covers retry recovery, degraded related-data state and 404; `supply-cases-accessibility.spec.ts` 1/1 covers 390px viewport, keyboard radio navigation, labels/focus and overflow. Each spec creates and purges its own scoped fixture.
+- [ ] **FORMAL PHASE 1 EXIT GATE remains blocked:** no live provider run and no real inbound-mail round trip were executed; the browser evidence above is local-runtime evidence only.
+
+### Phase 2 progress
+
+- [x] first decision point: `src/modules/supply_cases/api/[id]/decision/route.ts` behind `supply_cases.decisions.apply`, requiring the optimistic-lock header (`428` without it) and returning a typed `409` with `currentUpdatedAt`; the detail surface renders exactly three options with none preselected
+- [x] browser evidence for the first decision point: `src/modules/supply_cases/__integration__/supply-cases-phase2-decision.spec.ts` passed 1/1 in the 2026-09-19 closure audit — three unselected radios, explicit select of the alternative branch, guarded stale-version submit observed as `409`, conflict message visible, list refetched back to three radios (TEST-UI-005 and TEST-UI-011 in substance)
+- [ ] TEST-UI-006 final plan selection and checklist — depends on parent Phase 3, not started
+- [x] browser action safety evidence: the Phase 2 decision spec records the guarded POST as the only mutation, verifies stale `409` plus refetch and asserts no false `Resolved`/waiting success
+- [ ] **Ownership deviation to resolve with the parent spec:** this surface routes the disposition through the module's own guarded command route rather than a Caseload deep-link or embedded surface. The parent Phase 2 spec's step 4 / P2-07 asked for an `INVOKE_AGENT` step plus a Caseload disposition bridge. Human authority and propose-only are preserved, but the "nie omijają Caseload/workflow" clause in this phase's exit gate needs to be either amended or satisfied.
+
+Audit record: [`../runs/2026-09-19-phase1-phase2-browser-closure/STATE.md`](../runs/2026-09-19-phase1-phase2-browser-closure/STATE.md).
+
 ## Requirement Traceability
 
 | Requirement | Journey / surface | Contracts | Phase | Tests | AC |
@@ -477,7 +506,7 @@ API tests obejmują osobno oba nowe GET routes. Mutacyjne testy są aktywowane d
 | Brak fikcyjnych encji i udawanych gotowych endpoints | pass | Data Models oraz jawny „stan faktyczny”; routes oznaczone jako do dodania |
 | Brak rozszerzenia do MRP/APS | pass | Non-goals |
 
-**Verdict: Ready for implementation**
+**Verdict: Phase 1 read-only slice implemented and verified; Phase 2–3 remain dependency-gated**
 
 ## Open Questions
 
@@ -487,4 +516,7 @@ Brak pytań blokujących. Wybór deep-link vs embedded Caseload jest rozstrzygan
 
 | Data | Zmiana |
 |---|---|
+| 2026-09-19 | Audyt domknięcia Phase 1/Phase 2. Ponownie uruchomiono `supply-cases-read-only.spec.ts` (3/3) i `supply-cases-phase2-decision.spec.ts` (1/1) przeciwko lokalnemu runtime; `yarn typecheck`, 26 suites / 332 testy, eslint i `ds:check` (301 plików) przeszły. Phase 1 pozostaje `in_progress` — exit gate nie jest spełniony, bo **TEST-UI-009/010/012 nie mają żadnych plików spec ani dowodów browser**. Phase 2 UI podniesiono z `pending` na `in_progress`: pierwszy punkt decyzji jest realny i pokryty w przeglądarce (TEST-UI-005/011 co do treści), ale TEST-UI-006 nie istnieje, a dyspozycja idzie przez własny guarded route zamiast Caseload — odchyłka do rozstrzygnięcia w parent spec. Zapis: [`../runs/2026-09-19-phase1-phase2-closure/STATE.md`](../runs/2026-09-19-phase1-phase2-closure/STATE.md). |
+| 2026-09-19 | Dodano powtarzalny Playwright QA runtime (`.ai/scripts/test-env-up.ps1` / `test-env-down.ps1`), browser descriptor oraz 3/3 testy listy, filtrowania i read-only detail; fikcyjny `SC-001` został odtworzony w lokalnym store i pozostawiony otwarty w Chrome. |
 | 2026-09-18 | Pierwsza wersja specyfikacji UI: lista, szczegóły, read modele, Caseload/command ownership, integration coverage i scenariusz `500/500` bez rozszerzania zakresu do MRP. |
+| 2026-09-19 | Faza 1: dodano scoped read API i backendowy read-only queue/detail z derived coverage, redakcją wiadomości, ACL states, i18n oraz statusem implementacji; browser exit gate pozostaje otwarty do czasu przygotowania wspólnego QA environment. |

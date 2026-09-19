@@ -24,6 +24,13 @@ const events = [
     clientBroadcast: true,
   },
   {
+    id: 'communication_channels.message.delivery_exhausted',
+    label: 'External Message Delivery Exhausted',
+    entity: 'external_message',
+    category: 'custom',
+    clientBroadcast: true,
+  },
+  {
     id: 'communication_channels.conversation.created',
     label: 'External Conversation Created',
     entity: 'external_conversation',

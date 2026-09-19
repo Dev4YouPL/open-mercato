@@ -86,6 +86,7 @@ describe('applyTriageOutcome', () => {
     expect(outcome.status).toBe('applied')
     if (outcome.status !== 'applied') return
     expect(outcome.decision.outcome).toBe('AUTO_APPLY')
+    expect(outcome.caseCreated).toBe(true)
     expect(outcome.supplyCase?.correlationId).toBe('SC-001')
     expect(outcome.supplyCase?.productionPlanId).toBe(plan.id)
     // Local demand, not anything the supplier wrote.
@@ -161,6 +162,112 @@ describe('applyTriageOutcome', () => {
     expect(await store.supplyCases.list(scope)).toHaveLength(0)
   })
 
+  it('creates a needs-attention case shell for confident unresolved NEW_CASE triage', async () => {
+    const plan = await seedPlan()
+    const message = await seedMessage({ rfcMessageId: '<missing-new-case@supplier.example>' })
+    const rawResult = {
+      ...(NEW_SUPPLY_PROPOSAL.rawResult as Record<string, unknown>),
+      commitments: [],
+      unresolved: ['commitments[0].date'],
+      correlation: { kind: 'NEW_CASE', candidateIndex: null },
+    }
+
+    const outcome = await applyTriageOutcome(
+      { store, scope, invoke: createRecordingInvoker(rawResult) },
+      message.id,
+    )
+
+    expect(outcome.status).toBe('applied')
+    if (outcome.status !== 'applied') return
+    expect(outcome.decision.outcome).toBe('NEEDS_ATTENTION')
+    if (outcome.decision.outcome !== 'NEEDS_ATTENTION') return
+    expect(outcome.decision.reason).toBe('UNRESOLVED_FIELDS')
+    expect(outcome.caseCreated).toBe(true)
+    expect(outcome.supplyCase).toMatchObject({
+      status: 'NEEDS_ATTENTION',
+      needsAttentionReason: 'MISSING_DATA',
+      sku: plan.materialSku,
+      requiredQuantity: plan.requiredQuantity,
+      requiredDate: plan.requiredDate,
+      productionPlanId: plan.id,
+      workflowInstanceId: null,
+      initialAnalysis: null,
+      initialOptions: null,
+      supplier1Proposal: { sku: plan.materialSku, deliveries: [] },
+    })
+    expect(outcome.message).toMatchObject({
+      caseId: outcome.supplyCase?.id,
+      correlationId: outcome.supplyCase?.correlationId,
+      triageOutcome: 'NEEDS_ATTENTION',
+      triageDisposition: null,
+      needsAttention: true,
+      failureReason: 'NEEDS_ATTENTION:UNRESOLVED_FIELDS',
+    })
+    expect((await store.supplyCases.list(scope))).toHaveLength(1)
+
+    const replay = await applyTriageOutcome(
+      { store, scope, invoke: createRecordingInvoker(NEW_SUPPLY_PROPOSAL.rawResult) },
+      message.id,
+    )
+    expect(replay.status).toBe('already_settled')
+    expect(await store.supplyCases.list(scope)).toHaveLength(1)
+  })
+
+  it('does not create an unresolved NEW_CASE shell without a deterministic local plan', async () => {
+    const scenarios = [
+      {
+        label: 'missing sku',
+        result: { sku: null, unresolved: ['sku'] },
+        plans: 1,
+      },
+      {
+        label: 'low confidence',
+        result: { confidence: 0.41, unresolved: ['commitments[0].date'] },
+        plans: 1,
+      },
+      {
+        label: 'zero plans',
+        result: { unresolved: ['commitments[0].date'] },
+        plans: 0,
+      },
+      {
+        label: 'ambiguous plans',
+        result: { unresolved: ['commitments[0].date'] },
+        plans: 2,
+      },
+    ] as const
+
+    for (const [index, scenario] of scenarios.entries()) {
+      await store.purgeScope(scope)
+      for (let planIndex = 0; planIndex < scenario.plans; planIndex += 1) {
+        await store.productionPlans.create(scope, {
+          planNumber: `PP-${scenario.label}-${planIndex}`,
+          materialSku: 'MAT-42',
+          requiredQuantity: 500,
+          requiredDate: '2026-09-23T12:00:00.000Z',
+        })
+      }
+      const message = await seedMessage({ rfcMessageId: `<unresolved-${index}@supplier.example>` })
+      const rawResult = {
+        ...(NEW_SUPPLY_PROPOSAL.rawResult as Record<string, unknown>),
+        ...scenario.result,
+        correlation: { kind: 'NEW_CASE', candidateIndex: null },
+      }
+
+      const outcome = await applyTriageOutcome(
+        { store, scope, invoke: createRecordingInvoker(rawResult) },
+        message.id,
+      )
+
+      expect(outcome.status).toBe('applied')
+      if (outcome.status !== 'applied') continue
+      expect(outcome.supplyCase).toBeNull()
+      expect(outcome.message.caseId).toBeNull()
+      expect(outcome.message.triageOutcome).toBe('NEEDS_ATTENTION')
+    }
+    expect(await store.supplyCases.list(scope)).toHaveLength(0)
+  })
+
   it('quarantines an unrelated message and touches no case', async () => {
     await seedPlan()
     const supplyCase = await seedCase()
@@ -229,6 +336,119 @@ describe('applyTriageOutcome', () => {
     expect(secondInvoke.calls).toHaveLength(0)
     expect(second.message.caseId).toBe(first.status === 'applied' ? first.supplyCase?.id : null)
     expect(await store.supplyCases.list(scope)).toHaveLength(1)
+  })
+
+  it('concurrent triage creates one case and settles one inbound message', async () => {
+    await seedPlan()
+    const message = await seedMessage({ rfcMessageId: '<concurrent@supplier.example>' })
+    const first = applyTriageOutcome(
+      { store, scope, invoke: createRecordingInvoker(NEW_SUPPLY_PROPOSAL.rawResult) },
+      message.id,
+    )
+    const second = applyTriageOutcome(
+      { store, scope, invoke: createRecordingInvoker(NEW_SUPPLY_PROPOSAL.rawResult) },
+      message.id,
+    )
+
+    const outcomes = await Promise.all([first, second])
+
+    expect(await store.supplyCases.list(scope)).toHaveLength(1)
+    expect(outcomes.map((outcome) => outcome.status).sort()).toEqual(['already_settled', 'applied'])
+    expect(outcomes.every((outcome) => outcome.supplyCase?.id === outcomes[0].supplyCase?.id)).toBe(true)
+    expect((await store.inboundMessages.findById(scope, message.id))?.triageDisposition).toBe('AUTO_APPLIED')
+  })
+
+  it('retries a claimed decision without invoking the agent again after settlement failure', async () => {
+    await seedPlan()
+    const message = await seedMessage({ rfcMessageId: '<record-failure@supplier.example>' })
+    const originalInboundMessages = store.inboundMessages
+    let recordCalls = 0
+    const retryInboundMessages = new Proxy(originalInboundMessages, {
+      get(target, property, receiver) {
+        if (property === 'recordTriage') {
+          return async (...args: Parameters<typeof originalInboundMessages.recordTriage>) => {
+            recordCalls += 1
+            if (recordCalls === 2) {
+              throw new Error('[internal] injected recordTriage failure')
+            }
+            return originalInboundMessages.recordTriage(...args)
+          }
+        }
+        return Reflect.get(target, property, receiver)
+      },
+    })
+    const retryStore: SupplyCasesStore = { ...store, inboundMessages: retryInboundMessages }
+
+    const firstInvoke = createRecordingInvoker(NEW_SUPPLY_PROPOSAL.rawResult)
+    await expect(applyTriageOutcome({ store: retryStore, scope, invoke: firstInvoke }, message.id))
+      .rejects.toThrow('injected recordTriage failure')
+    expect(await store.supplyCases.list(scope)).toHaveLength(1)
+    expect(firstInvoke.calls).toHaveLength(1)
+    expect((await store.inboundMessages.findById(scope, message.id))?.triageOutcome).toBe('AUTO_APPLIED')
+
+    const secondInvoke = createRecordingInvoker({
+      ...(NEW_SUPPLY_PROPOSAL.rawResult as Record<string, unknown>),
+      sku: 'MAT-99',
+    })
+    const retry = await applyTriageOutcome(
+      { store: retryStore, scope, invoke: secondInvoke },
+      message.id,
+    )
+
+    expect(retry.status).toBe('applied')
+    if (retry.status !== 'applied') return
+    expect(await store.supplyCases.list(scope)).toHaveLength(1)
+    expect((await store.inboundMessages.findById(scope, message.id))?.triageDisposition).toBe('AUTO_APPLIED')
+    expect(secondInvoke.calls).toHaveLength(0)
+    expect(retry.caseCreated).toBe(false)
+  })
+
+  it('keeps the claimed production plan when the plan set changes before recovery', async () => {
+    const originalPlan = await seedPlan()
+    const message = await seedMessage({ rfcMessageId: '<plan-claim-recovery@supplier.example>' })
+    const originalSupplyCases = store.supplyCases
+    let createCalls = 0
+    const failingSupplyCases = new Proxy(originalSupplyCases, {
+      get(target, property, receiver) {
+        if (property === 'createIfAbsentByInboundMessage') {
+          return async (...args: Parameters<typeof originalSupplyCases.createIfAbsentByInboundMessage>) => {
+            createCalls += 1
+            if (createCalls === 1) throw new Error('[internal] injected case create failure')
+            return originalSupplyCases.createIfAbsentByInboundMessage(...args)
+          }
+        }
+        return Reflect.get(target, property, receiver)
+      },
+    })
+    const retryStore: SupplyCasesStore = { ...store, supplyCases: failingSupplyCases }
+
+    await expect(applyTriageOutcome(
+      { store: retryStore, scope, invoke: createRecordingInvoker(NEW_SUPPLY_PROPOSAL.rawResult) },
+      message.id,
+    )).rejects.toThrow('injected case create failure')
+
+    const claimed = await store.inboundMessages.findById(scope, message.id)
+    expect(claimed?.failureReason).toBe(`AUTO_APPLIED:CLAIMED:NEW_CASE:${originalPlan.id}`)
+
+    await store.productionPlans.update(scope, originalPlan.id, { materialSku: 'MAT-99' })
+    await store.productionPlans.create(scope, {
+      planNumber: 'PP-2',
+      materialSku: 'MAT-42',
+      requiredQuantity: 900,
+      requiredDate: '2026-10-01T12:00:00.000Z',
+    })
+
+    const secondInvoke = createRecordingInvoker({
+      ...(NEW_SUPPLY_PROPOSAL.rawResult as Record<string, unknown>),
+      sku: 'MAT-99',
+    })
+    const retry = await applyTriageOutcome({ store: retryStore, scope, invoke: secondInvoke }, message.id)
+
+    expect(retry.status).toBe('applied')
+    if (retry.status !== 'applied') return
+    expect(retry.supplyCase?.productionPlanId).toBe(originalPlan.id)
+    expect(retry.supplyCase?.sku).toBe('MAT-99')
+    expect(secondInvoke.calls).toHaveLength(0)
   })
 
   it('refuses to re-triage a settled message even at the repository', async () => {

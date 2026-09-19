@@ -44,6 +44,7 @@ const DEFAULT_PRICING: Record<string, PriceEntry> = {
   'gpt-4o-mini': { inputPer1M: 0.15, outputPer1M: 0.6 },
   'claude-sonnet-4-5': { inputPer1M: 3, outputPer1M: 15 },
   'claude-haiku-4-5': { inputPer1M: 1, outputPer1M: 5 },
+  'meta/muse-spark-1.3-contributor': { inputPer1M: 0.1, outputPer1M: 0.2 },
 }
 
 const DEFAULT_CURRENCY = 'USD'

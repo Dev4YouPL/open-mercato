@@ -109,7 +109,14 @@ function createFakeInvoker(scenario: Scenario): InboundTriageInvoker & { calls: 
     if (scenario === 'existing') return { ...newProposal, correlation: { kind: 'EXISTING_CASE', candidateIndex: 0 } }
     if (scenario === 'unrelated') return UNRELATED_CUSTOMER_MESSAGE.rawResult
     if (scenario === 'low-confidence') return LOW_CONFIDENCE_MESSAGE.rawResult
-    if (scenario === 'missing-data') return MISSING_DATA_MESSAGE.rawResult
+    if (scenario === 'missing-data') {
+      return input.candidates.length > 0
+        ? MISSING_DATA_MESSAGE.rawResult
+        : {
+            ...(MISSING_DATA_MESSAGE.rawResult as Record<string, unknown>),
+            correlation: { kind: 'NEW_CASE', candidateIndex: null },
+          }
+    }
     if (scenario === 'thread-contradiction') return THREAD_CONTRADICTION.rawResult
     return NEW_SUPPLY_PROPOSAL.rawResult
   }) as InboundTriageInvoker & { calls: InboundTriageAgentInput[] }
@@ -343,6 +350,32 @@ describe('TEST-001: inbound flow through the event bus', () => {
     expect(message.triageOutcome).toBe('NEEDS_ATTENTION')
     expect(message.extraction).toMatchObject({ sku: 'MAT-42', commitments: [], price: null, unresolved: ['commitments[0].date'] })
     expect(await result.store.supplyCases.list(scope)).toHaveLength(1)
+  })
+
+  it('TEST-001J: accepted unresolved NEW_CASE creates only a needs-attention shell', async () => {
+    const result = await runScenario('missing-data', { seedPlan: true })
+    const message = (await result.store.inboundMessages.list(scope))[0]
+    const cases = await result.store.supplyCases.list(scope)
+
+    expect(message).toMatchObject({
+      triageOutcome: 'NEEDS_ATTENTION',
+      triageDisposition: null,
+      needsAttention: true,
+      caseId: cases[0]?.id,
+    })
+    expect(cases).toHaveLength(1)
+    expect(cases[0]).toMatchObject({
+      status: 'NEEDS_ATTENTION',
+      needsAttentionReason: 'MISSING_DATA',
+      initialAnalysis: null,
+      initialOptions: null,
+      initialProposalId: null,
+      workflowInstanceId: null,
+    })
+    expect(result.proposalEvents).toHaveLength(0)
+    expect(result.workflow.starts).toHaveLength(0)
+    expect(result.workflow.executions).toHaveLength(0)
+    expect(await result.store.outboundCorrelations.list(scope)).toHaveLength(0)
   })
 
   it('TEST-001F: refuses an agent choice that contradicts the matched thread', async () => {

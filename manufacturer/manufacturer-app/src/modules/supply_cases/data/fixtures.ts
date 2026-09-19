@@ -137,7 +137,7 @@ export function buildScenarioFixtures(scope: StoreScope, options: SeedScenarioOp
   const supplyCase: SupplyCaseCreateInput = {
     id: ids.supplyCase,
     correlationId: FIXTURE_CORRELATION_ID,
-    status: 'RECEIVED',
+    status: options.includeAlternativeOffer ? 'WAITING_FOR_ALTERNATIVE_OFFER' : 'RECEIVED',
     sku: FIXTURE_MATERIAL_SKU,
     requiredQuantity: 500,
     requiredDate: FIXTURE_DATES.wednesday,

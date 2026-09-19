@@ -378,9 +378,12 @@ const ingestInboundMessageCommand: CommandHandler<IngestInboundMessageInput, Ing
         : rawBody
     const safeSubject = (m.subject ?? '').trim() || '(no subject)'
 
+    const inboundRecipientUserId = input.channelType === 'email' && contactHint?.email
+      ? mapping?.assignedUserId ?? channel.userId ?? null
+      : null
     const composeInput = {
       type: `channel.${input.providerKey}`,
-      visibility: 'public' as const,
+      visibility: inboundRecipientUserId ? 'internal' as const : 'public' as const,
       sourceEntityType: 'communication_channels.external_conversation',
       sourceEntityId: conversation.id,
       externalEmail: contactHint?.email ?? undefined,
@@ -390,8 +393,8 @@ const ingestInboundMessageCommand: CommandHandler<IngestInboundMessageInput, Ing
       // senders have no address (Discord, Slack, SMS…) are validated without it.
       // The messages validator fails closed on any type it does not recognize.
       sourceChannelType: input.channelType,
-      recipients: mapping?.assignedUserId
-        ? [{ userId: mapping.assignedUserId, type: 'to' as const }]
+      recipients: inboundRecipientUserId
+        ? [{ userId: inboundRecipientUserId, type: 'to' as const }]
         : [],
       subject: safeSubject,
       body: truncatedBody,
@@ -415,7 +418,7 @@ const ingestInboundMessageCommand: CommandHandler<IngestInboundMessageInput, Ing
       userId: await resolveCommunicationChannelsSystemUserId(
         em,
         input.scope.tenantId,
-        mapping?.assignedUserId ?? null,
+        inboundRecipientUserId,
       ),
     }
 

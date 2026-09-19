@@ -7,7 +7,7 @@ import {
 function buildSignal(overrides: Partial<InboundSignal> = {}): Record<string, unknown> {
   return {
     intent: 'SUPPLY_PROPOSAL',
-    correlation: { kind: 'NEW_CASE' },
+    correlation: { kind: 'NEW_CASE', candidateIndex: null },
     sku: 'MAT-42',
     commitments: [
       { quantity: 300, date: '2026-09-23' },
@@ -93,7 +93,7 @@ describe('createInboundSignalSchema', () => {
   it('makes EXISTING_CASE unreachable when no candidates were offered', () => {
     const schema = createInboundSignalSchema(0)
     expect(() => schema.parse(buildSignal({ correlation: { kind: 'EXISTING_CASE', candidateIndex: 0 } }))).toThrow()
-    expect(schema.parse(buildSignal()).correlation).toEqual({ kind: 'NEW_CASE' })
+    expect(schema.parse(buildSignal()).correlation).toEqual({ kind: 'NEW_CASE', candidateIndex: null })
   })
 
   it('rejects a free-form case identifier in place of an index', () => {

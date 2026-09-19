@@ -81,7 +81,11 @@ function buildPorts(em: EntityManager, store: ReturnType<typeof getSupplyCasesSt
     inboundMessages: store.inboundMessages,
 
     async emitAccepted(acceptedPayload) {
-      await emitSupplyCasesEvent('supply_cases.inbound_message.accepted', acceptedPayload, { persistent: true })
+      await emitSupplyCasesEvent('supply_cases.inbound_message.accepted', acceptedPayload, {
+        persistent: true,
+        tenantId: acceptedPayload.tenantId,
+        organizationId: acceptedPayload.organizationId,
+      })
     },
 
     audit(entry: InboundMessageAuditEntry) {
