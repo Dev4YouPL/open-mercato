@@ -6,7 +6,7 @@ import { createCrudOpenApiFactory, createPagedListResponseSchema } from '@open-m
 import { SupplyCase, type SupplyCaseStatus } from '../../data/entities'
 
 const ENTITY_ID = 'supplier_demo:supply_case' as const
-const statuses = ['detected', 'proposal_ready', 'proposal_queued', 'proposal_delivered', 'reply_received', 'commitment_updated', 'confirmation_queued', 'resolved', 'needs_human', 'escalated', 'blocked_recipient', 'send_failed'] as const
+const statuses = ['detected', 'proposal_ready', 'proposal_queued', 'proposal_delivered', 'counter_received', 'reply_received', 'commitment_updated', 'confirmation_queued', 'resolved', 'needs_human', 'escalated', 'blocked_recipient', 'send_failed'] as const
 
 export const supplyCaseListQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),

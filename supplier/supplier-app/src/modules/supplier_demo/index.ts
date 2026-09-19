@@ -7,7 +7,7 @@ export const metadata: ModuleInfo = {
   description: 'Seeds the supplier demo supply proposal flow and its warehouse stock.',
   author: 'Supplier App Team',
   license: 'MIT',
-  requires: ['catalog', 'customers', 'sales', 'wms', 'feature_toggles', 'communication_channels', 'notifications'],
+  requires: ['catalog', 'customers', 'sales', 'wms', 'feature_toggles', 'communication_channels', 'notifications', 'scheduler', 'ai_assistant'],
 }
 
 export default metadata

@@ -6,6 +6,7 @@ import { createRequestContainer } from '@open-mercato/shared/lib/di/container'
 import { findOneWithDecryption, findWithDecryption } from '@open-mercato/shared/lib/encryption/find'
 import { SupplyCase, SupplyMessage } from '../../../data/entities'
 import { buildSupplyCaseTimeline, SUPPLY_TIMELINE_STEPS } from '../../../lib/timeline'
+import { APPROVABLE_NEGOTIATION_REASONS, HELD_REVISION_REASONS, parseNegotiationRecord } from '../../../lib/negotiation-record'
 
 export const metadata = {
   GET: { requireAuth: true, requireFeatures: ['supplier_demo.supply_cases.view'] },
@@ -39,6 +40,52 @@ const timelineStepSchema = z.object({
   at: z.string().nullable(),
   params: z.record(z.string(), z.union([z.string(), z.number()])),
 })
+const negotiationSchema = z.object({
+  counterRule: z.object({ ok: z.boolean(), failed: z.string().nullable() }).nullable(),
+  evaluation: z.object({
+    id: z.string(),
+    evaluatedAt: z.string(),
+    turnAtEvaluation: z.number(),
+    maxTurns: z.number(),
+    reasonCodes: z.array(z.string()),
+    options: z.array(z.object({
+      id: z.string(),
+      commitments: z.array(commitmentSchema),
+      feasible: z.boolean(),
+      policyDecision: z.string(),
+      executionFingerprint: z.string(),
+      distance: z.number(),
+    })),
+  }).nullable(),
+  agent: z.object({
+    state: z.string(),
+    activeRunId: z.string().nullable(),
+    skipReason: z.string().nullable(),
+    attempts: z.array(z.object({
+      attemptNo: z.number(),
+      runId: z.string(),
+      startedAt: z.string(),
+      leaseExpiresAt: z.string(),
+      finishedAt: z.string().nullable(),
+      auditState: z.string(),
+      outcome: z.string().nullable(),
+      usage: z.object({ inputTokens: z.number(), outputTokens: z.number(), known: z.boolean(), partial: z.boolean() }),
+    })),
+  }),
+  recommendation: z.object({
+    id: z.string(),
+    source: z.string(),
+    optionId: z.string(),
+    commitments: z.array(commitmentSchema),
+    decision: z.string(),
+    reasonCodes: z.array(z.string()),
+    gates: z.record(z.string(), z.string()),
+    autoEligible: z.boolean(),
+    createdAt: z.string(),
+  }).nullable(),
+  dispatch: z.object({ state: z.string(), source: z.string().nullable(), heldReason: z.string().nullable() }),
+  verdict: z.object({ kind: z.string(), by: z.string(), at: z.string(), reason: z.string() }).nullable(),
+}).nullable()
 
 export const supplyCaseDetailResponseSchema = z.object({
   id: z.string(),
@@ -57,6 +104,8 @@ export const supplyCaseDetailResponseSchema = z.object({
   cancelledCommitment: z.array(commitmentSchema).nullable(),
   freedCapacity: z.array(commitmentSchema).nullable(),
   updatedAt: z.string(),
+  availableActions: z.array(z.enum(['retry', 'reopen', 'approve_counter', 'reject_counter'])),
+  negotiation: negotiationSchema,
   messages: z.array(messageSchema),
   timeline: z.array(timelineStepSchema),
 })
@@ -81,6 +130,42 @@ function envelope(message: SupplyMessage): Record<string, unknown> | null {
   return payload && typeof payload === 'object' && Object.keys(payload).length ? payload : null
 }
 
+function negotiation(messages: SupplyMessage[]): z.infer<typeof negotiationSchema> {
+  const counter = [...messages].reverse().find((message) => message.messageType === 'SUPPLY_COUNTER_PROPOSAL' && message.negotiationRecord)
+  if (!counter?.negotiationRecord) return null
+  try {
+    const record = parseNegotiationRecord(counter.negotiationRecord)
+    return {
+      counterRule: record.counterRule,
+      evaluation: record.evaluation
+        ? { ...record.evaluation, options: record.evaluation.options.map((option) => ({ id: option.id, commitments: option.commitments, feasible: option.feasible, policyDecision: option.policyDecision, executionFingerprint: option.executionFingerprint, distance: option.distance })) }
+        : null,
+      agent: { state: record.agent.state, activeRunId: record.agent.activeRunId, skipReason: record.agent.skipReason, attempts: record.agent.attempts.map((attempt) => ({ attemptNo: attempt.attemptNo, runId: attempt.runId, startedAt: attempt.startedAt, leaseExpiresAt: attempt.leaseExpiresAt, finishedAt: attempt.finishedAt, auditState: attempt.auditState, outcome: attempt.outcome, usage: { inputTokens: attempt.usage.inputTokens, outputTokens: attempt.usage.outputTokens, known: attempt.usage.known, partial: attempt.usage.partial } })) },
+      recommendation: record.recommendation ? { id: record.recommendation.id, source: record.recommendation.source, optionId: record.recommendation.optionId, commitments: record.recommendation.commitments, decision: record.recommendation.decision, reasonCodes: record.recommendation.reasonCodes, gates: record.recommendation.gates, autoEligible: record.recommendation.autoEligible, createdAt: record.recommendation.createdAt } : null,
+      dispatch: { state: record.dispatch.state, source: record.dispatch.source, heldReason: record.dispatch.heldReason },
+      verdict: record.verdict ? { kind: record.verdict.kind, by: record.verdict.by, at: record.verdict.at, reason: record.verdict.reason } : null,
+    }
+  } catch {
+    return null
+  }
+}
+
+// Mirrors the server-side guards (retry / reopen / approve_counter / reject_counter) so a button is only shown
+// when the command can succeed; the commands still enforce every rule themselves.
+function availableActions(status: string, statusReason: string | null | undefined, value: z.infer<typeof negotiationSchema>): Array<'retry' | 'reopen' | 'approve_counter' | 'reject_counter'> {
+  const actions: Array<'retry' | 'reopen' | 'approve_counter' | 'reject_counter'> = []
+  const reason = statusReason ?? ''
+  const heldRevision = status === 'needs_human' && HELD_REVISION_REASONS.has(reason)
+  if (status === 'send_failed' || status === 'blocked_recipient' || status === 'reply_received' || status === 'counter_received' || heldRevision) actions.push('retry')
+  if (status === 'needs_human' && !heldRevision) actions.push('reopen')
+  if ((status === 'needs_human' || status === 'counter_received') && value && !value.verdict && !heldRevision) {
+    actions.push('reject_counter')
+    if (status === 'needs_human' && value.recommendation && APPROVABLE_NEGOTIATION_REASONS.has(reason)
+      && value.evaluation && value.evaluation.turnAtEvaluation < value.evaluation.maxTurns) actions.push('approve_counter')
+  }
+  return actions
+}
+
 export async function GET(req: Request, context: { params: Promise<{ id: string }> }) {
   const auth = await getAuthFromRequest(req)
   if (!auth?.tenantId || !auth.orgId || !auth.sub) return Response.json({ error: 'Unauthorized' }, { status: 401 })
@@ -92,6 +177,7 @@ export async function GET(req: Request, context: { params: Promise<{ id: string 
   const supplyCase = await findOneWithDecryption(em, SupplyCase, { ...scope, id, deletedAt: null }, undefined, scope)
   if (!supplyCase) return Response.json({ error: 'Supply case not found' }, { status: 404 })
   const messages = await findWithDecryption(em, SupplyMessage, { ...scope, supplyCaseId: supplyCase.id, deletedAt: null }, { orderBy: { createdAt: 'asc' } }, scope)
+  const negotiationValue = negotiation(messages)
   const response = {
     id: supplyCase.id,
     correlationId: supplyCase.correlationId,
@@ -109,6 +195,8 @@ export async function GET(req: Request, context: { params: Promise<{ id: string 
     cancelledCommitment: supplyCase.cancelledCommitment ? commitments(supplyCase.cancelledCommitment) : null,
     freedCapacity: supplyCase.freedCapacity ? commitments(supplyCase.freedCapacity) : null,
     updatedAt: supplyCase.updatedAt.toISOString(),
+    availableActions: availableActions(supplyCase.status, supplyCase.statusReason, negotiationValue),
+    negotiation: negotiationValue,
     messages: messages.map((message) => ({
       id: message.id,
       direction: message.direction,

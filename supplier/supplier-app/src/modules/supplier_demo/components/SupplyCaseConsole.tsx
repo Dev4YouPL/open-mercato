@@ -43,6 +43,15 @@ type SupplyCaseMessage = {
   deliveredAt: string | null
   duplicateCount: number
 }
+type NegotiationOption = { id: string; commitments: Commitment[]; feasible: boolean; policyDecision: string; executionFingerprint: string; distance: number }
+type Negotiation = {
+  counterRule: { ok: boolean; failed: string | null } | null
+  evaluation: { id: string; evaluatedAt: string; turnAtEvaluation: number; maxTurns: number; reasonCodes: string[]; options: NegotiationOption[] } | null
+  agent: { state: string; activeRunId: string | null; skipReason: string | null; attempts: Array<{ attemptNo: number; runId: string; startedAt: string; leaseExpiresAt: string; finishedAt: string | null; auditState: string; outcome: string | null; usage: { inputTokens: number; outputTokens: number; known: boolean; partial: boolean } }> }
+  recommendation: { id: string; source: string; optionId: string; commitments: Commitment[]; decision: string; reasonCodes: string[]; gates: Record<string, string>; autoEligible: boolean; createdAt: string } | null
+  dispatch: { state: string; source: string | null; heldReason: string | null }
+  verdict: { kind: string; by: string; at: string; reason: string } | null
+}
 type SupplyCaseDetail = {
   id: string
   correlationId: string
@@ -57,12 +66,13 @@ type SupplyCaseDetail = {
   cancelledCommitment: Commitment[] | null
   freedCapacity: Commitment[] | null
   updatedAt: string
+  availableActions: Array<'retry' | 'reopen' | 'approve_counter' | 'reject_counter'>
+  negotiation: Negotiation | null
   messages: SupplyCaseMessage[]
   timeline: Array<{ key: string; state: TimelineState; at: string | null; params: Record<string, string | number> }>
 }
 
 const TERMINAL_STATUSES = new Set(['resolved', 'needs_human', 'escalated', 'blocked_recipient', 'send_failed'])
-const RETRYABLE_STATUSES = new Set(['send_failed', 'blocked_recipient', 'reply_received'])
 const POLL_COOLDOWN_MS = 10_000
 const LIVE_REFETCH_MS = 3_000
 
@@ -78,6 +88,7 @@ const caseStatusVariants: Record<string, StatusBadgeVariant> = {
   escalated: 'warning',
   blocked_recipient: 'warning',
   send_failed: 'error',
+  counter_received: 'warning',
 }
 
 const validationVariants: Record<string, StatusBadgeVariant> = {
@@ -205,6 +216,38 @@ export default function SupplyCaseConsole({ caseId }: { caseId: string }) {
     }
   }
 
+  const runCounterAction = async (action: 'approve-counter' | 'reject-counter') => {
+    const counter = [...detail.messages].reverse().find((message) => message.direction === 'inbound' && message.messageType === 'SUPPLY_COUNTER_PROPOSAL')
+    if (!counter) return
+    // Approving sends a revised proposal to the partner and rejecting closes the counter: both are confirmed first.
+    const confirmed = await confirm({
+      title: t(action === 'approve-counter' ? 'supplier_demo.supplyCases.console.approveCounterTitle' : 'supplier_demo.supplyCases.console.rejectCounterTitle'),
+      description: t(action === 'approve-counter' ? 'supplier_demo.supplyCases.console.approveCounterDescription' : 'supplier_demo.supplyCases.console.rejectCounterDescription'),
+      confirmText: t(action === 'approve-counter' ? 'supplier_demo.supplyCases.actions.approveCounter' : 'supplier_demo.supplyCases.actions.rejectCounter'),
+    })
+    if (!confirmed) return
+    // The recommendation id pins the approval to what the operator actually saw.
+    const payload = { supplyMessageId: counter.id, updatedAt: detail.updatedAt, recommendationId: detail.negotiation?.recommendation?.id }
+    setBusy(true)
+    try {
+      await runMutation({
+        operation: () => readApiResultOrThrow(`/api/supplier_demo/supply-cases/${encodeURIComponent(detail.id)}/${action}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(payload),
+        }),
+        context: { resourceType: 'supplier_demo:supply_case', resourceId: detail.id },
+        mutationPayload: payload,
+      })
+      flash(t(action === 'approve-counter' ? 'supplier_demo.supplyCases.flash.counterApproved' : 'supplier_demo.supplyCases.flash.counterRejected'), 'success')
+    } catch (error) {
+      if (!surfaceRecordConflict(error, t)) flash(t(action === 'approve-counter' ? 'supplier_demo.supplyCases.errors.counterApprove' : 'supplier_demo.supplyCases.errors.counterReject'), 'error')
+    } finally {
+      setBusy(false)
+      await detailQuery.refetch()
+    }
+  }
+
   const steps = detail.timeline.map((entry) => ({
     id: entry.key,
     status: stepStatus[entry.state],
@@ -236,10 +279,10 @@ export default function SupplyCaseConsole({ caseId }: { caseId: string }) {
                 {t('supplier_demo.supplyCases.console.poll')}
               </Button>
             ) : null}
-            {canManage && RETRYABLE_STATUSES.has(detail.status) ? (
+            {canManage && detail.availableActions.includes('retry') ? (
               <Button variant="outline" disabled={busy} onClick={() => { void runCaseAction('retry') }}>{t('supplier_demo.supplyCases.console.retry')}</Button>
             ) : null}
-            {canManage && detail.status === 'needs_human' ? (
+            {canManage && detail.availableActions.includes('reopen') ? (
               <Button disabled={busy} onClick={() => { void runCaseAction('reopen') }}>{t('supplier_demo.supplyCases.actions.reopen')}</Button>
             ) : null}
             <Button asChild variant="ghost"><Link href="/backend/supplier-demo/supply-cases">{t('supplier_demo.supplyCases.detail.back')}</Link></Button>
@@ -271,6 +314,32 @@ export default function SupplyCaseConsole({ caseId }: { caseId: string }) {
             <p className="mt-3 text-xs text-muted-foreground">{t('supplier_demo.supplyCases.console.salesOrderUnchanged')}</p>
           </CardContent>
         </Card>
+
+        {detail.negotiation ? (
+          <Card>
+            <CardHeader><CardTitle>{t('supplier_demo.supplyCases.detail.negotiation')}</CardTitle></CardHeader>
+            <CardContent className="space-y-3">
+              <div className="flex flex-wrap items-center gap-2 text-sm">
+                <StatusBadge variant={detail.negotiation.agent.state === 'succeeded' ? 'success' : detail.negotiation.agent.state === 'running' ? 'info' : 'warning'}>{t(`supplier_demo.supplyCases.agent.${detail.negotiation.agent.state}`, detail.negotiation.agent.state)}</StatusBadge>
+                {detail.negotiation.recommendation ? <StatusBadge variant="info">{t('supplier_demo.supplyCases.detail.recommendationReady')}</StatusBadge> : null}
+                <span className="text-muted-foreground">{t('supplier_demo.supplyCases.detail.attempts')}: {detail.negotiation.agent.attempts.length}</span>
+              </div>
+              {detail.negotiation.recommendation ? (
+                <div className="rounded-md border border-border p-3 text-sm">
+                  <p className="font-medium">{t('supplier_demo.supplyCases.detail.recommendation')}: {detail.negotiation.recommendation.optionId}</p>
+                  <p className="text-muted-foreground">{formatCommitments(detail.negotiation.recommendation.commitments, none)}</p>
+                  <p className="text-muted-foreground">{detail.negotiation.recommendation.reasonCodes.join(', ')}</p>
+                </div>
+              ) : null}
+              {canManage && !detail.negotiation.verdict && detail.status === 'needs_human' ? (
+                <div className="flex flex-wrap gap-2">
+                  {detail.availableActions.includes('approve_counter') ? <Button disabled={busy} onClick={() => { void runCounterAction('approve-counter') }}>{t('supplier_demo.supplyCases.actions.approveCounter')}</Button> : null}
+                  {detail.availableActions.includes('reject_counter') ? <Button variant="outline" disabled={busy} onClick={() => { void runCounterAction('reject-counter') }}>{t('supplier_demo.supplyCases.actions.rejectCounter')}</Button> : null}
+                </div>
+              ) : null}
+            </CardContent>
+          </Card>
+        ) : null}
 
         <Card>
           <CardHeader><CardTitle>{t('supplier_demo.supplyCases.detail.timeline')}</CardTitle></CardHeader>

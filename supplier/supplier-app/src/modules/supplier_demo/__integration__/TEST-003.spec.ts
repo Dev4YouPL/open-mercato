@@ -133,8 +133,9 @@ test('TEST-003 opens a real seeded shortfall through the query engine', async ()
     slaProtected: true,
   })
   const slots = await em.find(SupplierProductionSlot, { ...scope, catalogVariantId: variant.id, deletedAt: null }, { orderBy: { startsAt: 'asc' } })
-  expect(slots[0]?.allocations).toEqual([])
+  expect(slots[0]?.allocations).toEqual([expect.objectContaining({ orderNumber: 'SO-443', priority: 'high' })])
   expect(slots[1]?.allocations).toEqual([expect.objectContaining({ orderNumber: 'SO-442', priority: 'normal' })])
+  expect(slots[2]?.allocations).toEqual([])
   expect(supplyCase?.recipientEmail).toBe((process.env.SUPPLIER_DEMO_PARTNER_EMAILS ?? 'manufacturer-a@example.test').split(',')[0]?.trim())
   const decryptedSnapshot = supplyCase?.customerSnapshot as { customer?: { primaryEmail?: string } } | null | undefined
   expect(decryptedSnapshot?.customer?.primaryEmail).toBe(supplyCase?.recipientEmail)

@@ -99,7 +99,10 @@ test('TEST-012 high-priority slot escalates without sending', async () => {
   const supplyMessage = await findOneWithDecryption(em, SupplyMessage, { ...scope, supplyCaseId: supplyCase.id, deletedAt: null }, undefined, scope)
   expect(supplyMessage?.deliveryStatus).toBe('pending')
   const slots = await em.find(SupplierProductionSlot, { ...scope, catalogVariantId: variant.id, deletedAt: null }, { orderBy: { startsAt: 'asc' } })
-  expect(slots[0]?.allocations).toEqual([expect.objectContaining({ orderNumber: 'SO-442', priority: 'high' })])
+  expect(slots[0]?.allocations).toEqual([
+    expect.objectContaining({ orderNumber: 'SO-442', priority: 'high' }),
+    expect.objectContaining({ orderNumber: 'SO-443', priority: 'high' }),
+  ])
   expect(slots[1]?.allocations).toEqual([])
+  expect(slots[2]?.allocations).toEqual([])
 })
-

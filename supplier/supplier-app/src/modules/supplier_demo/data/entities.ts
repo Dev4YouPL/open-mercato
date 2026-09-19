@@ -1,10 +1,12 @@
 import { Entity, Index, PrimaryKey, Property } from '@mikro-orm/decorators/legacy'
+import type { SupplierNegotiationRecord } from '../lib/negotiation-record'
 
 export type SupplyCaseStatus =
   | 'detected'
   | 'proposal_ready'
   | 'proposal_queued'
   | 'proposal_delivered'
+  | 'counter_received'
   | 'escalated'
   | 'blocked_recipient'
   | 'send_failed'
@@ -224,6 +226,9 @@ export class SupplyMessage {
 
   @Property({ name: 'body_excerpt', type: 'text', nullable: true })
   bodyExcerpt?: string | null
+
+  @Property({ name: 'negotiation_record', type: 'json', nullable: true })
+  negotiationRecord?: SupplierNegotiationRecord | null
 
   @Property({ name: 'sender_email', type: 'text', nullable: true })
   senderEmail?: string | null

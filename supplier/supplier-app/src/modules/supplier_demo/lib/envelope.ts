@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import type { SupplyCommitment } from '../data/entities'
 
-const commitmentSchema = z.object({
+export const commitmentSchema = z.object({
   quantity: z.number().int().positive(),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
 }).strict()
@@ -9,7 +9,13 @@ const commitmentSchema = z.object({
 const proposalPayloadSchema = z.object({
   sku: z.string().min(1),
   commitments: z.array(commitmentSchema),
-}).strict()
+  inReplyToMessageId: z.string().min(1).optional(),
+  negotiationTurn: z.number().int().min(1).optional(),
+}).strict().superRefine((payload, context) => {
+  if ((payload.inReplyToMessageId === undefined) !== (payload.negotiationTurn === undefined)) {
+    context.addIssue({ code: 'custom', message: 'inReplyToMessageId and negotiationTurn must be provided together', path: ['inReplyToMessageId'] })
+  }
+})
 
 const replyPayloadBaseSchema = z.object({
   sku: z.string().min(1),
@@ -26,7 +32,9 @@ const confirmationPayloadSchema = replyPayloadBaseSchema.extend({
   cancelledCommitments: z.array(commitmentSchema),
 }).strict()
 
-const counterPayloadSchema = replyPayloadBaseSchema.passthrough()
+export const counterPayloadSchema = replyPayloadBaseSchema.extend({
+  requestedCommitments: z.array(commitmentSchema).min(1).max(5),
+}).strict()
 const rejectionPayloadSchema = replyPayloadBaseSchema.passthrough()
 
 const envelopeBaseSchema = z.object({
@@ -47,6 +55,7 @@ export const supplyEnvelopeSchema = z.discriminatedUnion('messageType', [
 
 export type SupplyEnvelope = z.infer<typeof supplyEnvelopeSchema>
 export type SupplyMessageType = SupplyEnvelope['messageType']
+export type CounterEnvelope = Extract<SupplyEnvelope, { messageType: 'SUPPLY_COUNTER_PROPOSAL' }>
 export type StoredSupplyEnvelope = Omit<SupplyEnvelope, 'sender' | 'recipient'>
 
 export function parseSupplyEnvelope(value: unknown): SupplyEnvelope {
@@ -60,6 +69,8 @@ export function buildSupplyEnvelope(input: {
   recipient: string
   sku: string
   commitments: SupplyCommitment[]
+  inReplyToMessageId?: string
+  negotiationTurn?: number
 }): Extract<SupplyEnvelope, { messageType: 'SUPPLY_PROPOSAL' }> {
   return {
     schemaVersion: 1,
@@ -71,6 +82,9 @@ export function buildSupplyEnvelope(input: {
     payload: {
       sku: input.sku,
       commitments: input.commitments.map((commitment) => ({ ...commitment })),
+      ...(input.inReplyToMessageId && input.negotiationTurn !== undefined
+        ? { inReplyToMessageId: input.inReplyToMessageId, negotiationTurn: input.negotiationTurn }
+        : {}),
     },
   }
 }

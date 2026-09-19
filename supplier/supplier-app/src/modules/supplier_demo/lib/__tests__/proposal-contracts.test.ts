@@ -1,5 +1,6 @@
 import { describe, expect, it } from '@jest/globals'
 import { composeSupplyProposal } from '../compose'
+import { parseSupplyEnvelope } from '../envelope'
 import { resolveSupplyRecipient } from '../recipient'
 
 describe('supplier demo proposal contracts', () => {
@@ -66,5 +67,22 @@ describe('supplier demo proposal contracts', () => {
     expect(proposal.plain).not.toContain('SO-442')
     expect(proposal.plain).not.toContain('planSummary')
     expect(proposal.plain).not.toContain('incrementalCost')
+  })
+
+  it('requires paired revision metadata and preserves it on a threaded proposal', () => {
+    const revision = composeSupplyProposal({
+      messageId: 'MSG-125',
+      correlationId: 'SC-SO-441',
+      orderNumber: 'SO-441',
+      sku: 'MAT-42',
+      sender: 'supplier@example.test',
+      recipient: 'manufacturer@example.test',
+      commitments: [{ quantity: 500, date: '2026-09-25' }],
+      inReplyToMessageId: 'COUNTER-1',
+      negotiationTurn: 1,
+    })
+
+    expect(revision.envelope.payload).toMatchObject({ inReplyToMessageId: 'COUNTER-1', negotiationTurn: 1 })
+    expect(() => parseSupplyEnvelope({ ...revision.envelope, payload: { ...revision.envelope.payload, negotiationTurn: undefined } })).toThrow()
   })
 })

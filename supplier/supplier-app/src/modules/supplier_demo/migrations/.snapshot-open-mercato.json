@@ -1209,6 +1209,23 @@
           "enumItems": [],
           "mappedType": "text"
         },
+        "negotiation_record": {
+          "name": "negotiation_record",
+          "type": "jsonb",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": true,
+          "unique": false,
+          "length": null,
+          "precision": null,
+          "scale": null,
+          "default": null,
+          "comment": null,
+          "collation": null,
+          "enumItems": [],
+          "mappedType": "json"
+        },
         "organization_id": {
           "name": "organization_id",
           "type": "uuid",

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { EntityManager } from '@mikro-orm/postgresql'
-import type { CommandHandler, CommandRuntimeContext } from '@open-mercato/shared/lib/commands'
+import type { CommandBus, CommandHandler, CommandRuntimeContext } from '@open-mercato/shared/lib/commands'
 import { registerCommand } from '@open-mercato/shared/lib/commands'
 import { extractUndoPayload } from '@open-mercato/shared/lib/commands/undo'
 import { conflict, notFound, badRequest, CrudHttpError, isUniqueViolation } from '@open-mercato/shared/lib/crud/errors'
@@ -23,9 +23,16 @@ import { composeCommitmentConfirmation, composeSupplyProposal } from '../lib/com
 import { planBaselineCommitment, replan, type ReplanMovedAllocation } from '../lib/planner'
 import { evaluate } from '../lib/policy'
 import { resolveSupplyRecipient } from '../lib/recipient'
-import { isAutoSupplyProposalEnabled, isAutoSupplyReplyEnabled } from '../lib/toggles'
+import { isAutoNegotiationEnabled, isAutoSupplyProposalEnabled, isAutoSupplyReplyEnabled } from '../lib/toggles'
+import { HELD_REVISION_REASONS, parseNegotiationRecord } from '../lib/negotiation-record'
+import { parseSupplierAgentConfig } from '../lib/agent/config'
 
 type Scope = { tenantId: string; organizationId: string }
+
+function maxNegotiationTurns(): number {
+  const config = parseSupplierAgentConfig()
+  return config.ok ? config.config.maxNegotiationTurns : 3
+}
 
 type Shortfall = {
   catalogVariantId: string
@@ -459,16 +466,47 @@ const sendSupplyMessage: CommandHandler<Record<string, unknown>, { deliveryStatu
     const isProposal = message.messageType === 'SUPPLY_PROPOSAL'
     const isConfirmation = message.messageType === 'SUPPLY_COMMITMENT_CONFIRMED'
     const expectedCaseStatus = isProposal ? 'proposal_ready' : 'commitment_updated'
-    if ((!isProposal && !isConfirmation) || supplyCase.status !== expectedCaseStatus || message.deliveryStatus !== 'pending') {
+    const isNegotiationRevision = isProposal && Boolean(message.inReplyToBusinessId)
+    const isHeldRevision = isNegotiationRevision && supplyCase.status === 'needs_human' && ['auto_proposal_disabled_send', 'auto_negotiation_disabled_send'].includes(supplyCase.statusReason ?? '')
+    if ((!isProposal && !isConfirmation) || (!isHeldRevision && supplyCase.status !== expectedCaseStatus) || message.deliveryStatus !== 'pending') {
       return { deliveryStatus: message.deliveryStatus, caseStatus: supplyCase.status }
     }
     if (!(await (isProposal ? isAutoSupplyProposalEnabled(ctx.container, scope.tenantId) : isAutoSupplyReplyEnabled(ctx.container, scope.tenantId)))) {
-      if (isConfirmation) {
+      if (isProposal) {
+        const counter = message.inReplyToBusinessId
+          ? await findOneWithDecryption(em, SupplyMessage, { ...scope, supplyCaseId: supplyCase.id, businessMessageId: message.inReplyToBusinessId, direction: 'inbound', messageType: 'SUPPLY_COUNTER_PROPOSAL', deletedAt: null }, undefined, scope)
+          : null
+        if (counter?.negotiationRecord) {
+          const record = parseNegotiationRecord(counter.negotiationRecord)
+          record.dispatch = { ...record.dispatch, state: 'held', heldReason: 'auto_proposal_disabled_send', handoffCheckedAt: new Date().toISOString() }
+          counter.negotiationRecord = record
+        }
+        supplyCase.status = 'needs_human'
+        supplyCase.statusReason = 'auto_proposal_disabled_send'
+        message.deliveryStatus = 'pending'
+        await em.flush()
+        await emitAfterCommit('supplier_demo.supply_case.attention_required', scopePayload(scope, { caseId: supplyCase.id, status: supplyCase.status, reason: supplyCase.statusReason, supplyMessageId: message.id }))
+      } else if (isConfirmation) {
         supplyCase.status = 'needs_human'
         supplyCase.statusReason = 'auto_reply_disabled_send'
         await em.flush()
         await emitAfterCommit('supplier_demo.supply_case.attention_required', scopePayload(scope, { caseId: supplyCase.id, status: supplyCase.status, reason: supplyCase.statusReason }))
       }
+      return { deliveryStatus: message.deliveryStatus, caseStatus: supplyCase.status }
+    }
+    if (isNegotiationRevision && !(await isAutoNegotiationEnabled(ctx.container, scope.tenantId))) {
+      const counter = await findOneWithDecryption(em, SupplyMessage, { ...scope, supplyCaseId: supplyCase.id, businessMessageId: message.inReplyToBusinessId, direction: 'inbound', messageType: 'SUPPLY_COUNTER_PROPOSAL', deletedAt: null }, undefined, scope)
+      if (counter?.negotiationRecord) {
+        const record = parseNegotiationRecord(counter.negotiationRecord)
+        // Keep the recorded authorisation source (auto or human); a hold never changes who approved the revision.
+        record.dispatch = { ...record.dispatch, state: 'held', heldReason: 'auto_negotiation_disabled_send', handoffCheckedAt: new Date().toISOString() }
+        counter.negotiationRecord = record
+      }
+      supplyCase.status = 'needs_human'
+      supplyCase.statusReason = 'auto_negotiation_disabled_send'
+      message.deliveryStatus = 'pending'
+      await em.flush()
+      await emitAfterCommit('supplier_demo.supply_case.attention_required', scopePayload(scope, { caseId: supplyCase.id, status: supplyCase.status, reason: supplyCase.statusReason, supplyMessageId: message.id }))
       return { deliveryStatus: message.deliveryStatus, caseStatus: supplyCase.status }
     }
     const recipient = message.recipientEmail
@@ -510,6 +548,9 @@ const sendSupplyMessage: CommandHandler<Record<string, unknown>, { deliveryStatu
         sender: asString(mailboxActor.fromAddress) ?? senderAddress(),
         recipient: allowlistResult.email,
         commitments: supplyCase.currentCommitment,
+        inReplyToMessageId: message.inReplyToBusinessId ?? undefined,
+        negotiationTurn: message.inReplyToBusinessId ? supplyCase.negotiationTurn : undefined,
+        maxNegotiationTurns: message.inReplyToBusinessId ? maxNegotiationTurns() : undefined,
       })
       : composeCommitmentConfirmation({
         messageId: message.businessMessageId,
@@ -522,7 +563,9 @@ const sendSupplyMessage: CommandHandler<Record<string, unknown>, { deliveryStatu
         confirmedCommitments: supplyCase.acceptedCommitment ?? [],
         cancelledCommitments: supplyCase.cancelledCommitment ?? [],
       })
-    const acceptance = isConfirmation && message.inReplyToBusinessId
+    // A confirmation answers the acceptance and a revised proposal answers the counter: both go out as a reply in
+    // that inbound mail's thread.
+    const acceptance = (isConfirmation || isNegotiationRevision) && message.inReplyToBusinessId
       ? await findOneWithDecryption(em, SupplyMessage, { ...scope, supplyCaseId: supplyCase.id, businessMessageId: message.inReplyToBusinessId, direction: 'inbound', deletedAt: null }, undefined, scope)
       : null
     message.senderEmail = (asString(mailboxActor.fromAddress) ?? senderAddress()) || null
@@ -561,6 +604,14 @@ const sendSupplyMessage: CommandHandler<Record<string, unknown>, { deliveryStatu
     message.commChannelId = result.channelId
     message.queuedAt = new Date()
     supplyCase.status = isProposal ? 'proposal_queued' : 'confirmation_queued'
+    if (isNegotiationRevision && message.inReplyToBusinessId) {
+      const counter = await findOneWithDecryption(em, SupplyMessage, { ...scope, supplyCaseId: supplyCase.id, businessMessageId: message.inReplyToBusinessId, direction: 'inbound', messageType: 'SUPPLY_COUNTER_PROPOSAL', deletedAt: null }, undefined, scope)
+      if (counter?.negotiationRecord) {
+        const record = parseNegotiationRecord(counter.negotiationRecord)
+        record.dispatch = { ...record.dispatch, state: 'handed_off', revisedProposalMessageId: message.id, handoffCheckedAt: new Date().toISOString(), heldReason: null }
+        counter.negotiationRecord = record
+      }
+    }
     await em.flush()
     await emitAfterCommit(isProposal ? 'supplier_demo.supply_case.proposal_queued' : 'supplier_demo.supply_case.confirmation_queued', scopePayload(scope, { caseId: supplyCase.id, supplyMessageId: message.id, commMessageId: result.messageId }))
     return { deliveryStatus: message.deliveryStatus, caseStatus: supplyCase.status }
@@ -636,6 +687,38 @@ const retrySupplyCase: CommandHandler<Record<string, unknown>, { caseId: string;
       const acceptance = (await findWithDecryption(em, SupplyMessage, { supplyCaseId: caseId, ...scope, direction: 'inbound', messageType: 'SUPPLY_ACCEPTANCE', validationStatus: 'valid', appliedAt: null, deletedAt: null }, { orderBy: { createdAt: 'desc' } }, scope))[0]
       if (!acceptance) throw new CrudHttpError(422, { error: 'Supply case is not retryable', code: 'not_retryable' })
       await emitAfterCommit('supplier_demo.supply_case.reply_received', scopePayload(scope, { caseId: supplyCase.id, supplyMessageId: acceptance.id }))
+      return { caseId: supplyCase.id, status: supplyCase.status }
+    }
+    if (supplyCase.status === 'counter_received') {
+      // A stalled counter: settle an expired agent lease or re-emit the lost next step now (never a new model call
+      // while one is still running).
+      const counter = (await findWithDecryption(em, SupplyMessage, { supplyCaseId: caseId, ...scope, direction: 'inbound', messageType: 'SUPPLY_COUNTER_PROPOSAL', validationStatus: 'valid', deletedAt: null }, { orderBy: { createdAt: 'desc' } }, scope))[0]
+      const record = counter?.negotiationRecord ? parseNegotiationRecord(counter.negotiationRecord) : null
+      const running = record?.agent.attempts.find((attempt) => attempt.runId === record.agent.activeRunId && attempt.finishedAt === null)
+      if (running && new Date(running.leaseExpiresAt).getTime() > Date.now()) {
+        throw new CrudHttpError(422, { error: 'The counter is still being analysed', code: 'agent_running', retryAfter: running.leaseExpiresAt })
+      }
+      const commandBus = ctx.container.resolve('commandBus') as CommandBus
+      await commandBus.execute('supplier_demo.supply_case.recover_counter_processing', { input: { caseId, lostEventAfterMs: 0 }, ctx })
+      const after = await findOneWithDecryption(em.fork(), SupplyCase, { id: caseId, ...scope, deletedAt: null }, undefined, scope)
+      return { caseId, status: after?.status ?? supplyCase.status }
+    }
+    if (supplyCase.status === 'needs_human' && HELD_REVISION_REASONS.has(supplyCase.statusReason ?? '')) {
+      // A revision held at the hand-off by a switch: resend the same pending message with its original
+      // authorisation once the switches are back on (no new revision, turn or cost).
+      const proposalOn = await isAutoSupplyProposalEnabled(ctx.container, scope.tenantId)
+      const negotiationOn = supplyCase.statusReason !== 'auto_negotiation_disabled_send'
+        || await isAutoNegotiationEnabled(ctx.container, scope.tenantId)
+      if (!proposalOn || !negotiationOn) {
+        throw new CrudHttpError(422, { error: 'Turn the sending switch back on before retrying', code: supplyCase.statusReason ?? 'switch_disabled' })
+      }
+      const held = (await findWithDecryption(em, SupplyMessage, { supplyCaseId: caseId, ...scope, direction: 'outbound', messageType: 'SUPPLY_PROPOSAL', deliveryStatus: 'pending', deletedAt: null }, { orderBy: { createdAt: 'desc' } }, scope))[0]
+      if (!held) throw new CrudHttpError(422, { error: 'No held proposal to resend', code: 'not_retryable' })
+      supplyCase.status = 'proposal_ready'
+      supplyCase.statusReason = null
+      supplyCase.updatedAt = new Date()
+      await em.flush()
+      await emitAfterCommit('supplier_demo.supply_case.proposal_ready', scopePayload(scope, { caseId: supplyCase.id, supplyMessageId: held.id, correlationId: supplyCase.correlationId }))
       return { caseId: supplyCase.id, status: supplyCase.status }
     }
     const messages = await findWithDecryption(em, SupplyMessage, { supplyCaseId: caseId, ...scope, direction: 'outbound', messageType: { $in: ['SUPPLY_PROPOSAL', 'SUPPLY_COMMITMENT_CONFIRMED'] }, deletedAt: null }, { orderBy: { createdAt: 'desc' } }, scope)

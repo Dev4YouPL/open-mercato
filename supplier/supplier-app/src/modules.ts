@@ -30,6 +30,7 @@ export const enabledModules: ModuleEntry[] = [
   { id: 'scheduler', from: '@open-mercato/scheduler' },
   { id: 'communication_channels', from: '@open-mercato/core' },
   { id: 'channel_imap', from: '@open-mercato/channel-imap' },
+  { id: 'ai_assistant', from: '@open-mercato/ai-assistant' },
   { id: 'supplier_demo', from: '@app' },
 ]
 

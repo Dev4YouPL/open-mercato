@@ -1,6 +1,6 @@
 import { describe, expect, it, jest } from '@jest/globals'
 import type { EntityManager } from '@mikro-orm/postgresql'
-import { calculateStockAdjustment, chooseDemoOrderNumber, ensureAutoSupplyProposalToggle } from '../setup'
+import { calculateStockAdjustment, chooseDemoOrderNumber, ensureAutoNegotiationToggle, ensureAutoSupplyProposalToggle } from '../setup'
 
 describe('supplier demo stock reconciliation', () => {
   it('sets an empty balance to exactly 1000', () => {
@@ -41,6 +41,24 @@ describe('supplier demo stock reconciliation', () => {
 
     await ensureAutoSupplyProposalToggle(em)
     await ensureAutoSupplyProposalToggle(em)
+
+    expect(em.create).toHaveBeenCalledTimes(1)
+    expect(em.persist).toHaveBeenCalledTimes(1)
+    expect(em.flush).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('supplier demo negotiation toggle', () => {
+  it('creates the negotiation toggle idempotently for existing tenants', async () => {
+    const findOne = jest.fn<() => Promise<{ deletedAt: Date | null } | null>>()
+    findOne.mockResolvedValueOnce(null).mockResolvedValueOnce({ deletedAt: null })
+    const create = jest.fn<(entity: unknown, input: unknown) => unknown>((_entity, input) => input)
+    const persist = jest.fn<(entity: unknown) => void>()
+    const flush = jest.fn<() => Promise<void>>().mockResolvedValue(undefined)
+    const em = { findOne, create, persist, flush } as unknown as EntityManager
+
+    await ensureAutoNegotiationToggle(em)
+    await ensureAutoNegotiationToggle(em)
 
     expect(em.create).toHaveBeenCalledTimes(1)
     expect(em.persist).toHaveBeenCalledTimes(1)

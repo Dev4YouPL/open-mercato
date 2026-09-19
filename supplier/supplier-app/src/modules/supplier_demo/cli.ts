@@ -17,15 +17,20 @@ import { COMMUNICATION_CHANNELS_QUEUES } from '@open-mercato/core/modules/commun
 import { ScheduledJob } from '@open-mercato/scheduler'
 import { SupplyCase, SupplyMessage, SupplierProductionSlot } from './data/entities'
 import supplierDemoEncryptionMaps from './encryption'
-import { ensureAutoSupplyProposalToggle, ensureAutoSupplyReplyToggle, ensureDemoProductionSlots, setup } from './setup'
+import { ensureAutoNegotiationToggle, ensureAutoSupplyProposalToggle, ensureAutoSupplyReplyToggle, ensureDemoProductionSlots, setup } from './setup'
 import { sendSupplyMail, resolveMailboxPollChannel } from './lib/mailbox'
 import { requestMailboxPoll } from './lib/mailbox-poll'
 import { resolveSupplyRecipient } from './lib/recipient'
-import { isAutoSupplyProposalEnabled, isAutoSupplyReplyEnabled, supplierDemoReplyToggleId, supplierDemoToggleId } from './lib/toggles'
+import { isAutoNegotiationEnabled, isAutoSupplyProposalEnabled, isAutoSupplyReplyEnabled, supplierDemoNegotiationToggleId, supplierDemoReplyToggleId, supplierDemoToggleId } from './lib/toggles'
 import { renderSupplyEnvelope, type SupplyEnvelope } from './lib/envelope'
 import { parseInboundSupplyText } from './lib/envelope-parse'
 import { validateInboundEnvelope } from './lib/inbound-validation'
 import { evaluateFeasibility } from './lib/feasibility'
+import { buildSupplierAiExposureInventory } from './lib/agent/exposure'
+import { buildSupplierAgentOfflinePreflight, inspectSupplierAgentAiState, parseSupplierAgentConfig } from './lib/agent/config'
+import { runSupplierRealPathSelftest } from './cli/selftest/real-path'
+import { registerSupplierCounterRecoverySchedule } from './lib/counter-recovery-schedule'
+import { runSupplierCounterAgentSmoke } from './lib/agent/runner'
 
 type Scope = { tenantId: string; organizationId: string }
 
@@ -93,6 +98,7 @@ const demoReset: ModuleCli = { command: 'demo:reset', async run(rest) {
   const ctx = commandContext(container, scope)
   await ensureAutoSupplyProposalToggle(em)
   await ensureAutoSupplyReplyToggle(em)
+  await ensureAutoNegotiationToggle(em)
   for (const row of await em.find(SupplyCase, { ...scope, deletedAt: null })) row.deletedAt = new Date()
   for (const row of await em.find(SupplyMessage, { ...scope, deletedAt: null })) row.deletedAt = new Date()
   const orders = await findWithDecryption(em, SalesOrder, { ...scope, deletedAt: null, orderNumber: { $like: 'SO-441%' } }, { orderBy: { createdAt: 'desc' } }, scope)
@@ -104,6 +110,7 @@ const demoReset: ModuleCli = { command: 'demo:reset', async run(rest) {
   await em.flush()
   if (!setup.seedExamples) throw new Error('[internal] Supplier demo setup seed is unavailable.')
   await setup.seedExamples({ em, container, tenantId: scope.tenantId, organizationId: scope.organizationId })
+  await registerSupplierCounterRecoverySchedule(container, scope)
   if (communicationChannelsSetup.seedDefaults) await communicationChannelsSetup.seedDefaults({ em, container, tenantId: scope.tenantId, organizationId: scope.organizationId })
   await restoreSlots(em, scope, slotPriority(args))
   console.log(`[internal] Supplier demo reset completed for ${scope.tenantId}/${scope.organizationId}.`)
@@ -114,12 +121,40 @@ const demoPreflight: ModuleCli = { command: 'demo:preflight', async run(rest) {
   const container = await createRequestContainer()
   const em = container.resolve('em') as EntityManager
   const scope = await scopeFor(em, args)
+  if (args.offline === 'true' || args.live === 'true') {
+    const inventory = buildSupplierAiExposureInventory()
+    const schedulerPresent = Boolean((container as { hasRegistration?: (name: string) => boolean }).hasRegistration?.('schedulerService'))
+    const parsedConfig = parseSupplierAgentConfig()
+    const aiState = parsedConfig.ok
+      ? await inspectSupplierAgentAiState(em, scope, parsedConfig.config)
+      : null
+    const preflight = buildSupplierAgentOfflinePreflight({
+      enabledModules: inventory.enabledModules,
+      scopePresent: Boolean(scope.tenantId && scope.organizationId),
+      schedulerPresent,
+      schemaPresent: aiState?.schemaPresent,
+      runtimeOverridePresent: aiState?.runtimeOverridePresent ?? false,
+      allowlistCompatible: aiState?.allowlistCompatible,
+    })
+    const result = {
+      mode: args.live === 'true' ? 'live' : 'offline',
+      config: parsedConfig.ok ? 'valid' : 'invalid',
+      providerKeyPresent: args.live === 'true' ? Boolean(process.env.OPENROUTER_API_KEY?.trim()) : false,
+      network: args.live === 'true' ? 'owner-run-only' : 'blocked',
+      exposure: inventory,
+      checks: preflight.checks,
+    }
+    console.log(JSON.stringify(result, null, 2))
+    if (preflight.failed) throw new Error('[internal] Supplier AI preflight failed.')
+    return
+  }
   const failures: Array<[string, string]> = []
   const warnings: Array<[string, string]> = []
   const fail = (item: string, remediation: string) => failures.push([item, remediation])
   const warn = (item: string, remediation: string) => warnings.push([item, remediation])
   if (!await isAutoSupplyProposalEnabled(container, scope.tenantId)) fail(supplierDemoToggleId, 'run demo:reset')
   if (!await isAutoSupplyReplyEnabled(container, scope.tenantId)) fail(supplierDemoReplyToggleId, 'run demo:reset')
+  if (!await isAutoNegotiationEnabled(container, scope.tenantId)) fail(supplierDemoNegotiationToggleId, 'run demo:reset')
   const featureToggles = container.resolve('featureTogglesService') as { getBoolConfig: (id: string, tenantId: string) => Promise<{ ok: boolean; value?: boolean }> }
   const wms = await featureToggles.getBoolConfig('wms_integration_sales_order_inventory', scope.tenantId)
   if (!wms.ok || wms.value !== true) fail('wms_integration_sales_order_inventory', 'enable the WMS reservation toggle, then run demo:reset')
@@ -176,6 +211,26 @@ const demoCase: ModuleCli = { command: 'demo:case', async run(rest) {
   if (!supplyCase) throw new Error('[internal] Supply case not found.')
   const messages = await findWithDecryption(em, SupplyMessage, { ...scope, supplyCaseId: supplyCase.id, deletedAt: null }, { orderBy: { createdAt: 'asc' } }, scope)
   console.log(JSON.stringify({ case: supplyCase, messages }, null, 2))
+} }
+
+const counterEval: ModuleCli = { command: 'counter-eval', async run(rest) {
+  const args = parseArgs(rest)
+  const container = await createRequestContainer()
+  const em = container.resolve('em') as EntityManager
+  const scope = await scopeFor(em, args)
+  const caseRecord = args.correlation
+    ? await findOneWithDecryption(em, SupplyCase, { ...scope, correlationId: args.correlation, deletedAt: null }, undefined, scope)
+    : null
+  if (args.correlation && !caseRecord) throw new Error('[internal] Supply case not found for --correlation.')
+  const counter = await findOneWithDecryption(em, SupplyMessage, { ...scope, direction: 'inbound', messageType: 'SUPPLY_COUNTER_PROPOSAL', validationStatus: 'valid', deletedAt: null, ...(caseRecord ? { supplyCaseId: caseRecord.id } : {}) }, { orderBy: { createdAt: 'desc' } }, scope)
+  if (!counter) throw new Error('[internal] No valid counter proposal exists.')
+  const commandBus = container.resolve('commandBus') as CommandBus
+  const result = await commandBus.execute('supplier_demo.supply_case.evaluate_counter', { input: { caseId: counter.supplyCaseId, supplyMessageId: counter.id }, ctx: commandContext(container, scope) })
+  console.log(JSON.stringify(result.result ?? result, null, 2))
+} }
+
+const aiExposure: ModuleCli = { command: 'demo:ai-exposure', async run() {
+  console.log(JSON.stringify(buildSupplierAiExposureInventory(), null, 2))
 } }
 
 function simulatedEnvelope(type: string, supplyCase: SupplyCase, proposal: SupplyMessage, sender: string, acceptedQuantity: number): SupplyEnvelope | string {
@@ -268,15 +323,31 @@ function runLoopSelftest(): void {
   console.log('[internal] loop selftest passed: feasibility (accept 400 / cancel 100, production 100, freed 100) and F3 rejection. Note: pure feasibility only, not the database path.')
 }
 
+// Real database path scenarios (commands through commandBus on the seeded fixture); `all` runs every one of them.
+const realPathScenarios = [
+  'loop-real', 'level3-fallback', 'counter-eval', 'initial-high-priority', 'agent-stub', 'agent-decline', 'approve-reject', 'crash-recovery', 'reopen-recovery',
+  'usage-caps', 'concurrent-approve', 'send-toggle', 'proposal-send-toggle', 'auto-recovery',
+] as const
+type RealPathScenario = typeof realPathScenarios[number]
+
 const selftest: ModuleCli = { command: 'demo:selftest', async run(rest) {
   const args = parseArgs(rest)
   const scenario = args.scenario ?? 'mailbox-poll'
-  if (!['mailbox-poll', 'inbound-all', 'loop-all', 'all'].includes(scenario)) throw new Error('[internal] Unknown supplier demo selftest scenario.')
+  if (!['mailbox-poll', 'inbound-all', 'loop-all', ...realPathScenarios, 'all'].includes(scenario)) throw new Error('[internal] Unknown supplier demo selftest scenario.')
   if (scenario === 'inbound-all' || scenario === 'all') runInboundSelftest()
   if (scenario === 'loop-all' || scenario === 'all') runLoopSelftest()
   const container = await createRequestContainer()
   const em = container.resolve('em') as EntityManager
   const scope = await scopeFor(em, args)
+  const selected: RealPathScenario[] = scenario === 'all'
+    ? [...realPathScenarios]
+    : realPathScenarios.filter((candidate) => candidate === scenario)
+  for (const mode of selected) {
+    em.clear()
+    await runSupplierRealPathSelftest({ em, commandBus: container.resolve('commandBus') as CommandBus, container, scope, mode })
+    console.log(`[internal] demo:selftest --scenario ${mode} passed through the real database path without outbound delivery.`)
+  }
+  if (scenario !== 'all' && selected.length > 0) return
   let enqueued = 0
   const result = await requestMailboxPoll(em, scope, { dependencies: { enqueue: async () => { enqueued += 1 }, now: () => new Date('2026-01-01T00:00:00.000Z') } })
   if (!result.queued || enqueued !== 1) throw new Error('[internal] mailbox-poll selftest expected exactly one poll job.')
@@ -290,4 +361,29 @@ const mailSmoke: ModuleCli = { command: 'mail:smoke', async run(rest) {
   console.log(`Supplier mailbox smoke message queued: ${result.messageId}`)
 } }
 
-export default [mailSmoke, demoReset, demoPreflight, demoCase, simulateReply, selftest]
+// TEST-216 / MA-202: owner-run live model check on a synthetic evaluation. It costs tokens, so it needs --live.
+const agentSmoke: ModuleCli = { command: 'demo:agent-smoke', async run(rest) {
+  const args = parseArgs(rest)
+  if (args.live === undefined) throw new Error('[internal] demo:agent-smoke calls the live model; run it with --live.')
+  const container = await createRequestContainer()
+  const em = container.resolve('em') as EntityManager
+  const scope = await scopeFor(em, args)
+  const runs = Math.min(Math.max(Number(args.runs ?? 1) || 1, 1), 3)
+  let failures = 0
+  for (let run = 1; run <= runs; run += 1) {
+    const result = await runSupplierCounterAgentSmoke({ container, scope })
+    // Never prints the key or the prompt: only model, latency, tokens, the decision or a sanitised error.
+    console.log(`[internal] agent smoke ${run}/${runs}: ${result.ok ? 'OK' : 'FAILED'} model=${result.model ?? 'unresolved'} latencyMs=${result.latencyMs}`)
+    if (result.output) {
+      const tokens = `${result.usage?.inputTokens ?? '?'}/${result.usage?.outputTokens ?? '?'}`
+      console.log(`[internal]   decision=${result.output.decision} optionId=${result.output.optionId ?? 'null'} reasonCodes=${result.output.reasonCodes.join(',')} tokens=${tokens}`)
+    }
+    if (result.error) {
+      console.log(`[internal]   error outcome=${result.error.outcome} name=${result.error.name} httpStatus=${result.error.status ?? 'none'} message=${result.error.message}`)
+    }
+    if (!result.ok) failures += 1
+  }
+  if (failures > 0) throw new Error(`[internal] agent smoke failed ${failures}/${runs}.`)
+} }
+
+export default [agentSmoke, mailSmoke, demoReset, demoPreflight, demoCase, counterEval, aiExposure, simulateReply, selftest]

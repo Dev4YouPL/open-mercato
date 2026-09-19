@@ -3,8 +3,10 @@ import { buildSupplyEnvelope, renderSupplyEnvelope, type SupplyEnvelope, type St
 
 export type ComposedSupplyProposal = { subject: string; plain: string; html: string; envelope: Extract<SupplyEnvelope, { messageType: 'SUPPLY_PROPOSAL' }>; storedEnvelope: StoredSupplyEnvelope }
 
-export function composeSupplyProposal(input: { messageId: string; correlationId: string; orderNumber: string; sku: string; sender: string; recipient: string; commitments: SupplyCommitment[] }): ComposedSupplyProposal {
-  const envelope = buildSupplyEnvelope(input); const renderedEnvelope = renderSupplyEnvelope(envelope); const commitments = input.commitments.map((commitment) => `${commitment.quantity} on ${commitment.date}`).join('; '); const subject = `[${input.correlationId}] Delivery update — ${input.sku}`; const humanBody = `Delivery update for ${input.sku} on order ${input.orderNumber}: ${commitments}.`; const plain = `${humanBody}\n\n${renderedEnvelope}`; const html = `<p>${humanBody}</p><pre>${renderedEnvelope.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')}</pre>`
+export function composeSupplyProposal(input: { messageId: string; correlationId: string; orderNumber: string; sku: string; sender: string; recipient: string; commitments: SupplyCommitment[]; inReplyToMessageId?: string; negotiationTurn?: number; maxNegotiationTurns?: number; alternative?: boolean }): ComposedSupplyProposal {
+  const envelope = buildSupplyEnvelope(input); const renderedEnvelope = renderSupplyEnvelope(envelope); const commitments = input.commitments.map((commitment) => `${commitment.quantity} on ${commitment.date}`).join('; '); const subject = `[${input.correlationId}] Delivery update — ${input.sku}`; const humanBody = input.negotiationTurn === undefined
+    ? `Delivery update for ${input.sku} on order ${input.orderNumber}: ${commitments}.`
+    : `${input.alternative ? 'We cannot deliver the requested split; ' : ''}Following your counter-proposal, we can commit to: ${commitments} for order ${input.orderNumber} (revision ${input.negotiationTurn} of ${input.maxNegotiationTurns ?? input.negotiationTurn}). Please confirm or reply with a counter-proposal.`; const plain = `${humanBody}\n\n${renderedEnvelope}`; const html = `<p>${humanBody}</p><pre>${renderedEnvelope.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')}</pre>`
   return { subject, plain, html, envelope, storedEnvelope: stripEnvelopeAddresses(envelope) }
 }
 

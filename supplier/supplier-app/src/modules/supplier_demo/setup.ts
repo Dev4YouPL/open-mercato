@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import type { EntityManager } from '@mikro-orm/postgresql'
 import { FeatureToggle } from '@open-mercato/core/modules/feature_toggles/data/entities'
 import {
@@ -16,6 +16,7 @@ import {
 import type { CommandBus, CommandRuntimeContext } from '@open-mercato/shared/lib/commands'
 import { findOneWithDecryption, findWithDecryption } from '@open-mercato/shared/lib/encryption/find'
 import type { ModuleSetupConfig } from '@open-mercato/shared/modules/setup'
+import { createLogger } from '@open-mercato/shared/lib/logger'
 import { SupplierProductionSlot } from './data/entities'
 
 const PRODUCT_NAME = 'Stalowa rama'
@@ -29,6 +30,12 @@ const DEMO_LOCATION_CODE = 'STOCK'
 const SYSTEM_ACTOR_ID = '9f6eb96f-b5a1-4df0-9608-1d46426ecf63'
 const AUTO_SUPPLY_PROPOSAL_TOGGLE = 'supplier_demo_auto_supply_proposal'
 const AUTO_SUPPLY_REPLY_TOGGLE = 'supplier_demo_auto_supply_reply'
+const AUTO_NEGOTIATION_TOGGLE = 'supplier_demo_auto_negotiation'
+const logger = createLogger('supplier_demo').child({ component: 'setup' })
+
+type SchedulerServiceLike = {
+  register: (registration: Record<string, unknown>) => Promise<void>
+}
 
 type SeedScope = {
   tenantId: string
@@ -45,6 +52,40 @@ type LocationCreateResult = {
 
 type CustomerCreateResult = { entityId: string }
 type OrderCreateResult = { orderId: string }
+
+function stableScheduleUuid(stableKey: string): string {
+  const hex = createHash('sha256').update(stableKey).digest('hex')
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`
+}
+
+async function ensureCounterRecoverySchedule(
+  container: { resolve: (name: string) => unknown; hasRegistration?: (name: string) => boolean },
+  scope: SeedScope,
+): Promise<void> {
+  if (typeof container.hasRegistration !== 'function' || !container.hasRegistration('schedulerService')) return
+  try {
+    const schedulerService = container.resolve('schedulerService') as SchedulerServiceLike
+    await schedulerService.register({
+      id: stableScheduleUuid(`supplier_demo:counter-recovery:${scope.tenantId}:${scope.organizationId}`),
+      name: 'Supplier Demo counter negotiation recovery',
+      description: 'Recover stale supplier counter negotiation attempts and replay missed agent dispatches.',
+      scopeType: 'organization',
+      tenantId: scope.tenantId,
+      organizationId: scope.organizationId,
+      scheduleType: 'interval',
+      scheduleValue: '1m',
+      timezone: 'UTC',
+      targetType: 'queue',
+      targetQueue: 'supplier-demo-counter-recovery',
+      targetPayload: scope,
+      sourceType: 'module',
+      sourceModule: 'supplier_demo',
+      isEnabled: true,
+    })
+  } catch (error) {
+    logger.warn('Failed to register supplier counter recovery schedule', { err: error })
+  }
+}
 
 function nextWednesday(): Date {
   const date = new Date()
@@ -129,6 +170,27 @@ export async function ensureAutoSupplyReplyToggle(em: EntityManager): Promise<vo
     identifier: AUTO_SUPPLY_REPLY_TOGGLE,
     name: 'Supplier Demo automatic supply reply',
     description: 'Enables automatic acceptance application and commitment confirmations for the supplier demo.',
+    category: 'supplier_demo',
+    type: 'boolean',
+    defaultValue: true,
+  }))
+  await em.flush()
+}
+
+export async function ensureAutoNegotiationToggle(em: EntityManager): Promise<void> {
+  const existing = await em.findOne(FeatureToggle, { identifier: AUTO_NEGOTIATION_TOGGLE })
+  if (existing) {
+    if (existing.deletedAt) {
+      existing.deletedAt = null
+      existing.updatedAt = new Date()
+      await em.flush()
+    }
+    return
+  }
+  em.persist(em.create(FeatureToggle, {
+    identifier: AUTO_NEGOTIATION_TOGGLE,
+    name: 'Supplier Demo automatic counter negotiation',
+    description: 'Enables Supplier counter-proposal evaluation and automatic negotiation attempts.',
     category: 'supplier_demo',
     type: 'boolean',
     defaultValue: true,
@@ -520,7 +582,7 @@ export async function ensureDemoProductionSlots(
   order442Number: string,
   priority: 'normal' | 'high' = 'normal',
 ): Promise<void> {
-  for (const [days, capacity] of [[0, 400], [2, 400]] as const) {
+  for (const [days, capacity] of [[0, 450], [2, 400], [3, 100]] as const) {
     const startsAt = addDays(expectedDeliveryAt, days)
     const existing = await em.findOne(SupplierProductionSlot, {
       tenantId: scope.tenantId,
@@ -530,14 +592,24 @@ export async function ensureDemoProductionSlots(
       deletedAt: null,
     })
     const allocations = days === 0
-      ? [{
-          orderNumber: order442Number,
-          quantity: 300,
-          priority,
-          slaDueAt: addDays(expectedDeliveryAt, 2).toISOString(),
-          shiftableHours: 4,
-          shiftCostPerHour: 30,
-        }]
+      ? [
+          {
+            orderNumber: order442Number,
+            quantity: 300,
+            priority,
+            slaDueAt: addDays(expectedDeliveryAt, 2).toISOString(),
+            shiftableHours: 4,
+            shiftCostPerHour: 30,
+          },
+          {
+            orderNumber: 'SO-443',
+            quantity: 50,
+            priority: 'high' as const,
+            slaDueAt: addDays(expectedDeliveryAt, 2).toISOString(),
+            shiftableHours: 6,
+            shiftCostPerHour: 30,
+          },
+        ]
       : []
     if (existing) {
       existing.capacityQuantity = capacity
@@ -558,8 +630,8 @@ export async function ensureDemoProductionSlots(
     }))
   }
   // Dates are relative to today, so a reset on another day seeds new slot times; retire slots from earlier seeds
-  // so the planner and demo:preflight only ever see the two demo slots.
-  const expectedStarts = new Set([0, 2].map((days) => addDays(expectedDeliveryAt, days).getTime()))
+  // so the planner and demo:preflight only ever see the three demo slots.
+  const expectedStarts = new Set([0, 2, 3].map((days) => addDays(expectedDeliveryAt, days).getTime()))
   const staleSlots = await em.find(SupplierProductionSlot, {
     tenantId: scope.tenantId,
     organizationId: scope.organizationId,
@@ -582,14 +654,18 @@ export const setup: ModuleSetupConfig = {
     employee: ['supplier_demo.supply_cases.view'],
   },
 
-  async seedDefaults({ em }) {
+  async seedDefaults({ em, container, tenantId, organizationId }) {
     await ensureAutoSupplyProposalToggle(em)
     await ensureAutoSupplyReplyToggle(em)
+    await ensureAutoNegotiationToggle(em)
+    await ensureCounterRecoverySchedule(container, { tenantId, organizationId })
   },
 
   async seedExamples({ em, container, tenantId, organizationId }) {
     await ensureAutoSupplyProposalToggle(em)
     await ensureAutoSupplyReplyToggle(em)
+    await ensureAutoNegotiationToggle(em)
+    await ensureCounterRecoverySchedule(container, { tenantId, organizationId })
     await ensureSupplierDemoEncryptionMaps(em, tenantId, organizationId)
     const scope = { tenantId, organizationId }
     const commandBus = container.resolve('commandBus') as CommandBus
