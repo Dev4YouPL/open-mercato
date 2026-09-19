@@ -1,0 +1,57 @@
+{
+  "outcome": "INCONCLUSIVE",
+  "runId": "live-mail-20260919090427-87c58836",
+  "externalSideEffects": true,
+  "commands": [
+    "python scripts/mail-smoke.py check-config",
+    "python scripts/mail-smoke.py send-inbound --supplier supplier1 --subject Supplier 1 proposal live-mail-20260919090427-87c58836 --body <redacted> --message-id <live-mail-20260919090427-87c58836@qa.invalid>"
+  ],
+  "screenshots": [
+    "preflight.png"
+  ],
+  "traces": [],
+  "fixtureIds": {
+    "productionOrderId": "bd843f4e-a100-4c13-8839-629a304a72c0",
+    "productionPlanId": "c827d7cc-b00a-4df3-ab21-ebe10f93b923"
+  },
+  "failureAnalysis": [
+    {
+      "test": "LIVE-MAIL-002/003/004",
+      "reason": "page.goto: Test ended.\nCall log:\n\u001b[2m  - navigating to \"http://localhost:3000/backend/profile/communication-channels\", waiting until \"domcontentloaded\"\u001b[22m\n",
+      "owner": "Shared"
+    }
+  ],
+  "mailboxChecks": [
+    {
+      "checkedAt": "2026-09-19T09:04:36.022Z",
+      "command": "python scripts/mail-smoke.py list-mail --mailbox manufacturer --limit 20",
+      "exitCode": 0,
+      "mailboxContainsMessage": false
+    },
+    {
+      "checkedAt": "2026-09-19T09:05:00.883Z",
+      "command": "python scripts/mail-smoke.py list-mail --mailbox manufacturer --limit 20",
+      "exitCode": 0,
+      "mailboxContainsMessage": true
+    },
+    {
+      "checkedAt": "2026-09-19T09:05:25.810Z",
+      "command": "python scripts/mail-smoke.py list-mail --mailbox manufacturer --limit 20",
+      "exitCode": 0,
+      "mailboxContainsMessage": true
+    },
+    {
+      "checkedAt": "2026-09-19T09:05:50.918Z",
+      "command": "python scripts/mail-smoke.py list-mail --mailbox manufacturer --limit 20",
+      "exitCode": 0,
+      "mailboxContainsMessage": true
+    },
+    {
+      "checkedAt": "2026-09-19T09:06:12.635Z",
+      "command": "python scripts/mail-smoke.py list-mail --mailbox manufacturer --limit 20",
+      "exitCode": 3221225786,
+      "mailboxContainsMessage": false
+    }
+  ],
+  "cleanup": "dedicated scope purged"
+}

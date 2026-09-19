@@ -1,0 +1,41 @@
+{
+  "outcome": "INCONCLUSIVE",
+  "runId": "live-mail-20260919095908-f063e69b",
+  "externalSideEffects": true,
+  "commands": [
+    "python scripts/mail-smoke.py check-config",
+    "python scripts/mail-smoke.py send-inbound --supplier supplier1 --subject Supplier 1 proposal live-mail-20260919095908-f063e69b --body <redacted> --message-id <live-mail-20260919095908-f063e69b@qa.invalid>"
+  ],
+  "screenshots": [
+    "preflight.png"
+  ],
+  "traces": [],
+  "fixtureIds": {
+    "productionOrderId": "aace60e1-cfac-4689-82fa-d225095331e8",
+    "productionPlanId": "887853a3-dc79-4921-93ad-891f80bb669e"
+  },
+  "failureAnalysis": [
+    {
+      "test": "LIVE-MAIL-002/003/004",
+      "reason": "[internal] live inbound case did not reach an actionable proposal for live-mail-20260919095908-f063e69b",
+      "owner": "Shared"
+    }
+  ],
+  "mailboxChecks": [
+    {
+      "checkedAt": "2026-09-19T09:59:22.684Z",
+      "command": "python scripts/mail-smoke.py list-mail --mailbox manufacturer --limit 20",
+      "exitCode": 0,
+      "mailboxContainsMessage": false
+    }
+  ],
+  "browserPolls": [
+    {
+      "checkedAt": "2026-09-19T09:59:33.670Z",
+      "action": "click-poll-now",
+      "status": "failed",
+      "error": "locator.waitFor: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByRole('button', { name: 'Pobierz teraz', exact: true }) to be visible\u001b[22m\n"
+    }
+  ],
+  "cleanup": "dedicated scope purged"
+}

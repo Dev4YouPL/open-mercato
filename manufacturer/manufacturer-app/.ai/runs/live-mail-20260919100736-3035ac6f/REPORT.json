@@ -1,0 +1,64 @@
+{
+  "outcome": "INCONCLUSIVE",
+  "runId": "live-mail-20260919100736-3035ac6f",
+  "externalSideEffects": true,
+  "commands": [
+    "python scripts/mail-smoke.py check-config",
+    "python scripts/mail-smoke.py send-inbound --supplier supplier1 --subject Supplier 1 proposal live-mail-20260919100736-3035ac6f --body <redacted> --message-id <live-mail-20260919100736-3035ac6f@qa.invalid>"
+  ],
+  "screenshots": [
+    "preflight.png"
+  ],
+  "traces": [],
+  "fixtureIds": {
+    "productionOrderId": "4e4e5206-19ab-4e53-aecd-6fc6b751f5a9",
+    "productionPlanId": "9e48f089-cb04-407f-8131-ca9079442224"
+  },
+  "failureAnalysis": [
+    {
+      "test": "LIVE-MAIL-002/003/004",
+      "reason": "[internal] live inbound case did not reach an actionable proposal for live-mail-20260919100736-3035ac6f",
+      "owner": "Shared"
+    }
+  ],
+  "mailboxChecks": [
+    {
+      "checkedAt": "2026-09-19T10:07:53.078Z",
+      "command": "python scripts/mail-smoke.py list-mail --mailbox manufacturer --limit 20",
+      "exitCode": 0,
+      "mailboxContainsMessage": false
+    },
+    {
+      "checkedAt": "2026-09-19T10:08:22.284Z",
+      "command": "python scripts/mail-smoke.py list-mail --mailbox manufacturer --limit 20",
+      "exitCode": 0,
+      "mailboxContainsMessage": true
+    },
+    {
+      "checkedAt": "2026-09-19T10:08:51.638Z",
+      "command": "python scripts/mail-smoke.py list-mail --mailbox manufacturer --limit 20",
+      "exitCode": 0,
+      "mailboxContainsMessage": true
+    },
+    {
+      "checkedAt": "2026-09-19T10:09:31.655Z",
+      "command": "python scripts/mail-smoke.py list-mail --mailbox manufacturer --limit 20",
+      "exitCode": null,
+      "mailboxContainsMessage": false
+    },
+    {
+      "checkedAt": "2026-09-19T10:10:04.025Z",
+      "command": "python scripts/mail-smoke.py list-mail --mailbox manufacturer --limit 20",
+      "exitCode": 0,
+      "mailboxContainsMessage": true
+    }
+  ],
+  "browserPolls": [
+    {
+      "checkedAt": "2026-09-19T10:10:05.834Z",
+      "action": "click-poll-now-fallback",
+      "status": "triggered"
+    }
+  ],
+  "cleanup": "dedicated scope purged"
+}

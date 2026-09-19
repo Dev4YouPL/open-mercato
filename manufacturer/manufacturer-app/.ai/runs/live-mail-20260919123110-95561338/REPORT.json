@@ -1,0 +1,82 @@
+{
+  "outcome": "INCONCLUSIVE",
+  "runId": "live-mail-20260919123110-95561338",
+  "externalSideEffects": true,
+  "commands": [
+    "python scripts/mail-smoke.py check-config",
+    "python scripts/mail-smoke.py send-inbound --supplier supplier1 --subject Supplier 1 proposal live-mail-20260919123110-95561338 --body <redacted> --message-id <live-mail-20260919123110-95561338@qa.invalid>"
+  ],
+  "screenshots": [
+    "preflight.png"
+  ],
+  "traces": [],
+  "fixtureIds": {
+    "productionOrderId": "dfb44eea-26c1-454e-a633-cffb80077d5b",
+    "productionPlanId": "95254fac-72a5-4d8c-a4c6-b1cc43fff269"
+  },
+  "failureAnalysis": [
+    {
+      "test": "LIVE-MAIL-002/003/004",
+      "reason": "[internal] live inbound case did not reach an actionable proposal for live-mail-20260919123110-95561338",
+      "owner": "Shared"
+    }
+  ],
+  "mailboxChecks": [
+    {
+      "checkedAt": "2026-09-19T12:31:24.578Z",
+      "command": "python scripts/mail-smoke.py list-mail --mailbox manufacturer --limit 20",
+      "exitCode": 0,
+      "mailboxContainsMessage": false
+    },
+    {
+      "checkedAt": "2026-09-19T12:31:47.997Z",
+      "command": "python scripts/mail-smoke.py list-mail --mailbox manufacturer --limit 20",
+      "exitCode": 0,
+      "mailboxContainsMessage": true
+    },
+    {
+      "checkedAt": "2026-09-19T12:32:11.419Z",
+      "command": "python scripts/mail-smoke.py list-mail --mailbox manufacturer --limit 20",
+      "exitCode": 0,
+      "mailboxContainsMessage": true
+    },
+    {
+      "checkedAt": "2026-09-19T12:32:35.915Z",
+      "command": "python scripts/mail-smoke.py list-mail --mailbox manufacturer --limit 20",
+      "exitCode": 0,
+      "mailboxContainsMessage": true
+    },
+    {
+      "checkedAt": "2026-09-19T12:32:59.552Z",
+      "command": "python scripts/mail-smoke.py list-mail --mailbox manufacturer --limit 20",
+      "exitCode": 0,
+      "mailboxContainsMessage": true
+    },
+    {
+      "checkedAt": "2026-09-19T12:33:24.980Z",
+      "command": "python scripts/mail-smoke.py list-mail --mailbox manufacturer --limit 20",
+      "exitCode": 0,
+      "mailboxContainsMessage": true
+    },
+    {
+      "checkedAt": "2026-09-19T12:33:48.363Z",
+      "command": "python scripts/mail-smoke.py list-mail --mailbox manufacturer --limit 20",
+      "exitCode": 0,
+      "mailboxContainsMessage": true
+    },
+    {
+      "checkedAt": "2026-09-19T12:33:55.674Z",
+      "command": "python scripts/mail-smoke.py list-mail --mailbox manufacturer --limit 20",
+      "exitCode": 0,
+      "mailboxContainsMessage": true
+    }
+  ],
+  "browserPolls": [
+    {
+      "checkedAt": "2026-09-19T12:33:01.319Z",
+      "action": "click-poll-now-fallback",
+      "status": "triggered"
+    }
+  ],
+  "cleanup": "dedicated scope purged"
+}

@@ -1,0 +1,19 @@
+{
+  "outcome": "READY_FOR_LIVE",
+  "runId": "live-mail-20260919083917-5af9560d",
+  "externalSideEffects": false,
+  "mode": "approved-live-not-started",
+  "preflight": {
+    "reasons": [],
+    "descriptorPresent": true,
+    "dedicatedScope": true
+  },
+  "commands": [
+    "python scripts/mail-smoke.py check-config",
+    "python scripts/mail-smoke.py send-inbound --supplier supplier1 --subject Supplier 1 proposal live-mail-20260919083917-5af9560d --body <redacted> --message-id <live-mail-20260919083917-5af9560d@qa.invalid>",
+    "python scripts/mail-smoke.py wait-for-mail --mailbox supplier2 --subject Supplier 1 proposal live-mail-20260919083917-5af9560d --timeout 120"
+  ],
+  "screenshots": [],
+  "traces": [],
+  "cleanup": "not-needed-no-send"
+}

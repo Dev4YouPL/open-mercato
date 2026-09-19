@@ -1,0 +1,39 @@
+{
+  "outcome": "INCONCLUSIVE",
+  "runId": "live-mail-20260919091250-e0ad404c",
+  "externalSideEffects": true,
+  "commands": [
+    "python scripts/mail-smoke.py check-config",
+    "python scripts/mail-smoke.py send-inbound --supplier supplier1 --subject Supplier 1 proposal live-mail-20260919091250-e0ad404c --body <redacted> --message-id <live-mail-20260919091250-e0ad404c@qa.invalid>"
+  ],
+  "screenshots": [
+    "preflight.png"
+  ],
+  "traces": [],
+  "fixtureIds": {
+    "productionOrderId": "03acd615-32d7-4580-a66b-dad268c045f7",
+    "productionPlanId": "7ef17e78-96f0-46fd-976d-d11e24d8d6f9"
+  },
+  "failureAnalysis": [
+    {
+      "test": "LIVE-MAIL-002/003/004",
+      "reason": "[internal] live inbound case did not reach an actionable proposal for live-mail-20260919091250-e0ad404c",
+      "owner": "Shared"
+    }
+  ],
+  "mailboxChecks": [
+    {
+      "checkedAt": "2026-09-19T09:13:02.677Z",
+      "command": "python scripts/mail-smoke.py list-mail --mailbox manufacturer --limit 20",
+      "exitCode": 0,
+      "mailboxContainsMessage": false
+    },
+    {
+      "checkedAt": "2026-09-19T09:13:28.985Z",
+      "command": "python scripts/mail-smoke.py list-mail --mailbox manufacturer --limit 20",
+      "exitCode": 0,
+      "mailboxContainsMessage": true
+    }
+  ],
+  "cleanup": "dedicated scope purged"
+}

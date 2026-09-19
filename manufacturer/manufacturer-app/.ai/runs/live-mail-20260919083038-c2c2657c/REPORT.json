@@ -1,0 +1,21 @@
+{
+  "outcome": "BLOCKED",
+  "runId": "live-mail-20260919083038-c2c2657c",
+  "externalSideEffects": false,
+  "mode": "dry-run",
+  "preflight": {
+    "reasons": [
+      "LIVE_MAIL_E2E=1 and LIVE_MAIL_E2E_APPROVED=1 are required"
+    ],
+    "descriptorPresent": true,
+    "dedicatedScope": false
+  },
+  "commands": [
+    "python scripts/mail-smoke.py check-config",
+    "python scripts/mail-smoke.py send-inbound --supplier supplier1 --subject Supplier 1 proposal live-mail-20260919083038-c2c2657c --body <redacted> --message-id <live-mail-20260919083038-c2c2657c@qa.invalid>",
+    "python scripts/mail-smoke.py wait-for-mail --mailbox supplier2 --subject Supplier 1 proposal live-mail-20260919083038-c2c2657c --timeout 120"
+  ],
+  "screenshots": [],
+  "traces": [],
+  "cleanup": "not-needed-no-send"
+}

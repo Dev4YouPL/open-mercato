@@ -1,0 +1,8 @@
+{
+  "outcome": "BLOCKED",
+  "runId": "live-mail-20260919082832-51f39810",
+  "externalSideEffects": false,
+  "reason": "live mail requires LIVE_MAIL_E2E=1 and LIVE_MAIL_E2E_APPROVED=1",
+  "screenshots": [],
+  "traces": []
+}

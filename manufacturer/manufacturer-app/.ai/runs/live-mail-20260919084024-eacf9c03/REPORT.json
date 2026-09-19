@@ -1,0 +1,25 @@
+{
+  "outcome": "INCONCLUSIVE",
+  "runId": "live-mail-20260919084024-eacf9c03",
+  "externalSideEffects": true,
+  "commands": [
+    "python scripts/mail-smoke.py check-config",
+    "python scripts/mail-smoke.py send-inbound --supplier supplier1 --subject Supplier 1 proposal live-mail-20260919084024-eacf9c03 --body <redacted> --message-id <live-mail-20260919084024-eacf9c03@qa.invalid>"
+  ],
+  "screenshots": [
+    "preflight.png"
+  ],
+  "traces": [],
+  "fixtureIds": {
+    "productionOrderId": "7bb8f30f-1748-4d1b-9a1c-9d76d0f03933",
+    "productionPlanId": "0af78566-3102-4782-82b2-e63688b22729"
+  },
+  "failureAnalysis": [
+    {
+      "test": "LIVE-MAIL-002/003/004",
+      "reason": "[internal] live inbound case did not reach an actionable proposal for live-mail-20260919084024-eacf9c03",
+      "owner": "Shared"
+    }
+  ],
+  "cleanup": "dedicated scope purged"
+}
