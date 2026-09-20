@@ -160,6 +160,7 @@ export default function SupplyCaseDetail({ id }: { id: string }) {
         <p className="mt-3 text-sm text-muted-foreground">
           {t('supply_cases.detail.proposals', { initial: detail.proposals.initialOptionCount, plans: detail.proposals.resolutionPlanCount })}
         </p>
+        <PrimaryProposalRejectionPanel detail={detail} onApplied={() => void query.refetch()} />
         <InitialDecisionPanel detail={detail} onApplied={() => void query.refetch()} />
       </DetailSection>
 
@@ -213,6 +214,55 @@ export default function SupplyCaseDetail({ id }: { id: string }) {
       <SupplyActivityTimeline caseId={detail.case.id} />
 
       <p className="text-xs text-muted-foreground">{t('supply_cases.detail.updatedAt', { value: formatDate(detail.updatedAt) })}</p>
+    </div>
+  )
+}
+
+function PrimaryProposalRejectionPanel({ detail, onApplied }: { detail: SupplyCaseDetailResponse; onApplied: () => void }) {
+  const t = useT()
+  const [saving, setSaving] = React.useState(false)
+  const [error, setError] = React.useState<string | null>(null)
+  const { runMutation } = useGuardedMutation<{ resourceType: string; resourceId: string }>({
+    contextId: `supply_cases.reject-primary-proposal.${detail.case.id}`,
+  })
+  const actionable = detail.availableActions.includes('reject_primary_proposal')
+
+  const submit = React.useCallback(async () => {
+    if (!actionable || saving) return
+    setSaving(true)
+    setError(null)
+    const payload = { reason: t('supply_cases.rejection.defaultReason') }
+    try {
+      await runMutation({
+        operation: () => withScopedApiRequestHeaders(
+          buildOptimisticLockHeader(detail.updatedAt),
+          () => readApiResultOrThrow(`/api/supply_cases/${encodeURIComponent(detail.case.id)}/reject-proposal`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(payload),
+          }),
+        ),
+        context: { resourceType: 'supply_cases.case', resourceId: detail.case.id },
+        mutationPayload: payload,
+      })
+      onApplied()
+    } catch (caught) {
+      setError(t('supply_cases.rejection.error'))
+      if (caught && typeof caught === 'object' && (caught as { status?: unknown }).status === 409) onApplied()
+    } finally {
+      setSaving(false)
+    }
+  }, [actionable, detail, onApplied, runMutation, saving, t])
+
+  if (!actionable && !error) return null
+  return (
+    <div className="mt-4 space-y-3 rounded-md border border-border p-3">
+      <p className="font-medium">{t('supply_cases.rejection.title')}</p>
+      <p className="text-sm text-muted-foreground">{t('supply_cases.rejection.description')}</p>
+      {error ? <Alert status="error">{error}</Alert> : null}
+      <Button variant="outline" disabled={!actionable || saving} onClick={() => void submit()}>
+        {saving ? t('supply_cases.rejection.saving') : t('supply_cases.rejection.action')}
+      </Button>
     </div>
   )
 }

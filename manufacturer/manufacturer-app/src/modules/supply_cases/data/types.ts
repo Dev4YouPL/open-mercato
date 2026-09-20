@@ -447,7 +447,7 @@ export type InboundMessageTriageInput = z.infer<typeof inboundMessageTriageSchem
  * two ever drift — because the phase of an outbound message IS the intent we
  * sent it with.
  */
-export const OUTBOUND_PHASES = ['ALTERNATIVE_SUPPLY_REQUEST', 'SUPPLY_ACCEPTANCE'] as const
+export const OUTBOUND_PHASES = ['ALTERNATIVE_SUPPLY_REQUEST', 'SUPPLY_ACCEPTANCE', 'SUPPLY_REJECTION'] as const
 
 const outboundPhasesAreMessageIntents: readonly MessageIntent[] = OUTBOUND_PHASES
 void outboundPhasesAreMessageIntents
@@ -477,16 +477,20 @@ export const outboundCorrelationSchema = z.object({
   phase: outboundPhaseSchema,
   recipientEmail: z.string().min(1),
   rfcMessageId: identifierSchema,
+  businessMessageId: identifierSchema.nullable().optional().default(null),
   /** Derived from case + phase + recipient; the same key must never send twice. */
   idempotencyKey: identifierSchema,
   createdAt: isoDateTimeSchema,
 })
-export type OutboundCorrelation = z.infer<typeof outboundCorrelationSchema>
+type OutboundCorrelationSchema = z.infer<typeof outboundCorrelationSchema>
+export type OutboundCorrelation = Omit<OutboundCorrelationSchema, 'businessMessageId'> & {
+  businessMessageId?: string | null
+}
 
 export const outboundCorrelationRecordSchema = outboundCorrelationSchema
   .omit({ tenantId: true, organizationId: true, createdAt: true })
   .partial({ id: true })
-export type OutboundCorrelationRecordInput = z.infer<typeof outboundCorrelationRecordSchema>
+export type OutboundCorrelationRecordInput = z.input<typeof outboundCorrelationRecordSchema>
 
 export const STORE_FILE_VERSION = 1
 

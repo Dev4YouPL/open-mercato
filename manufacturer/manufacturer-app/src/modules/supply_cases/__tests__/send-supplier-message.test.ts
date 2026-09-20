@@ -139,6 +139,7 @@ describe('TEST-005: sendSupplierMessage', () => {
 
     expect(replay).toEqual({
       status: 'already_requested',
+      businessMessageId: null,
       correlationId: (first as { correlationId: string }).correlationId,
       rfcMessageId: 'sc-fixed-1@hackon-om-wro.cloud',
     })
@@ -256,6 +257,18 @@ describe('TEST-005: sendSupplierMessage', () => {
 
     expect(result).toEqual({ status: 'blocked', reason: 'INVALID_RECIPIENT' })
     expect(channelLookups).toBe(0)
+    expect(await store.outboundCorrelations.list(scopeA)).toHaveLength(0)
+  })
+
+  it('refuses a rejection phase that does not carry the business envelope', async () => {
+    const harness = createHarness(store)
+    const result = await sendSupplierMessage(harness.ports, scopeA, {
+      ...baseInput(),
+      phase: 'SUPPLY_REJECTION',
+    }, { allowedProviderKeys })
+
+    expect(result).toEqual({ status: 'blocked', reason: 'INVALID_REJECTION_ENVELOPE' })
+    expect(harness.sends).toHaveLength(0)
     expect(await store.outboundCorrelations.list(scopeA)).toHaveLength(0)
   })
 })

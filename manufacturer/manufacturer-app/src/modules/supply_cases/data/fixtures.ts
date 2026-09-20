@@ -62,6 +62,7 @@ export const FIXTURE_DATES = {
 
 export const FIXTURE_MATERIAL_SKU = 'MAT-42'
 export const FIXTURE_CORRELATION_ID = 'SC-001'
+export const FIXTURE_PROPOSAL_BUSINESS_MESSAGE_ID = 'MSG-fixture-supply-proposal-1'
 
 /**
  * The raw bodies keep the quoted history the sanitizer removes, so the seeded
@@ -73,6 +74,24 @@ export const FIXTURE_PROPOSAL_SANITIZED_BODY =
 
 export const FIXTURE_PROPOSAL_RAW_BODY = [
   FIXTURE_PROPOSAL_SANITIZED_BODY,
+  '',
+  '---OPEN-MERCATO-SUPPLY-MESSAGE---',
+  JSON.stringify({
+    schemaVersion: 1,
+    messageId: FIXTURE_PROPOSAL_BUSINESS_MESSAGE_ID,
+    correlationId: FIXTURE_CORRELATION_ID,
+    messageType: 'SUPPLY_PROPOSAL',
+    sender: FIXTURE_PARTICIPANTS.supplier1,
+    recipient: FIXTURE_PARTICIPANTS.manufacturer,
+    payload: {
+      sku: FIXTURE_MATERIAL_SKU,
+      commitments: [
+        { quantity: 300, date: '2026-09-16' },
+        { quantity: 200, date: '2026-09-18' },
+      ],
+    },
+  }, null, 2),
+  '---END-OPEN-MERCATO-SUPPLY-MESSAGE---',
   '',
   'W dniu 2026-09-10 manufacturer@hackon-om-wro.cloud napisal:',
   '> Potwierdzamy zamowienie 500 sztuk MAT-42 na srode.',

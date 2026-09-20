@@ -277,6 +277,7 @@ export const supplyCaseDetailResponseSchema = z.object({
     'retry_resolution_analysis',
     'retry_supplier_request',
     'retry_confirmation_wait',
+    'reject_primary_proposal',
   ])),
   updatedAt: z.string(),
 })
@@ -602,13 +603,25 @@ function toDetail(entry: HydratedCase, includeMessageContent: boolean): SupplyCa
     confirmationChecklist: operational.confirmationChecklist,
     resolutionGate: operational.resolutionGate,
     timeline: buildTimeline(supplyCase, messages, outboundCorrelations, includeMessageContent),
-    availableActions: supplyCase.status === 'AWAITING_SOURCING_DECISION'
-      && supplyCase.initialProposalId !== null
-      && supplyCase.initialFactsHash !== null
-      ? ['apply_initial_sourcing_decision']
-      : [],
+    availableActions: buildAvailableActions(supplyCase, messages, outboundCorrelations),
     updatedAt: supplyCase.updatedAt,
   }
+}
+
+function buildAvailableActions(
+  supplyCase: SupplyCase,
+  messages: InboundMessage[],
+  outboundCorrelations: OutboundCorrelation[],
+): SupplyCaseDetailResponse['availableActions'] {
+  const actions: SupplyCaseDetailResponse['availableActions'] = supplyCase.status === 'AWAITING_SOURCING_DECISION'
+    && supplyCase.initialProposalId !== null
+    && supplyCase.initialFactsHash !== null
+    ? ['apply_initial_sourcing_decision']
+    : []
+  const hasProposal = messages.some((message) => message.messageIntent === 'SUPPLY_PROPOSAL' && message.senderEmail === supplyCase.supplier1Email)
+  const hasRejection = outboundCorrelations.some((correlation) => correlation.phase === 'SUPPLY_REJECTION')
+  if (hasProposal && !hasRejection) actions.push('reject_primary_proposal')
+  return actions
 }
 
 function buildOperationalState(entry: HydratedCase): OperationalState {

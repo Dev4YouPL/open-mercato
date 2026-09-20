@@ -84,6 +84,8 @@ export type SendSupplierMessageInput = {
   /** Bracket-stripped id of the message this answers, when it answers one. */
   inReplyTo?: string | null
   references?: readonly string[]
+  /** Business protocol id, persisted with the outbound anchor when present. */
+  businessMessageId?: string
 }
 
 export type SendSupplierMessageOptions = {
@@ -98,6 +100,7 @@ export type SendSupplierMessageOptions = {
 
 export type SendSupplierMessageBlockReason =
   | 'INVALID_RECIPIENT'
+  | 'INVALID_REJECTION_ENVELOPE'
   | 'NO_CHANNEL'
   | 'PROVIDER_NOT_ALLOWED'
   | 'CHANNEL_NOT_CONNECTED'
@@ -118,10 +121,11 @@ export type SendSupplierMessageResult =
       rfcMessageId: string
       messageId: string
       threadId: string
+      businessMessageId: string | null
     }
-  | { status: 'already_requested'; correlationId: string; rfcMessageId: string }
+  | { status: 'already_requested'; correlationId: string; rfcMessageId: string; businessMessageId: string | null }
   | { status: 'blocked'; reason: SendSupplierMessageBlockReason }
-  | { status: 'failed'; correlationId: string; rfcMessageId: string; error: string }
+  | { status: 'failed'; correlationId: string; rfcMessageId: string; businessMessageId: string | null; error: string }
 
 export async function sendSupplierMessage(
   ports: SupplierOutboundPorts,
@@ -133,6 +137,9 @@ export async function sendSupplierMessage(
   // An address we cannot normalize cannot be keyed, so it cannot be made
   // idempotent. Refusing is the only outcome that keeps the guarantee.
   if (!recipient) return { status: 'blocked', reason: 'INVALID_RECIPIENT' }
+  if (input.phase === 'SUPPLY_REJECTION' && !hasValidRejectionEnvelope(input)) {
+    return { status: 'blocked', reason: 'INVALID_REJECTION_ENVELOPE' }
+  }
 
   const channel = await ports.loadOutboundChannel(scope)
   const channelBlock = inspectChannel(channel, options.allowedProviderKeys)
@@ -151,6 +158,7 @@ export async function sendSupplierMessage(
     recipientEmail: recipient,
     rfcMessageId: mintId(domain),
     idempotencyKey,
+    businessMessageId: input.businessMessageId ?? null,
   })
 
   // `created: false` is a redelivery of the same intent — a retried subscriber,
@@ -162,6 +170,7 @@ export async function sendSupplierMessage(
       status: 'already_requested',
       correlationId: claim.correlation.id,
       rfcMessageId: claim.correlation.rfcMessageId,
+      businessMessageId: claim.correlation.businessMessageId ?? null,
     }
   }
 
@@ -179,7 +188,7 @@ export async function sendSupplierMessage(
   })
 
   if (!sent.ok) {
-    return { status: 'failed', correlationId: claim.correlation.id, rfcMessageId, error: sent.error }
+    return { status: 'failed', correlationId: claim.correlation.id, rfcMessageId, businessMessageId: claim.correlation.businessMessageId ?? null, error: sent.error }
   }
 
   return {
@@ -188,7 +197,15 @@ export async function sendSupplierMessage(
     rfcMessageId,
     messageId: sent.messageId,
     threadId: sent.threadId,
+    businessMessageId: claim.correlation.businessMessageId ?? null,
   }
+}
+
+function hasValidRejectionEnvelope(input: SendSupplierMessageInput): boolean {
+  if (!input.businessMessageId || !/^MSG-.+/.test(input.businessMessageId)) return false
+  const startMarker = '---OPEN-MERCATO-SUPPLY-MESSAGE---'
+  const endMarker = '---END-OPEN-MERCATO-SUPPLY-MESSAGE---'
+  return input.body.split(startMarker).length === 2 && input.body.split(endMarker).length === 2
 }
 
 /**

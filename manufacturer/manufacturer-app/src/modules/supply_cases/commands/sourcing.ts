@@ -206,7 +206,7 @@ function mergeOperatorEdit(value: unknown, selectedOptionId: string, reason: str
   return { ...(value as Record<string, unknown>), operatorEdit: { selectedOptionId, reason } }
 }
 
-function resolvePorts(ctx: CommandRuntimeContext, store: SupplyCasesStore): SupplierOutboundPorts {
+export function resolvePorts(ctx: CommandRuntimeContext, store: SupplyCasesStore): SupplierOutboundPorts {
   try {
     const factory = ctx.container.resolve<(container: unknown, resolvedStore: SupplyCasesStore) => SupplierOutboundPorts>('supplyCaseOutboundPortsFactory')
     return factory(ctx.container, store)
@@ -215,7 +215,7 @@ function resolvePorts(ctx: CommandRuntimeContext, store: SupplyCasesStore): Supp
   }
 }
 
-async function requireDecisionFeature(ctx: CommandRuntimeContext, scope: StoreScope): Promise<void> {
+export async function requireDecisionFeature(ctx: CommandRuntimeContext, scope: StoreScope): Promise<void> {
   if (ctx.systemActor) return
   const userId = ctx.auth?.sub
   if (!userId) throw new CrudHttpError(403, { error: 'decision_feature_required' })
@@ -230,7 +230,7 @@ async function requireDecisionFeature(ctx: CommandRuntimeContext, scope: StoreSc
   if (!hasFeature(auth.features ?? auth.grantedFeatures, 'supply_cases.decisions.apply')) throw new CrudHttpError(403, { error: 'decision_feature_required' })
 }
 
-function resolveScope(ctx: CommandRuntimeContext, requested: StoreScope | undefined): StoreScope {
+export function resolveScope(ctx: CommandRuntimeContext, requested: StoreScope | undefined): StoreScope {
   if (ctx.systemActor) {
     if (!requested) throw new CrudHttpError(400, { error: 'scope_required' })
     return requested
