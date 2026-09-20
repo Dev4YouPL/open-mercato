@@ -2,7 +2,7 @@ import { LockMode } from '@mikro-orm/core'
 import type { EntityManager } from '@mikro-orm/postgresql'
 import type { CommandHandler, CommandRuntimeContext } from '@open-mercato/shared/lib/commands'
 import { registerCommand } from '@open-mercato/shared/lib/commands'
-import { findOneWithDecryption } from '@open-mercato/shared/lib/encryption/find'
+import { findOneWithDecryption, findWithDecryption } from '@open-mercato/shared/lib/encryption/find'
 import { CrudHttpError } from '@open-mercato/shared/lib/crud/errors'
 import { SupplyCase, SupplyMessage } from '../data/entities'
 import { emitSupplierDemoEvent } from '../events'
@@ -11,7 +11,11 @@ import { evaluateCounter } from '../lib/counter-evaluation'
 import { buildNegotiationRecommendation, createNegotiationRecord, parseNegotiationRecord } from '../lib/negotiation-record'
 import { parseSupplierAgentConfig } from '../lib/agent/config'
 import { SupplierProductionSlot } from '../data/entities'
-import { isAutoNegotiationEnabled } from '../lib/toggles'
+import { isAutoNegotiationEnabled, isFreeformAutoNegotiationEnabled, isFreeformAutoShadowEnabled } from '../lib/toggles'
+import { readWmsSnapshot, type WmsStockSnapshot } from '../lib/wms-snapshot'
+import { parseInterpretationRecord } from '../lib/interpretation/record'
+import { deterministicCrossCheck } from '../lib/interpretation/cross-check'
+import { sanitizeReplyText } from '../lib/interpretation/sanitize'
 
 type Scope = { tenantId: string; organizationId: string }
 
@@ -40,11 +44,15 @@ const evaluateCounterCommand: CommandHandler<Record<string, unknown>, { status: 
     if (!caseId || !supplyMessageId) throw new CrudHttpError(422, { error: 'Case and counter are required' })
     const em = (ctx.container.resolve('em') as EntityManager)
     const autoNegotiationEnabled = await isAutoNegotiationEnabled(ctx.container, scope.tenantId)
+    const freeformAutoNegotiationEnabled = await isFreeformAutoNegotiationEnabled(ctx.container, scope.tenantId)
+    const freeformAutoShadowEnabled = await isFreeformAutoShadowEnabled(ctx.container, scope.tenantId)
     const outcome = await em.transactional(async (tx) => {
       const supplyCase = await findOneWithDecryption(tx, SupplyCase, { ...scope, id: caseId, deletedAt: null }, { lockMode: LockMode.PESSIMISTIC_WRITE }, scope)
-      const counter = await findOneWithDecryption(tx, SupplyMessage, { ...scope, id: supplyMessageId, supplyCaseId: caseId, direction: 'inbound', messageType: 'SUPPLY_COUNTER_PROPOSAL', validationStatus: 'valid', deletedAt: null }, undefined, scope)
+      const counter = await findOneWithDecryption(tx, SupplyMessage, { ...scope, id: supplyMessageId, supplyCaseId: caseId, direction: 'inbound', messageType: 'SUPPLY_COUNTER_PROPOSAL', validationStatus: { $in: ['valid', 'interpreted'] }, deletedAt: null }, undefined, scope)
       if (!supplyCase || !counter) throw new CrudHttpError(404, { error: 'Counter not found' })
       const existing = counter.negotiationRecord ? parseNegotiationRecord(counter.negotiationRecord) : createNegotiationRecord()
+      const interpreted = counter.validationStatus === 'interpreted'
+      existing.origin = interpreted ? 'interpretation' : 'envelope'
       // A late or redelivered event for a counter the case no longer waits on must not pull the case back.
       if (!existing.evaluation && (supplyCase.status !== 'counter_received' || existing.verdict)) {
         return { changed: false, dispatchAgent: false, status: supplyCase.status, reason: supplyCase.statusReason ?? 'counter_not_in_flight', evaluationId: undefined }
@@ -68,7 +76,43 @@ const evaluateCounterCommand: CommandHandler<Record<string, unknown>, { status: 
       const slots = await tx.find(SupplierProductionSlot, { ...scope, catalogVariantId: supplyCase.catalogVariantId, deletedAt: null }, { orderBy: { startsAt: 'asc' } })
       // The stock reserved in the warehouse for the original date (the baseline's first tranche).
       const warehouseReserved = supplyCase.baselineCommitment.find((entry) => entry.date === supplyCase.originalCommitment[0]?.date)?.quantity ?? 0
+      let stock: WmsStockSnapshot | null = null
+      if (interpreted) {
+        try {
+          stock = await readWmsSnapshot(tx, { ...scope, catalogVariantId: supplyCase.catalogVariantId, salesOrderId: supplyCase.salesOrderId })
+        } catch {
+          stock = null
+        }
+      }
       const evaluation = evaluateCounter({ requested: parsed.data.requestedCommitments, current: supplyCase.currentCommitment, originalDate: supplyCase.originalCommitment[0]?.date ?? null, warehouseReserved, slots, caseOrderNumber: supplyCase.orderNumber, negotiationTurn: supplyCase.negotiationTurn, maxTurns, cumulativeCost: Number(supplyCase.additionalCost ?? 0) })
+      let autoGates: Record<string, 'pass' | 'fail' | 'n/a'> | undefined
+      if (interpreted) {
+        const sourceId = typeof counter.envelopePayload.sourceSupplyMessageId === 'string' ? counter.envelopePayload.sourceSupplyMessageId : null
+        const source = sourceId ? await findOneWithDecryption(tx, SupplyMessage, { ...scope, id: sourceId, supplyCaseId: caseId, direction: 'inbound', deletedAt: null }, undefined, scope) : null
+        const interpretation = source?.interpretationRecord ? parseInterpretationRecord(source.interpretationRecord) : null
+        const latestInbound = await findWithDecryption(tx, SupplyMessage, { ...scope, supplyCaseId: caseId, direction: 'inbound', deletedAt: null }, { orderBy: { createdAt: 'desc' } }, scope)
+        const interpretedCount = latestInbound.filter((message) => message.validationStatus === 'interpreted').length
+        const intent = interpretation?.intent
+        const explicitDates = intent?.tranches.filter((tranche) => !tranche.quantityIsRemainder).every((tranche) => ['iso', 'weekday', 'original_date'].includes(tranche.date.type)) ?? false
+        const conditionsSafe = intent?.conditions.every((condition) => condition === 'when_restocked') ?? false
+        const sanitizedSource = source ? sanitizeReplyText(source.bodyExcerpt ?? '', { ownOrderNumber: supplyCase.orderNumber }) : null
+        const crossCheck = source && intent && sanitizedSource?.ok
+          ? deterministicCrossCheck({ text: sanitizedSource.text, intent, currentCommitment: supplyCase.currentCommitment, originalCommitment: supplyCase.originalCommitment, today: new Date().toISOString().slice(0, 10) })
+          : null
+        const requested = evaluation.options.find((option) => option.id === 'requested')
+        const stockOk = Boolean(stock && stock.reservedForOrder >= warehouseReserved)
+        autoGates = {
+          I1: freeformAutoNegotiationEnabled && autoNegotiationEnabled && !freeformAutoShadowEnabled ? 'pass' : 'fail',
+          I2: interpretation?.sanitizer.prescan.hit === false && intent?.instructionsDetected === false && ['pl', 'en'].includes(intent?.language ?? '') && interpretation?.checks.schema === 'pass' && interpretation?.checks.consistency === 'pass' && interpretation?.checks.grounding === 'pass' && interpretation.checks.confidenceOk ? 'pass' : 'fail',
+          I3: Boolean(intent && ['counter_split', 'partial_with_remainder'].includes(intent.kind) && conditionsSafe) ? 'pass' : 'fail',
+          I4: Boolean(intent && intent.tranches.every((tranche) => !tranche.quantityIsRemainder && ['iso', 'weekday', 'original_date'].includes(tranche.date.type))) && explicitDates ? 'pass' : 'fail',
+          I5: (intent?.confidence ?? 0) >= 0.9 ? 'pass' : 'fail',
+          I6: crossCheck?.ok === true ? 'pass' : 'fail',
+          I7: Boolean(requested?.feasible && requested.policyDecision === 'auto_approved') ? 'pass' : 'fail',
+          I8: interpretedCount <= 1 && latestInbound[0]?.id === counter.id ? 'pass' : 'fail',
+          I9: stockOk ? 'pass' : 'fail',
+        }
+      }
       existing.counterRule = evaluation.rule
       existing.evaluation = evaluation.rule.ok
         ? {
@@ -76,8 +120,14 @@ const evaluateCounterCommand: CommandHandler<Record<string, unknown>, { status: 
           evaluatedAt: new Date().toISOString(),
           turnAtEvaluation: supplyCase.negotiationTurn,
           maxTurns,
-          reasonCodes: evaluation.reasonCodes,
-          options: evaluation.options,
+          reasonCodes: [
+            ...evaluation.reasonCodes,
+            ...(interpreted && stock && stock.reservedForOrder < warehouseReserved ? ['stock_below_assumption'] : []),
+            ...(interpreted && !stock ? ['stock_snapshot_unavailable'] : []),
+          ],
+          options: interpreted
+            ? evaluation.options.map((option) => ({ ...option, stockStatus: stock ? stock.reservedForOrder < warehouseReserved ? 'diverged' as const : 'ok' as const : 'unavailable' as const }))
+            : evaluation.options,
           context: {
             originalCommitment: supplyCase.originalCommitment,
             currentCommitment: supplyCase.currentCommitment,
@@ -86,6 +136,7 @@ const evaluateCounterCommand: CommandHandler<Record<string, unknown>, { status: 
             stockOnOriginalDate: warehouseReserved,
             shortfallQuantity: Math.max(0, (supplyCase.originalCommitment[0]?.quantity ?? 0) - warehouseReserved),
           },
+          ...(interpreted ? { stock: stock ?? undefined, stockGate: { w1: stock ? stock.reservedForOrder < warehouseReserved ? 'diverged' as const : 'ok' as const : 'unavailable' as const, snapshotReserved: stock?.reservedForOrder ?? 0 }, autoGates, shadowMode: freeformAutoShadowEnabled } : {}),
         }
         : null
       if (evaluation.rule.ok && !autoNegotiationEnabled) {
@@ -97,11 +148,17 @@ const evaluateCounterCommand: CommandHandler<Record<string, unknown>, { status: 
             source: 'deterministic',
             optionId: requested.id,
             decision: 'accept_requested',
-            reasonCodes: ['auto_negotiation_disabled', ...evaluation.reasonCodes],
+            reasonCodes: [
+              ...(interpreted ? ['interpretation_requires_human'] : []),
+              ...(interpreted && !stock ? ['stock_unavailable'] : []),
+              ...(interpreted && stock && stock.reservedForOrder < warehouseReserved ? ['stock_below_assumption'] : []),
+              ...evaluation.reasonCodes,
+            ],
+            origin: interpreted ? 'interpretation' : 'envelope',
           })
         }
         existing.agent.state = 'skipped'
-        existing.agent.skipReason = 'auto_negotiation_disabled'
+        existing.agent.skipReason = interpreted ? 'interpretation_requires_human' : 'auto_negotiation_disabled'
       }
       counter.negotiationRecord = existing
       const dispatchAgent = autoNegotiationEnabled && evaluation.rule.ok
@@ -110,7 +167,9 @@ const evaluateCounterCommand: CommandHandler<Record<string, unknown>, { status: 
         supplyCase.statusReason = 'counter_evaluated'
       } else {
         supplyCase.status = 'needs_human'
-        supplyCase.statusReason = evaluation.rule.ok ? 'auto_negotiation_disabled' : ruleStatusReason(evaluation.rule.failed)
+        supplyCase.statusReason = evaluation.rule.ok
+          ? interpreted ? 'recommendation_requires_human' : 'auto_negotiation_disabled'
+          : ruleStatusReason(evaluation.rule.failed)
       }
       supplyCase.updatedAt = new Date()
       await tx.flush()

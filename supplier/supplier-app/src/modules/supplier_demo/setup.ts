@@ -31,6 +31,9 @@ const SYSTEM_ACTOR_ID = '9f6eb96f-b5a1-4df0-9608-1d46426ecf63'
 const AUTO_SUPPLY_PROPOSAL_TOGGLE = 'supplier_demo_auto_supply_proposal'
 const AUTO_SUPPLY_REPLY_TOGGLE = 'supplier_demo_auto_supply_reply'
 const AUTO_NEGOTIATION_TOGGLE = 'supplier_demo_auto_negotiation'
+const FREEFORM_UNDERSTANDING_TOGGLE = 'supplier_demo_freeform_understanding'
+const FREEFORM_AUTO_SHADOW_TOGGLE = 'supplier_demo_freeform_auto_shadow'
+const FREEFORM_AUTO_NEGOTIATION_TOGGLE = 'supplier_demo_freeform_auto_negotiation'
 const logger = createLogger('supplier_demo').child({ component: 'setup' })
 
 type SchedulerServiceLike = {
@@ -194,6 +197,69 @@ export async function ensureAutoNegotiationToggle(em: EntityManager): Promise<vo
     category: 'supplier_demo',
     type: 'boolean',
     defaultValue: true,
+  }))
+  await em.flush()
+}
+
+export async function ensureFreeformUnderstandingToggle(em: EntityManager): Promise<void> {
+  const existing = await em.findOne(FeatureToggle, { identifier: FREEFORM_UNDERSTANDING_TOGGLE })
+  if (existing) {
+    if (existing.deletedAt) {
+      existing.deletedAt = null
+      existing.updatedAt = new Date()
+      await em.flush()
+    }
+    return
+  }
+  em.persist(em.create(FeatureToggle, {
+    identifier: FREEFORM_UNDERSTANDING_TOGGLE,
+    name: 'Supplier Demo free-form reply understanding',
+    description: 'Enables display-only interpretation of trusted supplier free-text replies.',
+    category: 'supplier_demo',
+    type: 'boolean',
+    defaultValue: false,
+  }))
+  await em.flush()
+}
+
+export async function ensureFreeformAutoShadowToggle(em: EntityManager): Promise<void> {
+  const existing = await em.findOne(FeatureToggle, { identifier: FREEFORM_AUTO_SHADOW_TOGGLE })
+  if (existing) {
+    if (existing.deletedAt) {
+      existing.deletedAt = null
+      existing.updatedAt = new Date()
+      await em.flush()
+    }
+    return
+  }
+  em.persist(em.create(FeatureToggle, {
+    identifier: FREEFORM_AUTO_SHADOW_TOGGLE,
+    name: 'Supplier Demo free-form auto negotiation shadow mode',
+    description: 'Records rule and stock eligibility for interpreted replies without sending an automatic revision.',
+    category: 'supplier_demo',
+    type: 'boolean',
+    defaultValue: true,
+  }))
+  await em.flush()
+}
+
+export async function ensureFreeformAutoNegotiationToggle(em: EntityManager): Promise<void> {
+  const existing = await em.findOne(FeatureToggle, { identifier: FREEFORM_AUTO_NEGOTIATION_TOGGLE })
+  if (existing) {
+    if (existing.deletedAt) {
+      existing.deletedAt = null
+      existing.updatedAt = new Date()
+      await em.flush()
+    }
+    return
+  }
+  em.persist(em.create(FeatureToggle, {
+    identifier: FREEFORM_AUTO_NEGOTIATION_TOGGLE,
+    name: 'Supplier Demo free-form automatic negotiation',
+    description: 'Allows only the narrow, cross-checked free-form path to send a revision automatically.',
+    category: 'supplier_demo',
+    type: 'boolean',
+    defaultValue: false,
   }))
   await em.flush()
 }
@@ -658,6 +724,9 @@ export const setup: ModuleSetupConfig = {
     await ensureAutoSupplyProposalToggle(em)
     await ensureAutoSupplyReplyToggle(em)
     await ensureAutoNegotiationToggle(em)
+    await ensureFreeformUnderstandingToggle(em)
+    await ensureFreeformAutoShadowToggle(em)
+    await ensureFreeformAutoNegotiationToggle(em)
     await ensureCounterRecoverySchedule(container, { tenantId, organizationId })
   },
 
@@ -665,6 +734,9 @@ export const setup: ModuleSetupConfig = {
     await ensureAutoSupplyProposalToggle(em)
     await ensureAutoSupplyReplyToggle(em)
     await ensureAutoNegotiationToggle(em)
+    await ensureFreeformUnderstandingToggle(em)
+    await ensureFreeformAutoShadowToggle(em)
+    await ensureFreeformAutoNegotiationToggle(em)
     await ensureCounterRecoverySchedule(container, { tenantId, organizationId })
     await ensureSupplierDemoEncryptionMaps(em, tenantId, organizationId)
     const scope = { tenantId, organizationId }

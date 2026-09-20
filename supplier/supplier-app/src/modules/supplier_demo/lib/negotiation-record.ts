@@ -28,8 +28,21 @@ export const negotiationOptionSchema = z
     movedAllocations: z.array(movedAllocationSchema),
     executionFingerprint: z.string().min(1),
     distance: z.number().nonnegative(),
+    stockStatus: z.enum(['ok', 'diverged', 'unavailable']).optional(),
   })
   .strict();
+
+const stockSnapshotSchema = z.object({
+  takenAt: z.string(),
+  variantId: z.string(),
+  reservedForOrder: z.number().nonnegative(),
+  onHand: z.number().nonnegative(),
+  available: z.number().nonnegative(),
+  allocated: z.number().nonnegative(),
+  warehouses: z.number().int().nonnegative(),
+  source: z.literal('wms'),
+  fingerprint: z.string().min(1),
+}).strict()
 
 const counterRuleSchema = z
   .object({
@@ -94,6 +107,7 @@ const attemptSchema = z
 export const negotiationRecordSchema = z
   .object({
     version: z.literal(1),
+    origin: z.enum(['envelope', 'interpretation']).optional(),
     counterRule: counterRuleSchema.nullable(),
     evaluation: z
       .object({
@@ -115,6 +129,13 @@ export const negotiationRecordSchema = z
           })
           .strict()
           .optional(),
+        stock: stockSnapshotSchema.optional(),
+        stockGate: z.object({
+          w1: z.enum(['ok', 'diverged', 'unavailable']),
+          snapshotReserved: z.number().nonnegative(),
+        }).strict().optional(),
+        autoGates: z.record(z.string(), z.enum(['pass', 'fail', 'n/a'])).optional(),
+        shadowMode: z.boolean().optional(),
       })
       .strict()
       .nullable(),
@@ -197,6 +218,7 @@ export function buildNegotiationRecommendation(input: {
       : never
     : never;
   reasonCodes: string[];
+  origin?: 'envelope' | 'interpretation';
   createdAt?: Date;
 }): NonNullable<SupplierNegotiationRecord["recommendation"]> {
   if (!input.record.evaluation)
@@ -214,6 +236,11 @@ export function buildNegotiationRecommendation(input: {
     (candidate) => candidate.id === "requested",
   );
   const isAgentRecommendation = input.source === "agent";
+  const origin = input.origin ?? input.record.origin ?? 'envelope';
+  const automaticGates = input.record.evaluation.autoGates ?? {};
+  const shadowWouldPass = origin === 'interpretation'
+    ? Object.entries(automaticGates).filter(([gate]) => gate !== 'I1' || input.record.evaluation?.shadowMode !== true).every(([, state]) => state === 'pass')
+    : false;
   const gates = {
     G1: input.record.counterRule?.ok ? ("pass" as const) : ("fail" as const),
     G2: isAgentRecommendation ? ("pass" as const) : ("n/a" as const),
@@ -241,8 +268,18 @@ export function buildNegotiationRecommendation(input: {
       option.id === "requested"
         ? ("pass" as const)
         : ("fail" as const),
+    ...(origin === 'interpretation' ? automaticGates : {}),
+    G10: origin === 'interpretation'
+      ? Object.values(automaticGates).length > 0 && Object.values(automaticGates).every((gate) => gate === 'pass') ? ("pass" as const) : ("fail" as const)
+      : ("n/a" as const),
+    G10shadow: origin === 'interpretation' ? shadowWouldPass ? ("pass" as const) : ("fail" as const) : ("n/a" as const),
   };
-  const autoEligible = Object.values(gates).every((gate) => gate === "pass");
+  // Every gate must pass. `n/a` still blocks automatic dispatch (a deterministic fallback leaves G2/G3/G7 `n/a`,
+  // and it is never sent without a person); only the interpretation-only gates may be `n/a` on the envelope path.
+  const originOnlyGates = new Set(["G10", "G10shadow"]);
+  const autoEligible = Object.entries(gates).every(
+    ([name, state]) => state === "pass" || (state === "n/a" && originOnlyGates.has(name)),
+  );
   return {
     id: randomUUID(),
     evaluationId: input.record.evaluation.id,

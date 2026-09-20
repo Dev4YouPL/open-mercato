@@ -7,17 +7,33 @@ import type { SupplierNegotiationRecord } from "../negotiation-record";
 export const SUPPLIER_SYSTEM_USAGE_USER_ID =
   "00000000-0000-0000-0000-000000000000";
 
+export type SupplierUsageAttempt = {
+  runId: string;
+  effectiveProvider: string | null;
+  configuredProvider: string;
+  effectiveModel: string | null;
+  configuredModel: string;
+  usage: {
+    inputTokens: number;
+    outputTokens: number;
+    reasoningTokens: number | null;
+  };
+  finishReason?: string | null;
+  outcome: string | null;
+  finishedAt: string | null;
+};
+
 export async function reportSupplierAttemptUsage(input: {
   em: EntityManager;
   scope: { tenantId: string; organizationId: string };
   agentId: string;
-  attempt: SupplierNegotiationRecord["agent"]["attempts"][number];
+  attempt: SupplierUsageAttempt | SupplierNegotiationRecord["agent"]["attempts"][number];
 }): Promise<string> {
   return input.em.transactional(async (tx) => {
     await tx
       .getConnection()
       .execute("select pg_advisory_xact_lock(hashtextextended(?, 0))", [
-        `supplier_demo.counter_negotiator:${input.scope.tenantId}`,
+        `${input.agentId}:${input.scope.tenantId}`,
       ]);
     const existing = await tx.findOne(AiTokenUsageEvent, {
       tenantId: input.scope.tenantId,

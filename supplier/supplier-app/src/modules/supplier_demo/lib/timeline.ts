@@ -32,7 +32,7 @@ type TimelineCase = Pick<SupplyCase,
 
 type TimelineMessage = Pick<SupplyMessage,
   | 'direction' | 'messageType' | 'deliveryStatus' | 'validationStatus' | 'duplicateCount'
-  | 'createdAt' | 'queuedAt' | 'deliveredAt' | 'receivedAt'>
+  | 'createdAt' | 'queuedAt' | 'deliveredAt' | 'receivedAt'> & { interpretationRecord?: unknown }
 
 const WAITING_STATUSES = new Set(['proposal_queued', 'proposal_delivered'])
 const FAILED_DELIVERY = new Set(['enqueue_failed', 'delivery_failed'])
@@ -72,9 +72,12 @@ export function buildSupplyCaseTimeline(supplyCase: TimelineCase, messages: Time
   const proposal = latest(ordered, (message) => message.direction === 'outbound' && message.messageType === 'SUPPLY_PROPOSAL')
   const confirmation = latest(ordered, (message) => message.direction === 'outbound' && message.messageType === 'SUPPLY_COMMITMENT_CONFIRMED')
   const inbound = ordered.filter((message) => message.direction === 'inbound')
-  const validReply = latest(inbound, (message) => message.validationStatus === 'valid')
+  // A reply the app understood: a valid envelope, or a free-text mail we interpreted into a derived counter.
+  // A free-text mail that produced an interpretation is not a rejected mail either, even when it only informs.
+  const understood = (message: TimelineMessage) => message.validationStatus === 'valid' || message.validationStatus === 'interpreted'
+  const validReply = latest(inbound, understood)
   const lastInbound = inbound.length ? inbound[inbound.length - 1] : null
-  const rejectedCount = inbound.filter((message) => message.validationStatus !== 'valid').length
+  const rejectedCount = inbound.filter((message) => !understood(message) && !message.interpretationRecord).length
   const duplicates = inbound.reduce((total, message) => total + (message.duplicateCount ?? 0), 0)
   const reason = supplyCase.statusReason ?? ''
   const infeasible = supplyCase.status === 'needs_human' && reason.startsWith('acceptance_infeasible_')
@@ -108,10 +111,10 @@ export function buildSupplyCaseTimeline(supplyCase: TimelineCase, messages: Time
     lastInbound
       ? step(
         'email_received',
-        validReply ? 'done' : 'error',
+        validReply || lastInbound.interpretationRecord ? 'done' : 'error',
         (validReply ?? lastInbound).receivedAt ?? (validReply ?? lastInbound).createdAt,
         {
-          type: (validReply ?? lastInbound).messageType ?? 'UNKNOWN',
+          type: (validReply ?? lastInbound).messageType ?? (lastInbound.interpretationRecord ? 'FREE_TEXT' : 'UNKNOWN'),
           validation: (validReply ?? lastInbound).validationStatus ?? 'unknown',
           rejected: rejectedCount,
           duplicates,

@@ -22,7 +22,7 @@ import { loadHubInboundRecord } from "../lib/hub-inbound";
 import { validateInboundEnvelope } from "../lib/inbound-validation";
 import { stripEnvelopeAddresses } from "../lib/envelope";
 import { resolveSupplyRecipient } from "../lib/recipient";
-import { isAutoSupplyReplyEnabled } from "../lib/toggles";
+import { isAutoSupplyReplyEnabled, isFreeformUnderstandingEnabled } from "../lib/toggles";
 import {
   createNegotiationRecord,
   HELD_REVISION_REASONS,
@@ -172,7 +172,7 @@ const receiveInbound: CommandHandler<
             ...scope,
             supplyCaseId: supplyCase.id,
             direction: "inbound",
-            validationStatus: "valid",
+            validationStatus: { $in: ["valid", "interpreted"] },
             deletedAt: null,
           },
           undefined,
@@ -323,6 +323,28 @@ const receiveInbound: CommandHandler<
       await emitAfterCommit(
         "supplier_demo.supply_case.reply_received",
         eventPayload(scope, supplyCase.id, validation.reason, supplyMessage.id),
+      );
+    }
+    const freeformStatus = new Set(["no_envelope", "schema_invalid", "invalid_json", "unterminated_block"]);
+    const senderMatchesCase = Boolean(
+      supplyCase.recipientEmail &&
+      hub.transportSender &&
+      supplyCase.recipientEmail.trim().toLowerCase() === hub.transportSender.trim().toLowerCase(),
+    );
+    const freeformEligible =
+      freeformStatus.has(validation.status) &&
+      senderMatchesCase &&
+      ["proposal_queued", "proposal_delivered"].includes(supplyCase.status) &&
+      (await isFreeformUnderstandingEnabled(ctx.container, scope.tenantId));
+    if (freeformEligible) {
+      await emitAfterCommit(
+        "supplier_demo.supply_case.reply_interpretation_requested",
+        {
+          ...scope,
+          caseId: supplyCase.id,
+          supplyMessageId: supplyMessage.id,
+          attemptNo: 1,
+        },
       );
     }
     return {
@@ -625,7 +647,7 @@ const reopenSupplyCase: CommandHandler<
                 supplyCaseId: caseId,
                 direction: "inbound",
                 messageType: "SUPPLY_ACCEPTANCE",
-                validationStatus: "valid",
+                validationStatus: { $in: ["valid", "interpreted"] },
                 appliedAt: null,
                 deletedAt: null,
               },

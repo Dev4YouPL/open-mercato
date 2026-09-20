@@ -4,9 +4,11 @@ import type { OpenApiMethodDoc, OpenApiRouteDoc } from '@open-mercato/shared/lib
 import { getAuthFromRequest } from '@open-mercato/shared/lib/auth/server'
 import { createRequestContainer } from '@open-mercato/shared/lib/di/container'
 import { findOneWithDecryption, findWithDecryption } from '@open-mercato/shared/lib/encryption/find'
+import { RbacService } from '@open-mercato/core/modules/auth/services/rbacService'
 import { SupplyCase, SupplyMessage } from '../../../data/entities'
 import { buildSupplyCaseTimeline, SUPPLY_TIMELINE_STEPS } from '../../../lib/timeline'
 import { APPROVABLE_NEGOTIATION_REASONS, HELD_REVISION_REASONS, parseNegotiationRecord } from '../../../lib/negotiation-record'
+import { parseInterpretationRecord } from '../../../lib/interpretation/record'
 
 export const metadata = {
   GET: { requireAuth: true, requireFeatures: ['supplier_demo.supply_cases.view'] },
@@ -34,6 +36,17 @@ const messageSchema = z.object({
   duplicateCount: z.number(),
   inReplyToBusinessId: z.string().nullable(),
 })
+const interpretationSchema = z.object({
+  sourceMessageId: z.string(),
+  outcome: z.string(),
+  eligibility: z.object({ eligible: z.boolean(), reason: z.string() }),
+  sanitizer: z.object({ inputChars: z.number(), outputChars: z.number(), prescanHit: z.boolean(), prescanRules: z.array(z.string()) }),
+  intent: z.record(z.string(), z.unknown()).nullable(),
+  checks: z.object({ schema: z.string(), consistency: z.string(), grounding: z.string(), confidenceOk: z.boolean() }),
+  resolution: z.object({ today: z.string(), tranches: z.array(z.object({ quantity: z.number(), date: z.string(), source: z.string(), expression: z.string(), placement: z.string() })) }).nullable(),
+  attempts: z.array(z.object({ attemptNo: z.number(), startedAt: z.string(), finishedAt: z.string().nullable(), latencyMs: z.number().nullable(), configuredProvider: z.string(), configuredModel: z.string(), effectiveProvider: z.string().nullable(), effectiveModel: z.string().nullable(), promptVersion: z.string(), outcome: z.string().nullable(), errorCode: z.string().nullable(), usage: z.object({ inputTokens: z.number(), outputTokens: z.number(), reasoningTokens: z.number().nullable(), known: z.boolean(), partial: z.boolean() }) })),
+  derivedCounterMessageId: z.string().nullable(),
+})
 const timelineStepSchema = z.object({
   key: z.enum(SUPPLY_TIMELINE_STEPS),
   state: z.enum(['done', 'current', 'pending', 'error', 'skipped']),
@@ -55,8 +68,16 @@ const negotiationSchema = z.object({
       policyDecision: z.string(),
       executionFingerprint: z.string(),
       distance: z.number(),
+      stockStatus: z.enum(['ok', 'diverged', 'unavailable']).optional(),
     })),
+    stock: z.object({
+      takenAt: z.string(), variantId: z.string(), reservedForOrder: z.number(), onHand: z.number(), available: z.number(), allocated: z.number(), warehouses: z.number(), source: z.literal('wms'), fingerprint: z.string(),
+    }).optional(),
+    stockGate: z.object({ w1: z.enum(['ok', 'diverged', 'unavailable']), snapshotReserved: z.number() }).optional(),
+    autoGates: z.record(z.string(), z.enum(['pass', 'fail', 'n/a'])).optional(),
+    shadowMode: z.boolean().optional(),
   }).nullable(),
+  origin: z.enum(['envelope', 'interpretation']).optional(),
   agent: z.object({
     state: z.string(),
     activeRunId: z.string().nullable(),
@@ -108,6 +129,7 @@ export const supplyCaseDetailResponseSchema = z.object({
   negotiation: negotiationSchema,
   messages: z.array(messageSchema),
   timeline: z.array(timelineStepSchema),
+  interpretations: z.array(interpretationSchema),
 })
 
 const errorSchema = z.object({ error: z.string() })
@@ -130,16 +152,24 @@ function envelope(message: SupplyMessage): Record<string, unknown> | null {
   return payload && typeof payload === 'object' && Object.keys(payload).length ? payload : null
 }
 
-function negotiation(messages: SupplyMessage[]): z.infer<typeof negotiationSchema> {
+function negotiation(messages: SupplyMessage[], includeStock: boolean): z.infer<typeof negotiationSchema> {
   const counter = [...messages].reverse().find((message) => message.messageType === 'SUPPLY_COUNTER_PROPOSAL' && message.negotiationRecord)
   if (!counter?.negotiationRecord) return null
   try {
     const record = parseNegotiationRecord(counter.negotiationRecord)
+    const evaluation = record.evaluation
+      ? {
+          ...record.evaluation,
+          options: record.evaluation.options.map((option) => ({ id: option.id, commitments: option.commitments, feasible: option.feasible, policyDecision: option.policyDecision, executionFingerprint: option.executionFingerprint, distance: option.distance, ...(option.stockStatus ? { stockStatus: option.stockStatus } : {}) })),
+          ...(includeStock && record.evaluation.stock ? { stock: record.evaluation.stock } : {}),
+          ...(includeStock && record.evaluation.stockGate ? { stockGate: record.evaluation.stockGate } : {}),
+          ...(record.evaluation.autoGates ? { autoGates: record.evaluation.autoGates } : {}),
+        }
+      : null
     return {
+      origin: record.origin,
       counterRule: record.counterRule,
-      evaluation: record.evaluation
-        ? { ...record.evaluation, options: record.evaluation.options.map((option) => ({ id: option.id, commitments: option.commitments, feasible: option.feasible, policyDecision: option.policyDecision, executionFingerprint: option.executionFingerprint, distance: option.distance })) }
-        : null,
+      evaluation,
       agent: { state: record.agent.state, activeRunId: record.agent.activeRunId, skipReason: record.agent.skipReason, attempts: record.agent.attempts.map((attempt) => ({ attemptNo: attempt.attemptNo, runId: attempt.runId, startedAt: attempt.startedAt, leaseExpiresAt: attempt.leaseExpiresAt, finishedAt: attempt.finishedAt, auditState: attempt.auditState, outcome: attempt.outcome, usage: { inputTokens: attempt.usage.inputTokens, outputTokens: attempt.usage.outputTokens, known: attempt.usage.known, partial: attempt.usage.partial } })) },
       recommendation: record.recommendation ? { id: record.recommendation.id, source: record.recommendation.source, optionId: record.recommendation.optionId, commitments: record.recommendation.commitments, decision: record.recommendation.decision, reasonCodes: record.recommendation.reasonCodes, gates: record.recommendation.gates, autoEligible: record.recommendation.autoEligible, createdAt: record.recommendation.createdAt } : null,
       dispatch: { state: record.dispatch.state, source: record.dispatch.source, heldReason: record.dispatch.heldReason },
@@ -148,6 +178,37 @@ function negotiation(messages: SupplyMessage[]): z.infer<typeof negotiationSchem
   } catch {
     return null
   }
+}
+
+function interpretations(messages: SupplyMessage[]): z.infer<typeof interpretationSchema>[] {
+  return messages.flatMap((message) => {
+    if (!message.interpretationRecord) return []
+    const record = parseInterpretationRecord(message.interpretationRecord)
+    return [{
+      sourceMessageId: message.id,
+      outcome: record.outcome,
+      eligibility: record.eligibility,
+      sanitizer: { inputChars: record.sanitizer.inputChars, outputChars: record.sanitizer.outputChars, prescanHit: record.sanitizer.prescan.hit, prescanRules: record.sanitizer.prescan.rules },
+      intent: record.intent,
+      checks: record.checks,
+      resolution: record.resolution,
+      attempts: record.attempts.map((attempt) => ({
+        attemptNo: attempt.attemptNo,
+        startedAt: attempt.startedAt,
+        finishedAt: attempt.finishedAt,
+        latencyMs: attempt.latencyMs,
+        configuredProvider: attempt.configuredProvider,
+        configuredModel: attempt.configuredModel,
+        effectiveProvider: attempt.effectiveProvider,
+        effectiveModel: attempt.effectiveModel,
+        promptVersion: attempt.promptVersion,
+        outcome: attempt.outcome,
+        errorCode: attempt.errorCode,
+        usage: attempt.usage,
+      })),
+      derivedCounterMessageId: record.derivedCounterMessageId,
+    }]
+  })
 }
 
 // Mirrors the server-side guards (retry / reopen / approve_counter / reject_counter) so a button is only shown
@@ -177,7 +238,9 @@ export async function GET(req: Request, context: { params: Promise<{ id: string 
   const supplyCase = await findOneWithDecryption(em, SupplyCase, { ...scope, id, deletedAt: null }, undefined, scope)
   if (!supplyCase) return Response.json({ error: 'Supply case not found' }, { status: 404 })
   const messages = await findWithDecryption(em, SupplyMessage, { ...scope, supplyCaseId: supplyCase.id, deletedAt: null }, { orderBy: { createdAt: 'asc' } }, scope)
-  const negotiationValue = negotiation(messages)
+  const rbac = container.resolve<RbacService>('rbacService')
+  const canViewWms = await rbac.userHasAllFeatures(auth.sub, ['wms.view'], { tenantId: auth.tenantId, organizationId: auth.orgId })
+  const negotiationValue = negotiation(messages, canViewWms)
   const response = {
     id: supplyCase.id,
     correlationId: supplyCase.correlationId,
@@ -197,6 +260,7 @@ export async function GET(req: Request, context: { params: Promise<{ id: string 
     updatedAt: supplyCase.updatedAt.toISOString(),
     availableActions: availableActions(supplyCase.status, supplyCase.statusReason, negotiationValue),
     negotiation: negotiationValue,
+    interpretations: interpretations(messages),
     messages: messages.map((message) => ({
       id: message.id,
       direction: message.direction,

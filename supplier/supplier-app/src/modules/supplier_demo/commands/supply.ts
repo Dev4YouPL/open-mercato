@@ -14,6 +14,7 @@ import {
   SupplyMessage,
   SupplierProductionSlot,
   type SupplyCaseStatus,
+  type SupplyCommitment,
   type SupplyMessageDeliveryStatus,
   type SupplierProductionAllocation,
 } from '../data/entities'
@@ -539,6 +540,29 @@ const sendSupplyMessage: CommandHandler<Record<string, unknown>, { deliveryStatu
     message.lastError = null
     await em.flush()
 
+    const acceptance = (isConfirmation || isNegotiationRevision) && message.inReplyToBusinessId
+      ? await findOneWithDecryption(em, SupplyMessage, { ...scope, supplyCaseId: supplyCase.id, businessMessageId: message.inReplyToBusinessId, direction: 'inbound', deletedAt: null }, undefined, scope)
+      : null
+    const interpretationSource = isNegotiationRevision && acceptance && typeof acceptance.envelopePayload.sourceSupplyMessageId === 'string'
+      ? await findOneWithDecryption(em, SupplyMessage, { ...scope, id: acceptance.envelopePayload.sourceSupplyMessageId, supplyCaseId: supplyCase.id, direction: 'inbound', deletedAt: null }, undefined, scope)
+      : null
+    const interpretationNote = isNegotiationRevision && acceptance?.negotiationRecord
+      ? (() => {
+        try {
+          const record = parseNegotiationRecord(acceptance.negotiationRecord)
+          if (record.origin !== 'interpretation') return undefined
+          // What we understood the partner to ask for — never our own revised commitment, which may differ when a
+          // person approved an alternative.
+          const payload = acceptance.envelopePayload.payload as { requestedCommitments?: SupplyCommitment[] } | undefined
+          const requested = Array.isArray(payload?.requestedCommitments) ? payload.requestedCommitments : []
+          if (!requested.length) return undefined
+          const receivedAt = (interpretationSource?.receivedAt ?? acceptance.receivedAt ?? new Date()).toISOString().slice(0, 10)
+          return `We understood your message of ${receivedAt} as: ${requested.map((entry) => `${entry.quantity} pcs on ${entry.date}`).join(', ')}.`
+        } catch {
+          return undefined
+        }
+      })()
+      : undefined
     const composed = isProposal
       ? composeSupplyProposal({
         messageId: message.businessMessageId,
@@ -551,6 +575,7 @@ const sendSupplyMessage: CommandHandler<Record<string, unknown>, { deliveryStatu
         inReplyToMessageId: message.inReplyToBusinessId ?? undefined,
         negotiationTurn: message.inReplyToBusinessId ? supplyCase.negotiationTurn : undefined,
         maxNegotiationTurns: message.inReplyToBusinessId ? maxNegotiationTurns() : undefined,
+        interpretationNote,
       })
       : composeCommitmentConfirmation({
         messageId: message.businessMessageId,
@@ -565,9 +590,6 @@ const sendSupplyMessage: CommandHandler<Record<string, unknown>, { deliveryStatu
       })
     // A confirmation answers the acceptance and a revised proposal answers the counter: both go out as a reply in
     // that inbound mail's thread.
-    const acceptance = (isConfirmation || isNegotiationRevision) && message.inReplyToBusinessId
-      ? await findOneWithDecryption(em, SupplyMessage, { ...scope, supplyCaseId: supplyCase.id, businessMessageId: message.inReplyToBusinessId, direction: 'inbound', deletedAt: null }, undefined, scope)
-      : null
     message.senderEmail = (asString(mailboxActor.fromAddress) ?? senderAddress()) || null
     message.subject = composed.subject
     message.envelopePayload = composed.storedEnvelope
@@ -692,7 +714,7 @@ const retrySupplyCase: CommandHandler<Record<string, unknown>, { caseId: string;
     if (supplyCase.status === 'counter_received') {
       // A stalled counter: settle an expired agent lease or re-emit the lost next step now (never a new model call
       // while one is still running).
-      const counter = (await findWithDecryption(em, SupplyMessage, { supplyCaseId: caseId, ...scope, direction: 'inbound', messageType: 'SUPPLY_COUNTER_PROPOSAL', validationStatus: 'valid', deletedAt: null }, { orderBy: { createdAt: 'desc' } }, scope))[0]
+      const counter = (await findWithDecryption(em, SupplyMessage, { supplyCaseId: caseId, ...scope, direction: 'inbound', messageType: 'SUPPLY_COUNTER_PROPOSAL', validationStatus: { $in: ['valid', 'interpreted'] }, deletedAt: null }, { orderBy: { createdAt: 'desc' } }, scope))[0]
       const record = counter?.negotiationRecord ? parseNegotiationRecord(counter.negotiationRecord) : null
       const running = record?.agent.attempts.find((attempt) => attempt.runId === record.agent.activeRunId && attempt.finishedAt === null)
       if (running && new Date(running.leaseExpiresAt).getTime() > Date.now()) {

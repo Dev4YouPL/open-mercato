@@ -289,7 +289,7 @@ export async function runSupplierCounterNegotiation(input: {
       supplyCaseId: input.caseId,
       direction: "inbound",
       messageType: "SUPPLY_COUNTER_PROPOSAL",
-      validationStatus: "valid",
+      validationStatus: { $in: ["valid", "interpreted"] },
       deletedAt: null,
     },
     undefined,

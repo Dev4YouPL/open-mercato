@@ -18,6 +18,7 @@ const bodySchema = z.object({
   updatedAt: z.string().datetime(),
   // Pins the decision to the recommendation the operator saw; a changed recommendation returns 409.
   recommendationId: z.string().uuid().optional(),
+  acknowledgeStockDivergence: z.boolean().optional(),
 });
 
 export async function POST(
@@ -50,6 +51,7 @@ export async function POST(
           supplyMessageId: parsed.data.supplyMessageId,
           updatedAt: new Date(parsed.data.updatedAt),
           recommendationId: parsed.data.recommendationId,
+          acknowledgeStockDivergence: parsed.data.acknowledgeStockDivergence,
         },
         ctx: prepared.ctx,
       });
@@ -70,7 +72,7 @@ export const openApi = {
       responses: [
         { status: 202, description: "Revision queued" },
         { status: 409, description: "Case changed" },
-        { status: 422, description: "Recommendation required" },
+        { status: 422, description: "Recommendation or current warehouse acknowledgement required" },
       ],
     },
   },

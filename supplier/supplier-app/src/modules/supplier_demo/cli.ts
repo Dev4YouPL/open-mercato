@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto'
+import fs from 'node:fs'
+import path from 'node:path'
 import type { EntityManager } from '@mikro-orm/postgresql'
 import type { CommandBus, CommandRuntimeContext } from '@open-mercato/shared/lib/commands'
 import type { ModuleCli } from '@open-mercato/shared/modules/registry'
@@ -17,20 +19,24 @@ import { COMMUNICATION_CHANNELS_QUEUES } from '@open-mercato/core/modules/commun
 import { ScheduledJob } from '@open-mercato/scheduler'
 import { SupplyCase, SupplyMessage, SupplierProductionSlot } from './data/entities'
 import supplierDemoEncryptionMaps from './encryption'
-import { ensureAutoNegotiationToggle, ensureAutoSupplyProposalToggle, ensureAutoSupplyReplyToggle, ensureDemoProductionSlots, setup } from './setup'
+import { ensureAutoNegotiationToggle, ensureAutoSupplyProposalToggle, ensureAutoSupplyReplyToggle, ensureDemoProductionSlots, ensureFreeformAutoNegotiationToggle, ensureFreeformAutoShadowToggle, ensureFreeformUnderstandingToggle, setup } from './setup'
 import { sendSupplyMail, resolveMailboxPollChannel } from './lib/mailbox'
 import { requestMailboxPoll } from './lib/mailbox-poll'
 import { resolveSupplyRecipient } from './lib/recipient'
-import { isAutoNegotiationEnabled, isAutoSupplyProposalEnabled, isAutoSupplyReplyEnabled, supplierDemoNegotiationToggleId, supplierDemoReplyToggleId, supplierDemoToggleId } from './lib/toggles'
+import { isAutoNegotiationEnabled, isAutoSupplyProposalEnabled, isAutoSupplyReplyEnabled, isFreeformAutoNegotiationEnabled, isFreeformAutoShadowEnabled, isFreeformUnderstandingEnabled, supplierDemoFreeformAutoNegotiationToggleId, supplierDemoFreeformAutoShadowToggleId, supplierDemoFreeformUnderstandingToggleId, supplierDemoNegotiationToggleId, supplierDemoReplyToggleId, supplierDemoToggleId } from './lib/toggles'
 import { renderSupplyEnvelope, type SupplyEnvelope } from './lib/envelope'
 import { parseInboundSupplyText } from './lib/envelope-parse'
 import { validateInboundEnvelope } from './lib/inbound-validation'
 import { evaluateFeasibility } from './lib/feasibility'
 import { buildSupplierAiExposureInventory } from './lib/agent/exposure'
 import { buildSupplierAgentOfflinePreflight, inspectSupplierAgentAiState, parseSupplierAgentConfig } from './lib/agent/config'
+import { hasReplyInterpreterOverride, isReplyInterpreterModelAllowed, parseReplyInterpreterConfig } from './lib/interpretation/config'
 import { runSupplierRealPathSelftest } from './cli/selftest/real-path'
 import { registerSupplierCounterRecoverySchedule } from './lib/counter-recovery-schedule'
 import { runSupplierCounterAgentSmoke } from './lib/agent/runner'
+import { runSupplierReplyInterpreterSmoke } from './lib/interpretation/runner'
+import { readWmsSnapshot } from './lib/wms-snapshot'
+import { parseNegotiationRecord } from './lib/negotiation-record'
 
 type Scope = { tenantId: string; organizationId: string }
 
@@ -89,8 +95,35 @@ async function restoreSlots(em: EntityManager, scope: Scope, priority: 'normal' 
   await ensureDemoProductionSlots(em, scope, variant, order441.expectedDeliveryAt, order442.orderNumber, priority)
 }
 
+// The AI registry is compiled to `.mercato/generated/ai-agents.generated.*.mjs` and only recompiled when the
+// generated `.ts` is newer. Editing an agent or its output schema therefore leaves the runtime on the previous
+// build, which silently sends the old schema to the provider. Drop the artifacts whenever a module source is newer.
+function dropStaleAiRegistryArtifacts(): string[] {
+  const generatedDir = path.join(process.cwd(), '.mercato', 'generated')
+  const moduleDir = path.join(process.cwd(), 'src', 'modules', 'supplier_demo')
+  const newestSource = (dir: string): number => {
+    let newest = 0
+    for (const entry of fs.existsSync(dir) ? fs.readdirSync(dir, { withFileTypes: true }) : []) {
+      const full = path.join(dir, entry.name)
+      newest = Math.max(newest, entry.isDirectory() ? newestSource(full) : fs.statSync(full).mtimeMs)
+    }
+    return newest
+  }
+  const sourceTime = newestSource(moduleDir)
+  const dropped: string[] = []
+  for (const name of ['ai-agents.generated.bundled.mjs', 'ai-agents.generated.mjs', 'ai-tools.generated.bundled.mjs', 'ai-tools.generated.mjs']) {
+    const artifact = path.join(generatedDir, name)
+    if (!fs.existsSync(artifact) || fs.statSync(artifact).mtimeMs >= sourceTime) continue
+    fs.rmSync(artifact)
+    dropped.push(name)
+  }
+  return dropped
+}
+
 const demoReset: ModuleCli = { command: 'demo:reset', async run(rest) {
   const args = parseArgs(rest)
+  const droppedArtifacts = dropStaleAiRegistryArtifacts()
+  if (droppedArtifacts.length) console.log(`[internal] Dropped stale AI registry artifacts: ${droppedArtifacts.join(', ')}.`)
   const container = await createRequestContainer()
   const em = container.resolve('em') as EntityManager
   const scope = await scopeFor(em, args)
@@ -99,6 +132,9 @@ const demoReset: ModuleCli = { command: 'demo:reset', async run(rest) {
   await ensureAutoSupplyProposalToggle(em)
   await ensureAutoSupplyReplyToggle(em)
   await ensureAutoNegotiationToggle(em)
+  await ensureFreeformUnderstandingToggle(em)
+  await ensureFreeformAutoShadowToggle(em)
+  await ensureFreeformAutoNegotiationToggle(em)
   for (const row of await em.find(SupplyCase, { ...scope, deletedAt: null })) row.deletedAt = new Date()
   for (const row of await em.find(SupplyMessage, { ...scope, deletedAt: null })) row.deletedAt = new Date()
   const orders = await findWithDecryption(em, SalesOrder, { ...scope, deletedAt: null, orderNumber: { $like: 'SO-441%' } }, { orderBy: { createdAt: 'desc' } }, scope)
@@ -128,6 +164,11 @@ const demoPreflight: ModuleCli = { command: 'demo:preflight', async run(rest) {
     const aiState = parsedConfig.ok
       ? await inspectSupplierAgentAiState(em, scope, parsedConfig.config)
       : null
+    const interpreterConfig = parseReplyInterpreterConfig()
+    const interpreterOverride = await hasReplyInterpreterOverride(em, scope)
+    const interpreterAllowed = interpreterConfig.ok
+      ? await isReplyInterpreterModelAllowed(em, scope, interpreterConfig.config)
+      : false
     const preflight = buildSupplierAgentOfflinePreflight({
       enabledModules: inventory.enabledModules,
       scopePresent: Boolean(scope.tenantId && scope.organizationId),
@@ -142,19 +183,29 @@ const demoPreflight: ModuleCli = { command: 'demo:preflight', async run(rest) {
       providerKeyPresent: args.live === 'true' ? Boolean(process.env.OPENROUTER_API_KEY?.trim()) : false,
       network: args.live === 'true' ? 'owner-run-only' : 'blocked',
       exposure: inventory,
-      checks: preflight.checks,
+      checks: [
+        ...preflight.checks,
+        { id: 'config.reply_interpreter', status: interpreterConfig.ok ? 'pass' : 'fail' },
+        { id: 'runtime_override.supplier_demo.reply_interpreter', status: interpreterOverride ? 'fail' : 'pass' },
+        { id: 'model_allowlist.reply_interpreter', status: interpreterAllowed ? 'pass' : 'fail' },
+      ],
     }
     console.log(JSON.stringify(result, null, 2))
-    if (preflight.failed) throw new Error('[internal] Supplier AI preflight failed.')
+    if (preflight.failed || !interpreterConfig.ok || interpreterOverride || !interpreterAllowed) throw new Error('[internal] Supplier AI preflight failed.')
     return
   }
   const failures: Array<[string, string]> = []
+  const staleAiArtifacts = dropStaleAiRegistryArtifacts()
+  if (staleAiArtifacts.length) console.log(`[internal] Dropped stale AI registry artifacts: ${staleAiArtifacts.join(', ')}.`)
   const warnings: Array<[string, string]> = []
   const fail = (item: string, remediation: string) => failures.push([item, remediation])
   const warn = (item: string, remediation: string) => warnings.push([item, remediation])
   if (!await isAutoSupplyProposalEnabled(container, scope.tenantId)) fail(supplierDemoToggleId, 'run demo:reset')
   if (!await isAutoSupplyReplyEnabled(container, scope.tenantId)) fail(supplierDemoReplyToggleId, 'run demo:reset')
   if (!await isAutoNegotiationEnabled(container, scope.tenantId)) fail(supplierDemoNegotiationToggleId, 'run demo:reset')
+  if (await isFreeformUnderstandingEnabled(container, scope.tenantId)) warn(supplierDemoFreeformUnderstandingToggleId, 'free-form understanding is enabled; keep it off until the phase 2 gate is accepted')
+  if (await isFreeformAutoNegotiationEnabled(container, scope.tenantId)) warn(supplierDemoFreeformAutoNegotiationToggleId, 'free-form automatic negotiation is enabled; keep it off until Q-318 evidence is accepted')
+  if (!await isFreeformAutoShadowEnabled(container, scope.tenantId)) warn(supplierDemoFreeformAutoShadowToggleId, 'free-form shadow mode is disabled; keep it on until Q-318 evidence is accepted')
   const featureToggles = container.resolve('featureTogglesService') as { getBoolConfig: (id: string, tenantId: string) => Promise<{ ok: boolean; value?: boolean }> }
   const wms = await featureToggles.getBoolConfig('wms_integration_sales_order_inventory', scope.tenantId)
   if (!wms.ok || wms.value !== true) fail('wms_integration_sales_order_inventory', 'enable the WMS reservation toggle, then run demo:reset')
@@ -210,7 +261,30 @@ const demoCase: ModuleCli = { command: 'demo:case', async run(rest) {
   const supplyCase = await findOneWithDecryption(em, SupplyCase, { ...scope, correlationId: args.correlation, deletedAt: null }, undefined, scope)
   if (!supplyCase) throw new Error('[internal] Supply case not found.')
   const messages = await findWithDecryption(em, SupplyMessage, { ...scope, supplyCaseId: supplyCase.id, deletedAt: null }, { orderBy: { createdAt: 'asc' } }, scope)
-  console.log(JSON.stringify({ case: supplyCase, messages }, null, 2))
+  const stock = await readWmsSnapshot(em, { ...scope, catalogVariantId: supplyCase.catalogVariantId, salesOrderId: supplyCase.salesOrderId })
+  console.log(JSON.stringify({ case: supplyCase, messages, stock }, null, 2))
+} }
+
+const freeformShadowReport: ModuleCli = { command: 'demo:freeform-shadow-report', async run(rest) {
+  const args = parseArgs(rest)
+  const container = await createRequestContainer()
+  const em = container.resolve('em') as EntityManager
+  const scope = await scopeFor(em, args)
+  const autoToggle = await isFreeformAutoNegotiationEnabled(container, scope.tenantId)
+  const structuredToggle = await isAutoNegotiationEnabled(container, scope.tenantId)
+  const shadowEnabled = await isFreeformAutoShadowEnabled(container, scope.tenantId)
+  const counters = await findWithDecryption(em, SupplyMessage, { ...scope, direction: 'inbound', messageType: 'SUPPLY_COUNTER_PROPOSAL', validationStatus: 'interpreted', deletedAt: null }, { orderBy: { createdAt: 'asc' } }, scope)
+  const rows = counters.flatMap((counter) => {
+    if (!counter.negotiationRecord) return []
+    const record = parseNegotiationRecord(counter.negotiationRecord)
+    const gates = record.recommendation?.gates ?? {}
+    const wouldAutoSend = autoToggle && structuredToggle && Object.entries(gates).filter(([gate]) => gate !== 'G10' && gate !== 'G10shadow' && (!shadowEnabled || gate !== 'I1')).every(([, state]) => state === 'pass')
+    const disposition = record.verdict?.kind ?? 'pending'
+    return [{ caseId: counter.supplyCaseId, counterId: counter.id, createdAt: counter.createdAt.toISOString(), wouldAutoSend, disposition, origin: record.origin ?? 'envelope' }]
+  })
+  const agreement = rows.filter((row) => row.disposition !== 'pending').filter((row) => (row.wouldAutoSend && ['approved', 'auto_approved'].includes(row.disposition)) || (!row.wouldAutoSend && !['approved', 'auto_approved'].includes(row.disposition))).length
+  const decided = rows.filter((row) => row.disposition !== 'pending').length
+  console.log(JSON.stringify({ scope, shadowMode: shadowEnabled, toggles: { freeformAutoNegotiation: autoToggle, autoNegotiation: structuredToggle }, totals: { interpreted: rows.length, decided, agreement, agreementRate: decided ? agreement / decided : null }, rows }, null, 2))
 } }
 
 const counterEval: ModuleCli = { command: 'counter-eval', async run(rest) {
@@ -222,7 +296,7 @@ const counterEval: ModuleCli = { command: 'counter-eval', async run(rest) {
     ? await findOneWithDecryption(em, SupplyCase, { ...scope, correlationId: args.correlation, deletedAt: null }, undefined, scope)
     : null
   if (args.correlation && !caseRecord) throw new Error('[internal] Supply case not found for --correlation.')
-  const counter = await findOneWithDecryption(em, SupplyMessage, { ...scope, direction: 'inbound', messageType: 'SUPPLY_COUNTER_PROPOSAL', validationStatus: 'valid', deletedAt: null, ...(caseRecord ? { supplyCaseId: caseRecord.id } : {}) }, { orderBy: { createdAt: 'desc' } }, scope)
+  const counter = await findOneWithDecryption(em, SupplyMessage, { ...scope, direction: 'inbound', messageType: 'SUPPLY_COUNTER_PROPOSAL', validationStatus: { $in: ['valid', 'interpreted'] }, deletedAt: null, ...(caseRecord ? { supplyCaseId: caseRecord.id } : {}) }, { orderBy: { createdAt: 'desc' } }, scope)
   if (!counter) throw new Error('[internal] No valid counter proposal exists.')
   const commandBus = container.resolve('commandBus') as CommandBus
   const result = await commandBus.execute('supplier_demo.supply_case.evaluate_counter', { input: { caseId: counter.supplyCaseId, supplyMessageId: counter.id }, ctx: commandContext(container, scope) })
@@ -231,6 +305,24 @@ const counterEval: ModuleCli = { command: 'counter-eval', async run(rest) {
 
 const aiExposure: ModuleCli = { command: 'demo:ai-exposure', async run() {
   console.log(JSON.stringify(buildSupplierAiExposureInventory(), null, 2))
+} }
+
+const interpretationSmoke: ModuleCli = { command: 'demo:interpret-smoke', async run(rest) {
+  const args = parseArgs(rest)
+  if (args.live === undefined) throw new Error('[internal] demo:interpret-smoke calls the live model; run it with --live.')
+  const container = await createRequestContainer()
+  const em = container.resolve('em') as EntityManager
+  const scope = await scopeFor(em, args)
+  const text = args.text ?? 'We can take 400 on Wednesday and the remainder next week.'
+  const result = await runSupplierReplyInterpreterSmoke({ container: container as never, scope, text })
+  console.log(`[internal] interpreter smoke ${result.ok ? 'OK' : 'FAILED'} model=${result.model ?? 'unresolved'} tokens=${result.usage?.inputTokens ?? '?'}/${result.usage?.outputTokens ?? '?'}`)
+  if (result.kind) console.log(`[internal] kind=${result.kind} tranches=${(result.tranches ?? []).join(', ') || 'none'}`)
+  if (!result.ok) {
+    if (result.reason) console.error(`[internal] reason: ${result.reason}`)
+    if (result.issues?.length) console.error(`[internal] output issues: ${result.issues.join('; ')}`)
+    if (result.error) console.error(`[internal] provider: ${result.error.name} status=${result.error.status ?? 'n/a'} ${result.error.message}`)
+    throw new Error('[internal] interpreter smoke failed.')
+  }
 } }
 
 function simulatedEnvelope(type: string, supplyCase: SupplyCase, proposal: SupplyMessage, sender: string, acceptedQuantity: number): SupplyEnvelope | string {
@@ -267,6 +359,21 @@ const simulateReply: ModuleCli = { command: 'mail:simulate-reply', async run(res
   if (!proposal) throw new Error('[internal] No proposal exists.')
   const partner = supplyCase.recipientEmail ?? process.env.SUPPLIER_DEMO_PARTNER_EMAILS?.split(',')[0]?.trim() ?? 'manufacturer-a@example.test'
   const sender = type === 'wrong-sender' ? 'spoof@example.test' : partner
+  const freeform = args.freeform && args.freeform !== 'true' ? args.freeform : null
+  if (freeform) {
+    const body = `Manufacturer reply.\n\n${freeform}`
+    console.log(`${body}\n\n[internal] free-text reply ready for injection.`)
+    if (args.inject !== undefined) {
+      const injectionAllowed = ['1', 'true'].includes((process.env.SUPPLIER_DEMO_ALLOW_REPLY_INJECTION ?? '').trim().toLowerCase())
+      if (process.env.NODE_ENV === 'production' || !injectionAllowed) throw new Error('[internal] Reply injection is disabled; set SUPPLIER_DEMO_ALLOW_REPLY_INJECTION=true in development.')
+      const channel = await resolveMailboxPollChannel({ em, expectedScope: scope })
+      const commandBus = container.resolve('commandBus') as CommandBus
+      const rfcMessageId = `sim-${randomUUID()}@supplier-demo.local`
+      await commandBus.execute('communication_channels.message.ingest_inbound', { input: { channelId: channel.id, providerKey: 'imap', channelType: 'email', scope, message: { externalMessageId: rfcMessageId, externalConversationId: `sim-thread-${supplyCase.id}`, senderIdentifier: sender, subject: `Re: [${supplyCase.correlationId}] Delivery update — ${supplyCase.sku}`, body, bodyFormat: 'text', timestamp: new Date(), channelPayload: { from: sender, to: proposal.senderEmail ?? process.env.SUPPLIER_DEMO_MAILBOX_FROM_ADDRESS ?? '', messageId: rfcMessageId }, channelContentType: 'text/plain', channelMetadata: { messageId: rfcMessageId } } }, ctx: commandContext(container, scope) })
+      console.log('[internal] Free-text reply injected through communication_channels.message.ingest_inbound.')
+    }
+    return
+  }
   const envelope = simulatedEnvelope(type === 'stale' ? 'acceptance' : type, supplyCase, type === 'stale' ? { ...proposal, businessMessageId: 'MSG-stale' } : proposal, sender, Number(args.accept ?? supplyCase.currentCommitment[0]?.quantity ?? 1))
   const body = `Manufacturer reply.\n\n${typeof envelope === 'string' ? envelope : renderSupplyEnvelope(envelope)}`
   const parsed = parseInboundSupplyText(body)
@@ -327,6 +434,7 @@ function runLoopSelftest(): void {
 const realPathScenarios = [
   'loop-real', 'level3-fallback', 'counter-eval', 'initial-high-priority', 'agent-stub', 'agent-decline', 'approve-reject', 'crash-recovery', 'reopen-recovery',
   'usage-caps', 'concurrent-approve', 'send-toggle', 'proposal-send-toggle', 'auto-recovery',
+  'freeform-display', 'freeform-injection', 'freeform-model-failure', 'freeform-empty',
 ] as const
 type RealPathScenario = typeof realPathScenarios[number]
 
@@ -386,4 +494,4 @@ const agentSmoke: ModuleCli = { command: 'demo:agent-smoke', async run(rest) {
   if (failures > 0) throw new Error(`[internal] agent smoke failed ${failures}/${runs}.`)
 } }
 
-export default [agentSmoke, mailSmoke, demoReset, demoPreflight, demoCase, counterEval, aiExposure, simulateReply, selftest]
+export default [agentSmoke, interpretationSmoke, mailSmoke, demoReset, demoPreflight, demoCase, freeformShadowReport, counterEval, aiExposure, simulateReply, selftest]

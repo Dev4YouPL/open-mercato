@@ -14,6 +14,9 @@ import { isAutoNegotiationEnabled } from "../lib/toggles";
 import { recoverExpiredSupplierAttempt } from "../lib/agent/attempts";
 import { emitSupplierDemoEvent } from "../events";
 import { reportSupplierAttemptUsage } from "../lib/agent/usage";
+import { isFreeformUnderstandingEnabled } from "../lib/toggles";
+import { recoverExpiredReplyInterpretation } from "../lib/interpretation/attempts";
+import { parseInterpretationRecord } from "../lib/interpretation/record";
 
 type Scope = { tenantId: string; organizationId: string };
 
@@ -23,6 +26,8 @@ const eventOptions = {
   persistent: true,
   ...({ deliverInline: false } as Record<string, unknown>),
 };
+
+const FREEFORM_STATUSES = ["no_envelope", "schema_invalid", "invalid_json", "unterminated_block"];
 
 function scopeFrom(ctx: CommandRuntimeContext): Scope | null {
   const tenantId = ctx.auth?.tenantId;
@@ -86,13 +91,62 @@ export const recoverCounterProcessing: CommandHandler<
       scope.tenantId,
     );
     const em = (ctx.container.resolve("em") as EntityManager).fork();
-    const requestedCaseId =
-      typeof rawInput.caseId === "string" ? rawInput.caseId : null;
-    // The selftest simulates a lost event without waiting a minute.
     const lostEventAfterMs =
       typeof rawInput.lostEventAfterMs === "number" && rawInput.lostEventAfterMs >= 0
         ? rawInput.lostEventAfterMs
         : LOST_EVENT_AFTER_MS;
+    let recovered = 0;
+    if (await isFreeformUnderstandingEnabled(ctx.container, scope.tenantId)) {
+      const interpretationMessages = await findWithDecryption(
+        em,
+        SupplyMessage,
+        {
+          ...scope,
+          direction: "inbound",
+          validationStatus: { $in: FREEFORM_STATUSES },
+          deletedAt: null,
+        },
+        { orderBy: { createdAt: "asc" }, limit: 100 },
+        scope,
+      );
+      for (const message of interpretationMessages) {
+        const supplyCase = await findOneWithDecryption(
+          em,
+          SupplyCase,
+          { ...scope, id: message.supplyCaseId, deletedAt: null },
+          undefined,
+          scope,
+        );
+        if (!supplyCase || !["proposal_queued", "proposal_delivered"].includes(supplyCase.status)) continue;
+        const record = message.interpretationRecord ? parseInterpretationRecord(message.interpretationRecord) : null;
+        const recoveredLease = await recoverExpiredReplyInterpretation({
+          em,
+          scope,
+          caseId: supplyCase.id,
+          supplyMessageId: message.id,
+        });
+        if (recoveredLease) {
+          const fresh = await findOneWithDecryption(em.fork(), SupplyMessage, { ...scope, id: message.id, deletedAt: null }, undefined, scope);
+          const freshRecord = fresh?.interpretationRecord ? parseInterpretationRecord(fresh.interpretationRecord) : null;
+          const timedOut = freshRecord?.attempts.find((attempt) => attempt.outcome === "timeout" && attempt.errorCode === "lease_expired");
+          if (timedOut) {
+            await reportSupplierAttemptUsage({ em, scope, agentId: "supplier_demo.reply_interpreter", attempt: timedOut });
+          }
+          await emitSupplierDemoEvent("supplier_demo.supply_case.attention_required", { ...scope, caseId: supplyCase.id, supplyMessageId: message.id, reason: "interpretation_timeout", status: supplyCase.status }, eventOptions);
+          recovered += 1;
+          continue;
+        }
+        const overdue = !message.receivedAt || Date.now() - message.receivedAt.getTime() > lostEventAfterMs;
+        if (!overdue) continue;
+        const attemptNo = (record?.attempts.length ?? 0) + 1;
+        if (!record || record.outcome === "pending") {
+          await emitSupplierDemoEvent("supplier_demo.supply_case.reply_interpretation_requested", { ...scope, caseId: supplyCase.id, supplyMessageId: message.id, attemptNo }, eventOptions);
+          recovered += 1;
+        }
+      }
+    }
+    const requestedCaseId =
+      typeof rawInput.caseId === "string" ? rawInput.caseId : null;
     const cases = await findWithDecryption(
       em,
       SupplyCase,
@@ -105,7 +159,6 @@ export const recoverCounterProcessing: CommandHandler<
       { limit: 50 },
       scope,
     );
-    let recovered = 0;
     for (const supplyCase of cases) {
       const counter = (
         await findWithDecryption(
@@ -116,7 +169,7 @@ export const recoverCounterProcessing: CommandHandler<
             supplyCaseId: supplyCase.id,
             direction: "inbound",
             messageType: "SUPPLY_COUNTER_PROPOSAL",
-            validationStatus: "valid",
+            validationStatus: { $in: ["valid", "interpreted"] },
             deletedAt: null,
           },
           { orderBy: { createdAt: "desc" } },
@@ -205,7 +258,7 @@ export const recoverCounterProcessing: CommandHandler<
         ...scope,
         direction: "inbound",
         messageType: "SUPPLY_COUNTER_PROPOSAL",
-        validationStatus: "valid",
+        validationStatus: { $in: ["valid", "interpreted"] },
         deletedAt: null,
       },
       { orderBy: { createdAt: "desc" }, limit: 50 },

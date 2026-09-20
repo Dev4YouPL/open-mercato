@@ -4,6 +4,7 @@ export type SupplierAiExposureInventory = {
   enabledModules: string[]
   routes: Array<{ path: string; mode: 'chat' | 'object' | 'mcp'; feature: string }>
   supplierAgent: 'registered_toolless_object_only'
+  supplierAgents: string[]
   objectRouteRestriction: 'generic_ai_assistant_view_only'
   q206: 'pending_before_live_rollout'
 }
@@ -17,6 +18,7 @@ export function buildSupplierAiExposureInventory(): SupplierAiExposureInventory 
       { path: 'OpenCode/MCP server', mode: 'mcp', feature: 'session-auth + per-tool ACL' },
     ],
     supplierAgent: 'registered_toolless_object_only',
+    supplierAgents: ['supplier_demo.counter_negotiator', 'supplier_demo.reply_interpreter'],
     objectRouteRestriction: 'generic_ai_assistant_view_only',
     q206: 'pending_before_live_rollout',
   }

@@ -30,7 +30,8 @@ import {
 } from "../lib/negotiation-record";
 import { finalizeSupplierCounterAttempt } from "../lib/agent/attempts";
 import { parseSupplierAgentConfig } from "../lib/agent/config";
-import { isAutoNegotiationEnabled } from "../lib/toggles";
+import { isAutoNegotiationEnabled, isFreeformAutoNegotiationEnabled, isFreeformAutoShadowEnabled } from "../lib/toggles";
+import { readWmsSnapshot } from "../lib/wms-snapshot";
 
 type Scope = { tenantId: string; organizationId: string };
 
@@ -89,7 +90,7 @@ async function isLatestValidCounter(
       supplyCaseId: caseId,
       direction: "inbound",
       messageType: "SUPPLY_COUNTER_PROPOSAL",
-      validationStatus: "valid",
+      validationStatus: { $in: ["valid", "interpreted"] },
       deletedAt: null,
     },
     { orderBy: { createdAt: "desc" } },
@@ -150,6 +151,12 @@ const approveCounter: CommandHandler<Record<string, unknown>, Disposition> = {
     const negotiationEnabled = automatic
       ? await isAutoNegotiationEnabled(ctx.container, scope.tenantId)
       : true;
+    const freeformAutoEnabled = automatic
+      ? await isFreeformAutoNegotiationEnabled(ctx.container, scope.tenantId)
+      : true;
+    const freeformShadowEnabled = automatic
+      ? await isFreeformAutoShadowEnabled(ctx.container, scope.tenantId)
+      : false;
     const config = parseSupplierAgentConfig();
     const maxTurns = config.ok ? config.config.maxNegotiationTurns : 3;
     const em = ctx.container.resolve("em") as EntityManager;
@@ -171,7 +178,7 @@ const approveCounter: CommandHandler<Record<string, unknown>, Disposition> = {
           supplyCaseId: caseId,
           direction: "inbound",
           messageType: "SUPPLY_COUNTER_PROPOSAL",
-          validationStatus: "valid",
+          validationStatus: { $in: ["valid", "interpreted"] },
           deletedAt: null,
         },
         { lockMode: LockMode.PESSIMISTIC_WRITE },
@@ -184,6 +191,7 @@ const approveCounter: CommandHandler<Record<string, unknown>, Disposition> = {
           error: "Supply case was changed by another user",
         });
       const record = parseNegotiationRecord(counter.negotiationRecord);
+      const interpreted = record.origin === "interpretation";
       // An automatic replay of an already disposed counter is a no-op; a human gets an explicit answer.
       if (record.verdict) {
         if (automatic)
@@ -250,6 +258,54 @@ const approveCounter: CommandHandler<Record<string, unknown>, Disposition> = {
         // Same ordering as evaluate_counter, so the re-evaluation reproduces the recorded fingerprint.
         { orderBy: { startsAt: "asc" }, lockMode: LockMode.PESSIMISTIC_WRITE },
       );
+      if (interpreted) {
+        if (automatic && !freeformAutoEnabled) {
+          const result = settle("interpretation_auto_disabled");
+          await tx.flush();
+          return result;
+        }
+        if (automatic && freeformShadowEnabled) {
+          const result = settle("interpretation_auto_shadow");
+          await tx.flush();
+          return result;
+        }
+        if (automatic) {
+          const latestInbound = await findWithDecryption(tx, SupplyMessage, { ...scope, supplyCaseId: caseId, direction: "inbound", deletedAt: null }, { orderBy: { createdAt: "desc" } }, scope);
+          const interpretedCount = latestInbound.filter((message) => message.validationStatus === "interpreted").length;
+          if (interpretedCount > 1 || latestInbound[0]?.id !== counter.id) {
+            const result = settle("interpretation_auto_limit_reached");
+            await tx.flush();
+            return result;
+          }
+        }
+        let stock;
+        try {
+          stock = await readWmsSnapshot(tx, { ...scope, catalogVariantId: supplyCase.catalogVariantId, salesOrderId: supplyCase.salesOrderId });
+        } catch {
+          if (automatic) {
+            const result = settle("stock_snapshot_unavailable");
+            await tx.flush();
+            return result;
+          }
+          throw unprocessable("stock_snapshot_stale", "The warehouse snapshot is unavailable; review the case again");
+        }
+        if (!record.evaluation.stock || record.evaluation.stock.fingerprint !== stock.fingerprint) {
+          if (automatic) {
+            const result = settle("stock_snapshot_stale");
+            await tx.flush();
+            return result;
+          }
+          throw unprocessable("stock_snapshot_stale", "The warehouse snapshot changed; review the case again");
+        }
+        if (record.evaluation.stockGate?.w1 === "diverged" && rawInput.acknowledgeStockDivergence !== true) {
+          if (automatic) {
+            const result = settle("stock_divergence_not_acknowledged");
+            await tx.flush();
+            return result;
+          }
+          throw unprocessable("stock_divergence_not_acknowledged", "Acknowledge the warehouse divergence before approving");
+        }
+      }
       // H4/G4/G5/G6/G9 on the locked, current state: the evaluation the recommendation was built on must still
       // produce the identical plan (same commitments, moves, cost and risk).
       const freshEvaluation = evaluateCounter({
@@ -317,6 +373,8 @@ const approveCounter: CommandHandler<Record<string, unknown>, Disposition> = {
         recipient: supplyCase.recipientEmail ?? "supplier-demo@example.invalid",
         sku: supplyCase.sku,
         commitments: selectedOption.commitments,
+        // Both the envelope and the stored link point at the same parent id; an interpreted counter already carries
+        // its `INT-<source message>` business id, so never derive a second, unknown id here.
         inReplyToMessageId: counter.businessMessageId,
         negotiationTurn,
       });
@@ -344,7 +402,9 @@ const approveCounter: CommandHandler<Record<string, unknown>, Disposition> = {
         by: automatic ? "rule:supplier_policy" : actorFrom(ctx),
         at: now.toISOString(),
         reason: automatic
-          ? "auto_approved_counter_recommendation"
+          ? interpreted
+            ? "auto_approved_counter_recommendation_interpretation"
+            : "auto_approved_counter_recommendation"
           : "human_approved_counter_recommendation",
         revisedProposalMessageId: revision.id,
       };
@@ -424,7 +484,7 @@ const rejectCounter: CommandHandler<
           supplyCaseId: caseId,
           direction: "inbound",
           messageType: "SUPPLY_COUNTER_PROPOSAL",
-          validationStatus: "valid",
+          validationStatus: { $in: ["valid", "interpreted"] },
           deletedAt: null,
         },
         { lockMode: LockMode.PESSIMISTIC_WRITE },
