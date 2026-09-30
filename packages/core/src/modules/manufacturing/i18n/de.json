@@ -1,0 +1,13 @@
+{
+  "manufacturing.backend.boms.empty.description": "Stücklisten werden hier angezeigt.",
+  "manufacturing.backend.boms.empty.title": "Noch keine Stücklisten",
+  "manufacturing.backend.boms.nav.title": "Stücklisten",
+  "manufacturing.backend.executions.empty.description": "Fertigungsausführungen werden hier angezeigt.",
+  "manufacturing.backend.executions.empty.title": "Noch keine Ausführungen",
+  "manufacturing.backend.executions.nav.title": "Ausführungen",
+  "manufacturing.backend.nav.title": "Fertigung",
+  "manufacturing.backend.orders.empty.description": "Fertigungsaufträge werden hier angezeigt.",
+  "manufacturing.backend.orders.empty.title": "Noch keine Aufträge",
+  "manufacturing.backend.orders.nav.title": "Aufträge",
+  "manufacturing.nav.group": "Fertigung"
+}

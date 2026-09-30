@@ -1,0 +1,13 @@
+{
+  "manufacturing.backend.boms.empty.description": "Tutaj pojawią się struktury materiałowe.",
+  "manufacturing.backend.boms.empty.title": "Brak BOM-ów",
+  "manufacturing.backend.boms.nav.title": "BOM",
+  "manufacturing.backend.executions.empty.description": "Tutaj pojawią się wykonania produkcji.",
+  "manufacturing.backend.executions.empty.title": "Brak wykonań",
+  "manufacturing.backend.executions.nav.title": "Wykonania",
+  "manufacturing.backend.nav.title": "Produkcja",
+  "manufacturing.backend.orders.empty.description": "Tutaj pojawią się zlecenia produkcyjne.",
+  "manufacturing.backend.orders.empty.title": "Brak zleceń",
+  "manufacturing.backend.orders.nav.title": "Zlecenia",
+  "manufacturing.nav.group": "Produkcja"
+}
