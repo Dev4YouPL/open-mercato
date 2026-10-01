@@ -1,0 +1,13 @@
+{
+  "manufacturing.backend.boms.empty.description": "Las listas de materiales aparecerán aquí.",
+  "manufacturing.backend.boms.empty.title": "Aún no hay BOM",
+  "manufacturing.backend.boms.nav.title": "BOM",
+  "manufacturing.backend.executions.empty.description": "Las ejecuciones de producción aparecerán aquí.",
+  "manufacturing.backend.executions.empty.title": "Aún no hay ejecuciones",
+  "manufacturing.backend.executions.nav.title": "Ejecuciones",
+  "manufacturing.backend.nav.title": "Fabricación",
+  "manufacturing.backend.orders.empty.description": "Las órdenes de producción aparecerán aquí.",
+  "manufacturing.backend.orders.empty.title": "Aún no hay órdenes",
+  "manufacturing.backend.orders.nav.title": "Órdenes",
+  "manufacturing.nav.group": "Fabricación"
+}
