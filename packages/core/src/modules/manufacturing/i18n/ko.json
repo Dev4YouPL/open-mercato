@@ -1,0 +1,13 @@
+{
+  "manufacturing.backend.boms.empty.description": "자재 명세서가 여기에 표시됩니다.",
+  "manufacturing.backend.boms.empty.title": "BOM이 없습니다",
+  "manufacturing.backend.boms.nav.title": "BOM",
+  "manufacturing.backend.executions.empty.description": "생산 실행 내역이 여기에 표시됩니다.",
+  "manufacturing.backend.executions.empty.title": "실행 내역이 없습니다",
+  "manufacturing.backend.executions.nav.title": "실행",
+  "manufacturing.backend.nav.title": "제조",
+  "manufacturing.backend.orders.empty.description": "생산 작업 지시가 여기에 표시됩니다.",
+  "manufacturing.backend.orders.empty.title": "작업 지시가 없습니다",
+  "manufacturing.backend.orders.nav.title": "작업 지시",
+  "manufacturing.nav.group": "제조"
+}
