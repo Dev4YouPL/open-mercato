@@ -9,5 +9,12 @@
   "manufacturing.backend.orders.empty.description": "생산 작업 지시가 여기에 표시됩니다.",
   "manufacturing.backend.orders.empty.title": "작업 지시가 없습니다",
   "manufacturing.backend.orders.nav.title": "작업 지시",
-  "manufacturing.nav.group": "제조"
+  "manufacturing.nav.group": "제조",
+  "manufacturing.catalogVariant.placeholder": "변형 이름, SKU 또는 바코드로 검색",
+  "manufacturing.catalogVariant.empty": "검색된 변형이 없습니다.",
+  "manufacturing.catalogVariant.loadingSelected": "선택한 변형을 불러오는 중…",
+  "manufacturing.catalogVariant.loadFailed": "카탈로그 변형을 불러오지 못했습니다.",
+  "manufacturing.catalogVariant.forbidden": "제품 카탈로그를 조회할 권한이 없습니다.",
+  "manufacturing.catalogVariant.unavailable": "선택한 변형을 사용할 수 없습니다. 다른 변형을 선택하세요.",
+  "manufacturing.catalogVariant.unnamed": "이름 없는 변형"
 }

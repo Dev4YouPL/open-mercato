@@ -42,6 +42,7 @@ type LookupSelectProps = {
   disabled?: boolean
   loading?: boolean
   defaultOpen?: boolean
+  showIcon?: boolean
 }
 
 export function LookupSelect({
@@ -66,6 +67,7 @@ export function LookupSelect({
   disabled = false,
   loading: loadingProp = false,
   defaultOpen = false,
+  showIcon = true,
 }: LookupSelectProps) {
   const t = useT()
   const resolvedSearchPlaceholder = searchPlaceholder ?? placeholder ?? t('ui.lookupSelect.searchPlaceholder', 'Search…')
@@ -348,7 +350,7 @@ export function LookupSelect({
                   aria-disabled={isInteractive ? undefined : true}
                   title={isSelected ? resolvedSelectedLabel : isInteractive ? resolvedSelectLabel : undefined}
                 >
-                  {item.icon ? (
+                  {showIcon ? (item.icon ? (
                     <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden [&>svg]:size-6 [&_svg]:text-muted-foreground">
                       {item.icon}
                     </div>
@@ -361,7 +363,7 @@ export function LookupSelect({
                     )}>
                       <span className="text-base font-semibold uppercase">{item.title.slice(0, 1)}</span>
                     </div>
-                  )}
+                  )) : null}
                   <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                     <div className="flex items-center justify-between gap-3">
                       <div className="truncate text-sm font-semibold text-foreground">{item.title}</div>
