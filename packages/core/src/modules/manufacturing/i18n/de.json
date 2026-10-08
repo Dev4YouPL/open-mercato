@@ -9,5 +9,12 @@
   "manufacturing.backend.orders.empty.description": "Fertigungsaufträge werden hier angezeigt.",
   "manufacturing.backend.orders.empty.title": "Noch keine Aufträge",
   "manufacturing.backend.orders.nav.title": "Aufträge",
-  "manufacturing.nav.group": "Fertigung"
+  "manufacturing.nav.group": "Fertigung",
+  "manufacturing.catalogVariant.placeholder": "Nach Variantenname, SKU oder Barcode suchen",
+  "manufacturing.catalogVariant.empty": "Keine Varianten gefunden.",
+  "manufacturing.catalogVariant.loadingSelected": "Ausgewählte Variante wird geladen…",
+  "manufacturing.catalogVariant.loadFailed": "Katalogvarianten konnten nicht geladen werden.",
+  "manufacturing.catalogVariant.forbidden": "Keine Berechtigung zum Anzeigen des Produktkatalogs.",
+  "manufacturing.catalogVariant.unavailable": "Die ausgewählte Variante ist nicht verfügbar. Wählen Sie eine andere.",
+  "manufacturing.catalogVariant.unnamed": "Unbenannte Variante"
 }

@@ -9,5 +9,12 @@
   "manufacturing.backend.orders.empty.description": "Las órdenes de producción aparecerán aquí.",
   "manufacturing.backend.orders.empty.title": "Aún no hay órdenes",
   "manufacturing.backend.orders.nav.title": "Órdenes",
-  "manufacturing.nav.group": "Fabricación"
+  "manufacturing.nav.group": "Fabricación",
+  "manufacturing.catalogVariant.placeholder": "Buscar por nombre de variante, SKU o código de barras",
+  "manufacturing.catalogVariant.empty": "No se encontraron variantes.",
+  "manufacturing.catalogVariant.loadingSelected": "Cargando la variante seleccionada…",
+  "manufacturing.catalogVariant.loadFailed": "No se pudieron cargar las variantes del catálogo.",
+  "manufacturing.catalogVariant.forbidden": "No tienes permiso para consultar el catálogo de productos.",
+  "manufacturing.catalogVariant.unavailable": "La variante seleccionada no está disponible. Elige otra.",
+  "manufacturing.catalogVariant.unnamed": "Variante sin nombre"
 }
