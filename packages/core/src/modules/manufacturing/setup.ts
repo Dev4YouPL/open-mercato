@@ -4,7 +4,7 @@ export const setup: ModuleSetupConfig = {
   defaultRoleFeatures: {
     superadmin: ['manufacturing.*'],
     admin: ['manufacturing.*'],
-    employee: ['manufacturing.view'],
+    employee: ['manufacturing.view', 'manufacturing.execution.view'],
   },
 }
 

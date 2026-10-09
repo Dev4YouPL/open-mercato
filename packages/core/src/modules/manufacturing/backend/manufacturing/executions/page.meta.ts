@@ -1,6 +1,6 @@
 export const metadata = {
   requireAuth: true,
-  requireFeatures: ['manufacturing.view'],
+  requireFeatures: ['manufacturing.execution.view'],
   pageTitle: 'Executions',
   pageTitleKey: 'manufacturing.backend.executions.nav.title',
   pageGroup: 'Manufacturing',
