@@ -1,9 +1,6 @@
-export const PRODUCTION_ORDER_READER_DI_KEY = 'manufacturingProductionOrderReader'
+import type { ManufacturingScope } from '../domain/manufacturingScope'
 
-export type ProductionOrderReadScope = {
-  tenantId: string
-  organizationId: string
-}
+export const PRODUCTION_ORDER_READER_DI_KEY = 'manufacturingProductionOrderReader'
 
 export type ProductionOrderDto = {
   id: string
@@ -18,5 +15,5 @@ export type ProductionOrderDto = {
 }
 
 export interface ProductionOrderReader {
-  getForExecution(orderId: string, scope: ProductionOrderReadScope): Promise<ProductionOrderDto | null>
+  getForExecution(orderId: string, scope: ManufacturingScope): Promise<ProductionOrderDto | null>
 }
