@@ -1,6 +1,7 @@
 /** @jest-environment node */
 
 import type { InventoryGateway, InventoryMovementResultDto } from '../../ports/inventoryGateway'
+import type { InventoryPolicyReader, TrackingPolicyResultDto } from '../../ports/inventoryPolicyReader'
 import type { ProductionOrderDto, ProductionOrderReader } from '../../ports/productionOrderReader'
 import {
   createProductionInventoryService,
@@ -11,6 +12,10 @@ import {
 
 const scope = { tenantId: 'tenant-1', organizationId: 'org-1' }
 const accepted: InventoryMovementResultDto = { status: 'accepted', movementId: 'movement-1' }
+const untracked: TrackingPolicyResultDto = {
+  status: 'resolved',
+  policy: { tracksLot: false, tracksSerial: false, tracksExpiry: false },
+}
 
 const openOrder: ProductionOrderDto = {
   id: 'order-1',
@@ -36,13 +41,15 @@ const outputInput: OutputMovementInput = {
 
 const materialInput: MaterialMovementInput = { ...outputInput, variantId: 'material-variant-1' }
 
-function buildService(order: ProductionOrderDto | null = openOrder) {
+function buildService(order: ProductionOrderDto | null = openOrder, tracking: TrackingPolicyResultDto = untracked) {
   const postMovement = jest.fn(async () => accepted)
   const getForExecution = jest.fn(async () => order)
+  const getTrackingPolicy = jest.fn(async () => tracking)
   const inventoryGateway: InventoryGateway = { postMovement }
+  const inventoryPolicyReader: InventoryPolicyReader = { getTrackingPolicy, listActiveLocations: jest.fn(async () => []) }
   const productionOrderReader: ProductionOrderReader = { getForExecution }
-  const service = createProductionInventoryService({ inventoryGateway, productionOrderReader, scope })
-  return { service, postMovement, getForExecution }
+  const service = createProductionInventoryService({ inventoryGateway, inventoryPolicyReader, productionOrderReader, scope })
+  return { service, postMovement, getForExecution, getTrackingPolicy }
 }
 
 type Action = keyof ProductionInventoryService
@@ -135,6 +142,55 @@ describe('production inventory service', () => {
       expect(result).toMatchObject({ status: 'rejected', code: 'invalid_quantity' })
     },
   )
+
+  it.each([
+    ['lot', { tracksLot: true, tracksSerial: false, tracksExpiry: false }],
+    ['serial number', { tracksLot: false, tracksSerial: true, tracksExpiry: false }],
+    ['expiry date', { tracksLot: false, tracksSerial: false, tracksExpiry: true }],
+  ])('refuses forward actions on a variant tracked by %s', async (_label, policy) => {
+    const tracked: TrackingPolicyResultDto = { status: 'resolved', policy }
+
+    for (const action of ['issueMaterial', 'returnMaterial', 'receiveOutput'] as const) {
+      const { service, postMovement } = buildService(openOrder, tracked)
+      const result = await runAction(service, action)
+
+      expect(postMovement).not.toHaveBeenCalled()
+      expect(result).toMatchObject({ status: 'rejected', code: 'tracking_not_supported' })
+    }
+  })
+
+  it('checks the tracking policy of the material for material actions and of the product for output', async () => {
+    const material = buildService()
+    await material.service.issueMaterial(materialInput)
+    expect(material.getTrackingPolicy).toHaveBeenCalledWith('material-variant-1', scope)
+
+    const output = buildService()
+    await output.service.receiveOutput(outputInput)
+    expect(output.getTrackingPolicy).toHaveBeenCalledWith('product-variant-1', scope)
+  })
+
+  it.each(['reverseMaterialIssue', 'reverseMaterialReturn', 'reverseOutputReceipt'] as const)(
+    'does not check tracking for %s because it mirrors an already recorded movement',
+    async (action) => {
+      const tracked: TrackingPolicyResultDto = {
+        status: 'resolved',
+        policy: { tracksLot: true, tracksSerial: false, tracksExpiry: false },
+      }
+      const { service, postMovement, getTrackingPolicy } = buildService(openOrder, tracked)
+      await runAction(service, action)
+
+      expect(getTrackingPolicy).not.toHaveBeenCalled()
+      expect(postMovement).toHaveBeenCalledTimes(1)
+    },
+  )
+
+  it('refuses when the inventory policy is unavailable', async () => {
+    const { service, postMovement } = buildService(openOrder, { status: 'unavailable' })
+    const result = await service.issueMaterial(materialInput)
+
+    expect(postMovement).not.toHaveBeenCalled()
+    expect(result).toMatchObject({ status: 'rejected', code: 'inventory_unavailable' })
+  })
 
   it('passes gateway rejections and unknown outcomes through unchanged', async () => {
     const { service, postMovement } = buildService()
