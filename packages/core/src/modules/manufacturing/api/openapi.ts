@@ -25,6 +25,9 @@ export const bomResponseSchema = bomCreateSchema.extend({
   id: uuidSchema,
   revision: z.string(),
   status: bomStatusSchema,
+  isIncomplete: z.boolean(),
+  releasedAt: timestampSchema.nullable(),
+  releasedByUserId: uuidSchema.nullable(),
   createdAt: timestampSchema,
   updatedAt: timestampSchema,
 })
