@@ -1,25 +1,38 @@
 import { z } from 'zod'
 
+import { parseBooleanToken } from '@open-mercato/shared/lib/boolean'
+
 import { bomStatusSchema } from './bomStatus'
 
 const uuidSchema = z.string().uuid()
 
 const positiveQuantitySchema = (integerDigits: number) => z
-    .string()
-    .trim()
-    .regex(
-        new RegExp(`^(?:0|[1-9]\\d{0,${integerDigits - 1}})(?:\\.\\d{1,6})?$`),
-        'manufacturing.errors.quantityFormat'
-    )
-    .refine(
-        (value) => /[1-9]/.test(value),
-        'manufacturing.errors.quantityPositive',
-    )
+  .string()
+  .trim()
+  .regex(
+    new RegExp(
+      `^(?:0|[1-9]\\d{0,${integerDigits - 1}})(?:\\.\\d{1,6})?$`,
+    ),
+    'manufacturing.errors.quantityFormat',
+  )
+  .refine(
+    (value) => /[1-9]/.test(value),
+    'manufacturing.errors.quantityPositive',
+  )
 
 const baseQuantitySchema = positiveQuantitySchema(10)
 const componentQuantitySchema = positiveQuantitySchema(12)
 
 const positionSchema = z.number().int().positive().max(2_147_483_647)
+
+const optionalBooleanQuerySchema = z.preprocess(
+  (value) => {
+    if (typeof value !== 'string') return value
+
+    return parseBooleanToken(value) ?? value
+  },
+  z.boolean().optional(),
+)
 
 export const bomCreateSchema = z
   .object({
@@ -40,6 +53,37 @@ export const bomDeleteSchema = z
     id: uuidSchema,
   })
   .strict()
+
+export const bomReleaseSchema = z
+  .object({
+    id: uuidSchema,
+    expectedItems: z.array(
+      z
+        .object({
+          id: uuidSchema,
+          updatedAt: z.string().datetime({ offset: true }),
+        })
+        .strict(),
+    ),
+  })
+  .strict()
+  .superRefine((input, context) => {
+    const seenItemIds = new Set<string>()
+
+    input.expectedItems.forEach((item, index) => {
+      const normalizedItemId = item.id.toLowerCase()
+
+      if (seenItemIds.has(normalizedItemId)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['expectedItems', index, 'id'],
+          message: 'manufacturing.errors.duplicateExpectedItem',
+        })
+      }
+
+      seenItemIds.add(normalizedItemId)
+    })
+  })
 
 const bomItemEditableSchema = z
   .object({
@@ -70,7 +114,6 @@ export const bomItemDeleteSchema = z
   })
   .strict()
 
-
 const paginationSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(50),
@@ -80,6 +123,7 @@ export const bomListQuerySchema = paginationSchema.extend({
   id: uuidSchema.optional(),
   outputVariantId: uuidSchema.optional(),
   status: bomStatusSchema.optional(),
+  isIncomplete: optionalBooleanQuerySchema,
   sortField: z.enum([
     'id',
     'outputVariantId',
@@ -107,6 +151,7 @@ export const bomItemListQuerySchema = paginationSchema.extend({
 export type BomCreateInput = z.infer<typeof bomCreateSchema>
 export type BomUpdateInput = z.infer<typeof bomUpdateSchema>
 export type BomDeleteInput = z.infer<typeof bomDeleteSchema>
+export type BomReleaseInput = z.infer<typeof bomReleaseSchema>
 
 export type BomItemCreateInput = z.infer<typeof bomItemCreateSchema>
 export type BomItemUpdateInput = z.infer<typeof bomItemUpdateSchema>

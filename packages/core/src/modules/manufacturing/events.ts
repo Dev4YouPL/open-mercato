@@ -1,5 +1,14 @@
 import { createModuleEvents } from "@open-mercato/shared/modules/events";
 
+export type BomReleasedEventPayload = {
+  id: string
+  tenantId: string
+  organizationId: string
+  outputVariantId: string
+  revision: string
+  isIncomplete: boolean
+}
+
 const events = [
     {
         id: 'manufacturing.bom.created',
@@ -24,6 +33,12 @@ const events = [
         label: 'BOM Item Created',
         entity: 'bom_item',
         category: 'crud',
+    },
+    {
+        id: 'manufacturing.bom.released',
+        label: 'BOM Released',
+        entity: 'bom',
+        category: 'lifecycle',
     },
     {
         id: 'manufacturing.bom_item.updated',

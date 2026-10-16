@@ -5,6 +5,7 @@ import {
   ManyToOne,
   PrimaryKey,
   Property,
+  Unique,
 } from '@mikro-orm/decorators/legacy'
 
 import { OptionalProps } from '@mikro-orm/core'
@@ -18,12 +19,21 @@ export type { ManufacturingBomStatus } from './bomStatus'
   name: 'manufacturing_boms_org_tenant_idx',
   properties: ['organizationId', 'tenantId'],
 })
+@Unique({
+  name: 'manufacturing_boms_variant_revision_unique',
+  properties: [
+    'tenantId',
+    'organizationId',
+    'outputVariantId',
+    'revision',
+  ],
+})
 @Check({
   name: 'manufacturing_boms_base_quantity_positive_chk',
   expression: '"base_quantity" > 0',
 })
 export class ManufacturingBom{
-    [OptionalProps]?: 'status' | 'createdAt' | 'updatedAt' | 'deletedAt'
+    [OptionalProps]?: 'status' | 'isIncomplete' | 'createdAt' | 'updatedAt' | 'deletedAt'
 
     @PrimaryKey({type: 'uuid', defaultRaw: 'gen_random_uuid()'})
     id!: string
@@ -45,6 +55,15 @@ export class ManufacturingBom{
 
     @Property({name: 'status', type: 'text', default: 'draft'})
     status: ManufacturingBomStatus = 'draft'
+
+    @Property({ name: 'is_incomplete', type: 'boolean', default: false })
+    isIncomplete: boolean = false
+
+    @Property({ name: 'released_at', type: Date, nullable: true })
+    releasedAt?: Date | null
+
+    @Property({ name: 'released_by_user_id', type: 'uuid', nullable: true })
+    releasedByUserId?: string | null
 
     @Property({ name: 'created_at', type: Date, onCreate: () => new Date() })
     createdAt: Date = new Date()

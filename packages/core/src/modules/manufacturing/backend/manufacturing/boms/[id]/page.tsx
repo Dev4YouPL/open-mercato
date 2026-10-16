@@ -32,12 +32,33 @@ import type { BomRecord } from '../../../../components/boms/formConfig'
 import { bomStatusSchema } from '../../../../data/bomStatus'
 import { bomCreateSchema } from '../../../../data/validators'
 
+import {
+  BomStatusBadges,
+} from '../../../../components/boms/BomStatusBadges'
+
+import {
+  BomReleaseAction,
+} from '../../../../components/boms/BomReleaseAction'
+
+import {
+  BomReleaseBlockedNotice,
+} from '../../../../components/boms/BomReleaseBlockedNotice'
+
+import type {
+  BomReleaseTrackingViolation,
+} from '../../../../lib/bomReleaseClient'
+
+import { Alert } from '@open-mercato/ui/primitives/alert'
+
 const uuidSchema = z.string().uuid()
 
 const bomRecordSchema = bomCreateSchema.extend({
   id: uuidSchema,
   revision: z.string(),
   status: bomStatusSchema,
+  isIncomplete: z.boolean(),
+  releasedAt: z.string().datetime({ offset: true }).nullable(),
+  releasedByUserId: uuidSchema.nullable(),
   createdAt: z.string().datetime({ offset: true }),
   updatedAt: z.string().datetime({ offset: true }),
 })
@@ -83,6 +104,11 @@ function BomDetailContent({ bomId }: { bomId: string }) {
   const [permissionsFailed, setPermissionsFailed] =
     useState(false)
 
+  const [itemsReloadToken, setItemsReloadToken] = useState(0)
+  const [releaseViolations, setReleaseViolations] = useState<
+    BomReleaseTrackingViolation[] | null
+  >(null)
+
   const requestRef = useRef<AbortController | null>(null)
 
   const handleCancel = useCallback(() => {
@@ -90,6 +116,7 @@ function BomDetailContent({ bomId }: { bomId: string }) {
   }, [router])
 
   const reloadBom = useCallback(async () => {
+    setReleaseViolations(null)
     requestRef.current?.abort()
 
     const controller = new AbortController()
@@ -193,6 +220,7 @@ function BomDetailContent({ bomId }: { bomId: string }) {
       }
 
       setBom(record)
+      setItemsReloadToken((current) => current + 1)
       setNotFound(record === null)
       setError(null)
       setCanManageManufacturing(permissions.canManage)
@@ -227,8 +255,9 @@ function BomDetailContent({ bomId }: { bomId: string }) {
     }
   }, [bomId, t])
 
+
   useEffect(() => {
-    void reloadBom().catch(() => {})
+    void reloadBom().catch(() => { })
 
     return () => {
       requestRef.current?.abort()
@@ -284,7 +313,7 @@ function BomDetailContent({ bomId }: { bomId: string }) {
                   type="button"
                   variant="outline"
                   onClick={() => {
-                    void reloadBom().catch(() => {})
+                    void reloadBom().catch(() => { })
                   }}
                 >
                   {t('manufacturing.bomItems.list.refresh')}
@@ -303,16 +332,31 @@ function BomDetailContent({ bomId }: { bomId: string }) {
     <Page>
       <PageHeader
         title={t('manufacturing.boms.detail.title')}
-        description={t('manufacturing.boms.detail.summary', {
+        description={t('manufacturing.boms.detail.revision', {
           revision: bom.revision,
-          status: t(
-            `manufacturing.boms.status.${bom.status}`,
-          ),
         })}
-        actions={backButton}
+        actions={
+          <>
+            <BomStatusBadges bom={bom} />
+
+            {bom.status === 'draft' && canManageManufacturing ? (
+              <BomReleaseAction
+                bom={bom}
+                disabled={isLoading || permissionsFailed}
+                onReleased={reloadBom}
+                onBlocked={setReleaseViolations}
+              />
+            ) : null}
+
+            {backButton}
+          </>
+        }
       />
 
       <PageBody>
+        <BomReleaseBlockedNotice
+          violations={releaseViolations}
+        />
         {permissionsFailed ? (
           <ErrorMessage
             label={t(
@@ -325,6 +369,12 @@ function BomDetailContent({ bomId }: { bomId: string }) {
           </p>
         ) : null}
 
+        {bom.status === 'released' && bom.isIncomplete ? (
+          <Alert status="warning" style="light" size="default">
+            {t('manufacturing.boms.incomplete.warning')}
+          </Alert>
+        ) : null}
+
         <BomForm
           mode="edit"
           initialValues={bom}
@@ -334,6 +384,7 @@ function BomDetailContent({ bomId }: { bomId: string }) {
         />
 
         <BomItemsSection
+          key={`${bom.id}:${itemsReloadToken}`}
           bom={bom}
           canManage={canManageManufacturing}
         />

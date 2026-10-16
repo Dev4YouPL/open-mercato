@@ -14,6 +14,7 @@ import {
 } from '@open-mercato/shared/lib/crud/errors'
 import {
   findOneWithDecryption,
+  findWithDecryption,
 } from '@open-mercato/shared/lib/encryption/find'
 
 import {
@@ -110,4 +111,28 @@ export async function requireScopedBomItem(
   }
 
   return item
+}
+
+export async function loadActiveBomItems(
+  em: EntityManager,
+  bomId: string,
+  scope: BomScope,
+): Promise<ManufacturingBomItem[]> {
+  return findWithDecryption(
+    em,
+    ManufacturingBomItem,
+    {
+      bom: bomId,
+      tenantId: scope.tenantId,
+      organizationId: scope.organizationId,
+      deletedAt: null,
+    },
+    {
+      orderBy: {
+        position: 'asc',
+        id: 'asc',
+      },
+    },
+    scope,
+  )
 }

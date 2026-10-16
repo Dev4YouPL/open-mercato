@@ -144,7 +144,7 @@ export function BomForm(props: BomFormProps) {
     <div className="space-y-4">
       {isReleased ? (
         <p role="status" className="text-sm text-muted-foreground">
-          {t('manufacturing.errors.bomNotDraft')}
+          {t('manufacturing.boms.detail.releasedReadOnly')}
         </p>
       ) : null}
 
@@ -161,6 +161,7 @@ export function BomForm(props: BomFormProps) {
         groups={groups}
         initialValues={initialValues}
         readOnly={readOnly}
+        readOnlyOverlay={<></>}
         submitLabel={t('ui.forms.actions.save')}
         onSubmit={handleSubmit}
         extraActions={

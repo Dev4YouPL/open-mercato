@@ -81,6 +81,15 @@ function transformBomResponse(item: unknown) {
       record.base_quantity ?? record.baseQuantity,
     revision: record.revision,
     status: record.status,
+    isIncomplete:
+      record.is_incomplete ?? record.isIncomplete,
+    releasedAt: serializeTimestamp(
+      record.released_at ?? record.releasedAt ?? null,
+    ),
+    releasedByUserId:
+      record.released_by_user_id ??
+      record.releasedByUserId ??
+      null,
     createdAt: serializeTimestamp(
       record.created_at ?? record.createdAt,
     ),
@@ -127,6 +136,9 @@ const crud = makeCrudRoute<
       'base_quantity',
       'revision',
       'status',
+      'is_incomplete',
+      'released_at',
+      'released_by_user_id',
       'created_at',
       'updated_at',
     ],
@@ -168,6 +180,12 @@ const crud = makeCrudRoute<
 
       if (query.status) {
         filters.status = { $eq: query.status }
+      }
+
+      if (query.isIncomplete !== undefined) {
+        filters.is_incomplete = {
+          $eq: query.isIncomplete,
+        }
       }
 
       return filters
