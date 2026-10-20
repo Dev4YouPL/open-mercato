@@ -29,6 +29,7 @@ const rawInput = { productVariantId, bomRevisionId, plannedQuantity: 5, sourceLo
 
 function buildContext(organizationId: string | null = 'org-1') {
   const create = jest.fn(async () => ({ id: 'order-1', orderNumber: 'PO-000001' }))
+  const markOrmEntityChange = jest.fn()
   const container = createContainer()
   container.register({
     manufacturingBomRevisionReader: asValue({ getForOrder: jest.fn(async () => revision) }),
@@ -41,6 +42,8 @@ function buildContext(organizationId: string | null = 'org-1') {
       listActiveLocations: jest.fn(async () => []),
     }),
     manufacturingProductionOrderStore: asValue({ create }),
+    em: asValue({ fork: () => ({ findOne: jest.fn(async () => ({ id: 'order-1', organizationId: 'org-1', tenantId: 'tenant-1' })) }) }),
+    dataEngine: asValue({ markOrmEntityChange }),
   })
   const ctx = {
     container,
@@ -49,7 +52,7 @@ function buildContext(organizationId: string | null = 'org-1') {
     organizationScope: null,
     organizationIds: organizationId ? [organizationId] : null,
   } as unknown as CommandRuntimeContext
-  return { ctx, create }
+  return { ctx, create, markOrmEntityChange }
 }
 
 describe('create production order command', () => {
@@ -61,6 +64,20 @@ describe('create production order command', () => {
       tenantId: 'tenant-1',
       organizationId: 'org-1',
     })
+  })
+
+  it('marks the created order for indexing and cache invalidation', async () => {
+    const { ctx, markOrmEntityChange } = buildContext()
+
+    await createProductionOrderCommand.execute(rawInput, ctx)
+
+    expect(markOrmEntityChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'created',
+        identifiers: { id: 'order-1', organizationId: 'org-1', tenantId: 'tenant-1' },
+        indexer: { entityType: 'manufacturing:production_order' },
+      }),
+    )
   })
 
   it('turns a business rejection into a 422 with the code and the field error', async () => {
