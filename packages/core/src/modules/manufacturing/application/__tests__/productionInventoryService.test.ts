@@ -140,6 +140,23 @@ describe('production inventory service', () => {
       expect(result).toMatchObject({ status: 'rejected', code: 'invalid_quantity' })
     })
 
+    it('refuses a quantity with more than four decimal places before reading the order', async () => {
+      const { service, getForExecution } = buildService()
+
+      expect(await service.planIssueMaterial({ ...materialInput, quantity: 1.23456 })).toEqual({
+        status: 'rejected',
+        code: 'quantity_too_precise',
+        message: 'Quantities may have at most 4 decimal places.',
+      })
+      expect(getForExecution).not.toHaveBeenCalled()
+    })
+
+    it('accepts a quantity with exactly four decimal places', async () => {
+      const { service } = buildService()
+
+      expect(await service.planIssueMaterial({ ...materialInput, quantity: 1.2345 })).toMatchObject({ status: 'planned' })
+    })
+
     it('refuses when the order has no issue location', async () => {
       const { service } = buildService({ ...openOrder, sourceLocationId: null })
 
@@ -255,6 +272,18 @@ describe('production inventory service', () => {
         code: 'invalid_quantity',
       })
       expect(getForExecution).not.toHaveBeenCalled()
+    })
+
+    it.each([
+      ['good', { goodQuantity: 1.00001, scrapQuantity: 0 }],
+      ['scrap', { goodQuantity: 1, scrapQuantity: 0.00001 }],
+    ])('refuses a %s quantity with more than four decimal places', async (_label, quantities) => {
+      const { service } = buildService()
+
+      expect(await service.planConfirmProduction({ orderId: 'order-1', ...quantities })).toMatchObject({
+        status: 'rejected',
+        code: 'quantity_too_precise',
+      })
     })
 
     it('refuses when the order does not allow confirmation, even for scrap only', async () => {

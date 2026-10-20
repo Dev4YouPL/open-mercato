@@ -1,7 +1,7 @@
 import type { ExecutionDocumentType, PlannedExecution, PlannedFact, ProductionFactKind } from '../domain/executionDocument'
 import type { ManufacturingScope } from '../domain/manufacturingScope'
 import type { MovementKind, PlannedMovement } from '../domain/movement'
-import { toPositiveQuantity, type PositiveQuantity } from '../domain/quantity'
+import { hasAllowedPrecision, toPositiveQuantity, type PositiveQuantity } from '../domain/quantity'
 import { planReversal, type ReversibleDocument } from '../domain/reversal'
 import { isTrackingSupported } from '../domain/trackingSupport'
 import type { InventoryGateway, InventoryMovementResultDto } from '../ports/inventoryGateway'
@@ -69,6 +69,10 @@ function rejected(code: string, message: string): PlanRejection {
   return { status: 'rejected', code, message }
 }
 
+function tooPrecise(): PlanRejection {
+  return rejected('quantity_too_precise', 'Quantities may have at most 4 decimal places.')
+}
+
 function planned(execution: PlannedExecution): ExecutionPlanResultDto {
   return { status: 'planned', execution }
 }
@@ -119,6 +123,7 @@ async function planMaterial(
   const quantity = toPositiveQuantity(input.quantity)
 
   if (quantity === null) return rejected('invalid_quantity', 'Movement quantity must be a positive number.')
+  if (!hasAllowedPrecision(quantity)) return tooPrecise()
 
   const loaded = await loadOrder(deps, input.orderId)
 
@@ -186,6 +191,8 @@ async function planConfirmation(
   if (goodQuantity === null || scrapQuantity === null || (goodQuantity === 0 && scrapQuantity === 0)) {
     return rejected('invalid_quantity', 'Confirm a positive good quantity, a positive scrap quantity, or both.')
   }
+
+  if (!hasAllowedPrecision(goodQuantity) || !hasAllowedPrecision(scrapQuantity)) return tooPrecise()
 
   const loaded = await loadOrder(deps, input.orderId)
 
