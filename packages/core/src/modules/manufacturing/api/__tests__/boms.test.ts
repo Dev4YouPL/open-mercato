@@ -1,4 +1,4 @@
-import { createContainer } from 'awilix'
+import { asValue, createContainer } from 'awilix'
 
 import {
   makeCrudRoute,
@@ -8,6 +8,10 @@ import type {
 } from '@open-mercato/shared/lib/crud/factory'
 
 import { bomListQuerySchema } from '../../data/validators'
+import {
+  decorateBomListItems,
+  findBomOutputVariantIdsBySearch,
+} from '../../lib/bomListing'
 import { resolveManufacturingApiScope } from '../utils'
 import '../boms/route'
 
@@ -28,6 +32,13 @@ jest.mock('../utils', () => ({
   resolveManufacturingApiScope: jest.fn(),
 }))
 
+jest.mock('../../lib/bomListing', () => ({
+  decorateBomListItems: jest.fn(),
+  findBomOutputVariantIdsBySearch: jest.fn(),
+}))
+
+const NO_MATCH_ID = '00000000-0000-0000-0000-000000000000'
+
 const scope = {
   tenantId: '11111111-1111-4111-8111-111111111111',
   organizationId: '22222222-2222-4222-8222-222222222222',
@@ -39,17 +50,27 @@ const userId = '77777777-7777-4777-8777-777777777777'
 
 const timestamp = '2026-10-08T13:00:00.000Z'
 
-const listConfig = jest.mocked(makeCrudRoute).mock.calls[0]?.[0].list
+const otherVariantId = '55555555-5555-4555-8555-555555555555'
 
-if (!listConfig?.transformItem || !listConfig.buildFilters) {
+const crudOptions = jest.mocked(makeCrudRoute).mock.calls[0]?.[0]
+const listConfig = crudOptions?.list
+const afterList = crudOptions?.hooks?.afterList
+
+if (!listConfig?.transformItem || !listConfig.buildFilters || !afterList) {
   throw new Error('[internal] Missing manufacturing BOM list configuration')
 }
 
 const transformItem = listConfig.transformItem
 const buildFilters = listConfig.buildFilters
 
+const em = { fork: jest.fn() }
+
+const container = createContainer()
+
+container.register({ em: asValue(em) })
+
 const ctx: CrudCtx = {
-  container: createContainer(),
+  container,
   auth: null,
   organizationScope: null,
   selectedOrganizationId: null,
@@ -72,6 +93,8 @@ const draftRecord = {
 beforeEach(() => {
   jest.mocked(resolveManufacturingApiScope).mockReset()
   jest.mocked(resolveManufacturingApiScope).mockResolvedValue(scope)
+  jest.mocked(findBomOutputVariantIdsBySearch).mockReset()
+  jest.mocked(decorateBomListItems).mockReset()
 })
 
 describe('BOM response', () => {
@@ -162,5 +185,95 @@ describe('BOM list filters', () => {
       output_variant_id: { $eq: outputVariantId },
       status: { $eq: 'released' },
     })
+  })
+
+  it('narrows the list to variants matching the search in the resolved scope', async () => {
+    jest.mocked(findBomOutputVariantIdsBySearch).mockResolvedValue([
+      outputVariantId,
+      otherVariantId,
+    ])
+
+    const query = bomListQuerySchema.parse({ search: ' OUTPUT ' })
+
+    await expect(buildFilters(query, ctx)).resolves.toEqual({
+      tenant_id: { $eq: scope.tenantId },
+      organization_id: { $eq: scope.organizationId },
+      deleted_at: { $eq: null },
+      output_variant_id: { $in: [outputVariantId, otherVariantId] },
+    })
+
+    expect(findBomOutputVariantIdsBySearch).toHaveBeenCalledWith(
+      em,
+      'OUTPUT',
+      scope,
+      undefined,
+    )
+  })
+
+  it('returns no rows when the search matches no variants', async () => {
+    jest.mocked(findBomOutputVariantIdsBySearch).mockResolvedValue([])
+
+    const query = bomListQuerySchema.parse({ search: 'missing' })
+
+    await expect(buildFilters(query, ctx)).resolves.toMatchObject({
+      output_variant_id: { $eq: NO_MATCH_ID },
+    })
+  })
+
+  it('passes an explicit outputVariantId to the search', async () => {
+    jest.mocked(findBomOutputVariantIdsBySearch).mockResolvedValue([
+      otherVariantId,
+    ])
+
+    await expect(buildFilters(bomListQuerySchema.parse({
+      search: 'OUTPUT',
+      outputVariantId: otherVariantId,
+    }), ctx)).resolves.toMatchObject({
+      output_variant_id: { $in: [otherVariantId] },
+    })
+
+    expect(findBomOutputVariantIdsBySearch).toHaveBeenCalledWith(
+      em,
+      'OUTPUT',
+      scope,
+      otherVariantId,
+    )
+
+    jest.mocked(findBomOutputVariantIdsBySearch).mockResolvedValue([])
+
+    await expect(buildFilters(bomListQuerySchema.parse({
+      search: 'OUTPUT',
+      outputVariantId: otherVariantId,
+    }), ctx)).resolves.toMatchObject({
+      output_variant_id: { $eq: NO_MATCH_ID },
+    })
+  })
+
+  it('does not query the catalog without a search term', async () => {
+    await buildFilters(bomListQuerySchema.parse({}), ctx)
+
+    expect(findBomOutputVariantIdsBySearch).not.toHaveBeenCalled()
+  })
+})
+
+describe('BOM list decoration', () => {
+  const query = bomListQuerySchema.parse({})
+
+  it('decorates list items within the resolved scope', async () => {
+    const items = [{ id: bomId }]
+
+    await afterList({ items }, { ...ctx, query })
+
+    expect(resolveManufacturingApiScope).toHaveBeenCalledWith(
+      expect.objectContaining({ container }),
+    )
+    expect(decorateBomListItems).toHaveBeenCalledWith(em, items, scope)
+  })
+
+  it('skips decoration for an empty page', async () => {
+    await afterList({ items: [] }, { ...ctx, query })
+
+    expect(decorateBomListItems).not.toHaveBeenCalled()
+    expect(resolveManufacturingApiScope).not.toHaveBeenCalled()
   })
 })

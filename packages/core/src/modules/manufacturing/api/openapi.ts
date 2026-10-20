@@ -6,6 +6,7 @@ import {
 } from '@open-mercato/shared/lib/openapi/crud'
 
 import { bomStatusSchema } from '../data/bomStatus'
+import { bomAvailabilitySchema } from '../lib/bomAvailability'
 
 import {
   bomCreateSchema,
@@ -21,7 +22,8 @@ import {
 const uuidSchema = z.string().uuid()
 const timestampSchema = z.string().datetime({ offset: true })
 
-export const bomResponseSchema = bomCreateSchema.extend({
+export const bomResponseSchema = z.object({
+  ...bomCreateSchema.shape,
   id: uuidSchema,
   revision: z.string(),
   status: bomStatusSchema,
@@ -38,8 +40,21 @@ export const bomItemResponseSchema = bomItemCreateSchema.extend({
   updatedAt: timestampSchema,
 })
 
+export const bomOutputVariantSummarySchema = z.object({
+  id: uuidSchema,
+  name: z.string().nullable(),
+  sku: z.string().nullable(),
+  isActive: z.boolean(),
+  isDeleted: z.boolean(),
+})
+
+export const bomListItemSchema = bomResponseSchema.extend({
+  outputVariant: bomOutputVariantSummarySchema.nullable(),
+  availability: bomAvailabilitySchema,
+})
+
 export const bomListResponseSchema =
-  createPagedListResponseSchema(bomResponseSchema)
+  createPagedListResponseSchema(bomListItemSchema)
 
 export const bomItemListResponseSchema =
   createPagedListResponseSchema(bomItemResponseSchema)

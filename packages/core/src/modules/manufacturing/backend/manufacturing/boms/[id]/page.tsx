@@ -29,8 +29,7 @@ import { Button } from '@open-mercato/ui/primitives/button'
 import { BomForm } from '../../../../components/boms/BomForm'
 import { BomItemsSection } from '../../../../components/boms/BomItemsSection'
 import type { BomRecord } from '../../../../components/boms/formConfig'
-import { bomStatusSchema } from '../../../../data/bomStatus'
-import { bomCreateSchema } from '../../../../data/validators'
+import { bomResponseSchema } from '../../../../api/openapi'
 
 import {
   BomStatusBadges,
@@ -52,19 +51,8 @@ import { Alert } from '@open-mercato/ui/primitives/alert'
 
 const uuidSchema = z.string().uuid()
 
-const bomRecordSchema = bomCreateSchema.extend({
-  id: uuidSchema,
-  revision: z.string(),
-  status: bomStatusSchema,
-  isIncomplete: z.boolean(),
-  releasedAt: z.string().datetime({ offset: true }).nullable(),
-  releasedByUserId: uuidSchema.nullable(),
-  createdAt: z.string().datetime({ offset: true }),
-  updatedAt: z.string().datetime({ offset: true }),
-})
-
 const bomLookupResponseSchema = z.object({
-  items: z.array(bomRecordSchema),
+  items: z.array(bomResponseSchema),
 })
 
 const featureCheckResponseSchema = z.object({
@@ -375,13 +363,13 @@ function BomDetailContent({ bomId }: { bomId: string }) {
           </Alert>
         ) : null}
 
-        <BomForm
+        {bom.status !== 'released' ? (<BomForm
           mode="edit"
           initialValues={bom}
           readOnly={!canManageManufacturing}
           onCancel={handleCancel}
           onSaved={reloadBom}
-        />
+        />) : null}
 
         <BomItemsSection
           key={`${bom.id}:${itemsReloadToken}`}

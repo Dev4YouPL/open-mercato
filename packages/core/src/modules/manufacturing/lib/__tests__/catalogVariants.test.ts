@@ -3,7 +3,11 @@ import type { EntityManager } from '@mikro-orm/postgresql'
 import { CatalogProductVariant } from '@open-mercato/core/modules/catalog/data/entities'
 import { findWithDecryption } from '@open-mercato/shared/lib/encryption/find'
 
-import { loadCatalogVariantsForRelease } from '../catalogVariants'
+import {
+  findCatalogVariantIdsBySearch,
+  loadCatalogVariantSummaries,
+  loadCatalogVariantsForRelease,
+} from '../catalogVariants'
 
 jest.mock('@open-mercato/shared/lib/encryption/find', () => ({
   findOneWithDecryption: jest.fn(),
@@ -138,5 +142,179 @@ describe('loadCatalogVariantsForRelease', () => {
         scope,
       ),
     ).rejects.toBe(error)
+  })
+})
+
+describe('findCatalogVariantIdsBySearch', () => {
+  beforeEach(() => {
+    findVariants.mockReset()
+  })
+
+  it.each(['', '   '])(
+    'returns no IDs without querying for %p',
+    async (term) => {
+      await expect(
+        findCatalogVariantIdsBySearch(em, term, scope, [firstVariantId]),
+      ).resolves.toEqual([])
+
+      expect(findVariants).not.toHaveBeenCalled()
+    },
+  )
+
+  it('returns no IDs without querying when there are no candidates', async () => {
+    await expect(
+      findCatalogVariantIdsBySearch(em, 'Widget', scope, []),
+    ).resolves.toEqual([])
+
+    expect(findVariants).not.toHaveBeenCalled()
+  })
+
+  it('searches name, SKU and barcode among the candidates within the scope', async () => {
+    findVariants.mockResolvedValue([
+      createVariant(firstVariantId),
+      createVariant(secondVariantId),
+    ])
+
+    await expect(
+      findCatalogVariantIdsBySearch(
+        em,
+        '  Widget  ',
+        scope,
+        [firstVariantId, secondVariantId, firstVariantId],
+      ),
+    ).resolves.toEqual([firstVariantId, secondVariantId])
+
+    expect(findVariants).toHaveBeenCalledWith(
+      em,
+      CatalogProductVariant,
+      {
+        id: { $in: [firstVariantId, secondVariantId] },
+        tenantId: scope.tenantId,
+        organizationId: scope.organizationId,
+        $or: [
+          { name: { $ilike: '%Widget%' } },
+          { sku: { $ilike: '%Widget%' } },
+          { barcode: { $ilike: '%Widget%' } },
+        ],
+      },
+      {
+        fields: ['id'],
+      },
+      scope,
+    )
+  })
+
+  it('escapes LIKE wildcards instead of stripping them', async () => {
+    findVariants.mockResolvedValue([])
+
+    await findCatalogVariantIdsBySearch(
+      em,
+      'MFG_O%42\\D',
+      scope,
+      [firstVariantId],
+    )
+
+    const where = findVariants.mock.calls[0]?.[2]
+
+    expect(where).toMatchObject({
+      $or: [
+        { name: { $ilike: '%MFG\\_O\\%42\\\\D%' } },
+        { sku: { $ilike: '%MFG\\_O\\%42\\\\D%' } },
+        { barcode: { $ilike: '%MFG\\_O\\%42\\\\D%' } },
+      ],
+    })
+  })
+
+  it('queries candidates in chunks and merges every match', async () => {
+    const candidateIds = Array.from(
+      { length: 2500 },
+      (_, index) => `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
+    )
+
+    findVariants.mockImplementation(async (_em, _entity, where) => {
+      const ids = (where as { id: { $in: string[] } }).id.$in
+
+      return [createVariant(ids[ids.length - 1])]
+    })
+
+    await expect(
+      findCatalogVariantIdsBySearch(em, 'Widget', scope, candidateIds),
+    ).resolves.toEqual([
+      candidateIds[999],
+      candidateIds[1999],
+      candidateIds[2499],
+    ])
+
+    expect(findVariants).toHaveBeenCalledTimes(3)
+  })
+})
+
+describe('loadCatalogVariantSummaries', () => {
+  beforeEach(() => {
+    findVariants.mockReset()
+  })
+
+  it('returns an empty map without querying for empty input', async () => {
+    await expect(
+      loadCatalogVariantSummaries(em, [], scope),
+    ).resolves.toEqual(new Map())
+
+    expect(findVariants).not.toHaveBeenCalled()
+  })
+
+  it('deduplicates IDs and includes deleted variants in the scoped query', async () => {
+    findVariants.mockResolvedValue([])
+
+    await loadCatalogVariantSummaries(
+      em,
+      [firstVariantId, firstVariantId, secondVariantId],
+      scope,
+    )
+
+    expect(findVariants).toHaveBeenCalledTimes(1)
+    expect(findVariants).toHaveBeenCalledWith(
+      em,
+      CatalogProductVariant,
+      {
+        id: { $in: [firstVariantId, secondVariantId] },
+        tenantId: scope.tenantId,
+        organizationId: scope.organizationId,
+      },
+      {
+        fields: ['id', 'name', 'sku', 'isActive', 'deletedAt'],
+      },
+      scope,
+    )
+  })
+
+  it('maps activity and derives isDeleted from deletedAt', async () => {
+    const active = createVariant(firstVariantId, 'Finished product', 'OUTPUT-01')
+    const deleted = createVariant(secondVariantId)
+
+    deleted.isActive = false
+    deleted.deletedAt = new Date('2026-10-08T13:00:00.000Z')
+
+    findVariants.mockResolvedValue([active, deleted])
+
+    const summaries = await loadCatalogVariantSummaries(
+      em,
+      [firstVariantId, secondVariantId],
+      scope,
+    )
+
+    expect(summaries.get(firstVariantId)).toEqual({
+      id: firstVariantId,
+      name: 'Finished product',
+      sku: 'OUTPUT-01',
+      isActive: true,
+      isDeleted: false,
+    })
+    expect(summaries.get(secondVariantId)).toEqual({
+      id: secondVariantId,
+      name: null,
+      sku: null,
+      isActive: false,
+      isDeleted: true,
+    })
   })
 })
