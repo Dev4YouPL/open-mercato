@@ -114,4 +114,33 @@ describe('WMS inventory policy reader', () => {
     expect(await reader.listActiveLocations(scope)).toEqual([])
     expect(query).not.toHaveBeenCalled()
   })
+
+  it('reads one active location by id within the scope', async () => {
+    const { reader, query } = buildReader([[locationRow(1)]])
+
+    const location = await reader.getActiveLocation('location-1', scope)
+
+    expect(location).toEqual({ id: 'location-1', warehouseId: 'warehouse-1', code: 'A-1', type: 'bin' })
+    expect(query).toHaveBeenCalledWith(
+      WMS_WAREHOUSE_LOCATION_ENTITY_ID,
+      expect.objectContaining({
+        tenantId: 'tenant-1',
+        organizationId: 'org-1',
+        filters: { id: { $eq: 'location-1' }, is_active: { $eq: true } },
+      }),
+    )
+  })
+
+  it('returns no location when it is missing or inactive', async () => {
+    const { reader } = buildReader([[]])
+
+    expect(await reader.getActiveLocation('location-1', scope)).toBeNull()
+  })
+
+  it('returns no location without querying when WMS is disabled', async () => {
+    const { reader, query } = buildReader([], () => false)
+
+    expect(await reader.getActiveLocation('location-1', scope)).toBeNull()
+    expect(query).not.toHaveBeenCalled()
+  })
 })

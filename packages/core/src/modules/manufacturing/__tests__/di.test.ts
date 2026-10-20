@@ -7,6 +7,7 @@ import { register } from '../di'
 import { resolveInventoryGatewayFactory } from '../ports/inventoryGateway'
 import { resolveInventoryPolicyReader } from '../ports/inventoryPolicyReader'
 import { resolveOperationStore } from '../ports/operationStore'
+import { resolveExecutionHistoryReader } from '../ports/executionHistoryReader'
 
 describe('manufacturing DI', () => {
   it('builds an inventory gateway bound to the context and organization from the registered factory', async () => {
@@ -46,6 +47,22 @@ describe('manufacturing DI', () => {
     const operation = await resolveOperationStore(container).find('operation-1', { tenantId: 'tenant-1', organizationId: 'org-1' })
 
     expect(operation).toBeNull()
+    expect(fork).toHaveBeenCalled()
+  })
+
+  it('builds the execution history reader on the container entity manager', async () => {
+    const find = jest.fn(async () => [])
+    const fork = jest.fn(() => ({ find }))
+    const container = createContainer() as AppContainer
+    container.register({ em: asValue({ fork }) })
+    register(container)
+
+    const history = await resolveExecutionHistoryReader(container).listForOrder('order-1', {
+      tenantId: 'tenant-1',
+      organizationId: 'org-1',
+    })
+
+    expect(history).toEqual([])
     expect(fork).toHaveBeenCalled()
   })
 })

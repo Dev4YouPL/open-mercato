@@ -1,3 +1,4 @@
+import { buildExecutionDocument } from '../domain/executionDocument'
 import type { ManufacturingScope } from '../domain/manufacturingScope'
 import {
   decideOnExistingOperation,
@@ -11,52 +12,59 @@ import type { InventoryMovementResultDto } from '../ports/inventoryGateway'
 import type { OperationStore } from '../ports/operationStore'
 import type {
   MaterialMovementInput,
+  MovementPlanResultDto,
+  MovementReversalInput,
   OutputMovementInput,
   ProductionInventoryService,
 } from './productionInventoryService'
+
+export type WithOperationId<TInput> = TInput & { operationId: string }
 
 export type ProductionOperationResultDto =
   | InventoryMovementResultDto
   | { status: 'blocked'; blockingOperationId: string }
 
 export interface ProductionOperations {
-  issueMaterial(input: MaterialMovementInput): Promise<ProductionOperationResultDto>
-  returnMaterial(input: MaterialMovementInput): Promise<ProductionOperationResultDto>
-  receiveOutput(input: OutputMovementInput): Promise<ProductionOperationResultDto>
-  reverseMaterialIssue(input: MaterialMovementInput): Promise<ProductionOperationResultDto>
-  reverseMaterialReturn(input: MaterialMovementInput): Promise<ProductionOperationResultDto>
-  reverseOutputReceipt(input: OutputMovementInput): Promise<ProductionOperationResultDto>
+  issueMaterial(input: WithOperationId<MaterialMovementInput>): Promise<ProductionOperationResultDto>
+  returnMaterial(input: WithOperationId<MaterialMovementInput>): Promise<ProductionOperationResultDto>
+  receiveOutput(input: WithOperationId<OutputMovementInput>): Promise<ProductionOperationResultDto>
+  reverseMaterialIssue(input: WithOperationId<MovementReversalInput>): Promise<ProductionOperationResultDto>
+  reverseMaterialReturn(input: WithOperationId<MovementReversalInput>): Promise<ProductionOperationResultDto>
+  reverseOutputReceipt(input: WithOperationId<MovementReversalInput>): Promise<ProductionOperationResultDto>
 }
 
 type ProductionOperationsDeps = {
   operationStore: OperationStore
   inventoryService: ProductionInventoryService
   scope: ManufacturingScope
+  userId: string
 }
 
 type OperationRequest = {
   action: OperationAction
-  input: OutputMovementInput
+  operationId: string
+  orderId: string
   payloadHash: string
-  perform: () => Promise<InventoryMovementResultDto>
+  plan: () => Promise<MovementPlanResultDto>
 }
+
+type AnyMovementInput = WithOperationId<OutputMovementInput & Partial<MovementReversalInput>>
 
 function buildRequest(
   action: OperationAction,
-  input: OutputMovementInput,
-  variantId: string | null,
-  perform: () => Promise<InventoryMovementResultDto>,
+  input: AnyMovementInput,
+  plan: () => Promise<MovementPlanResultDto>,
 ): OperationRequest {
   const payloadHash = hashOperationPayload({
     action,
     orderId: input.orderId,
-    variantId,
-    warehouseId: input.warehouseId,
-    locationId: input.locationId,
+    variantId: input.variantId ?? null,
+    warehouseId: input.warehouseId ?? null,
+    locationId: input.locationId ?? null,
     quantity: input.quantity,
   })
 
-  return { action, input, payloadHash, perform }
+  return { action, operationId: input.operationId, orderId: input.orderId, payloadHash, plan }
 }
 
 function toOutcome(result: InventoryMovementResultDto): OperationOutcome {
@@ -75,14 +83,45 @@ function toReplayResult(outcome: FinalOperationOutcome): InventoryMovementResult
   return { status: 'rejected', code: outcome.code, message: outcome.message }
 }
 
-async function performAndRecord(deps: ProductionOperationsDeps, request: OperationRequest): Promise<InventoryMovementResultDto> {
-  const result = await request.perform()
-  const resolved = await deps.operationStore.resolveIfUnresolved(request.input.operationId, toOutcome(result), deps.scope)
+function toOperationRecord(deps: ProductionOperationsDeps, request: OperationRequest, plan: MovementPlanResultDto): OperationRecord {
+  const base = {
+    operationId: request.operationId,
+    action: request.action,
+    orderId: request.orderId,
+    payloadHash: request.payloadHash,
+    requestedBy: deps.userId,
+  }
+
+  if (plan.status === 'rejected') {
+    return { ...base, movement: null, state: { status: 'rejected', code: plan.code, message: plan.message } }
+  }
+
+  return { ...base, movement: plan.movement, state: { status: 'in_progress' } }
+}
+
+async function postAndRecord(deps: ProductionOperationsDeps, operation: OperationRecord): Promise<InventoryMovementResultDto> {
+  const movement = operation.movement
+
+  if (!movement) throw new Error(`[internal] manufacturing operation ${operation.operationId} has no planned movement`)
+
+  const result = await deps.inventoryService.postMovement(operation.operationId, movement)
+  const document =
+    result.status === 'accepted'
+      ? buildExecutionDocument({
+          action: operation.action,
+          orderId: operation.orderId,
+          operationId: operation.operationId,
+          postedBy: operation.requestedBy,
+          movement,
+          movementId: result.movementId,
+        })
+      : null
+  const resolved = await deps.operationStore.resolveIfUnresolved(operation.operationId, toOutcome(result), document, deps.scope)
 
   if (resolved) return result
 
-  const current = await deps.operationStore.find(request.input.operationId, deps.scope)
-  const decision = current ? decideOnExistingOperation(current, request.payloadHash) : null
+  const current = await deps.operationStore.find(operation.operationId, deps.scope)
+  const decision = current ? decideOnExistingOperation(current, operation.payloadHash) : null
 
   return decision?.kind === 'replay' ? toReplayResult(decision.outcome) : result
 }
@@ -104,28 +143,28 @@ async function continueExisting(
     case 'replay':
       return toReplayResult(decision.outcome)
     case 'resume':
-      return performAndRecord(deps, request)
+      return postAndRecord(deps, existing)
   }
 }
 
 async function runOperation(deps: ProductionOperationsDeps, request: OperationRequest): Promise<ProductionOperationResultDto> {
-  const { operationId, orderId } = request.input
-  const existing = await deps.operationStore.find(operationId, deps.scope)
+  const existing = await deps.operationStore.find(request.operationId, deps.scope)
 
   if (existing) return continueExisting(deps, request, existing)
 
-  const insertion = await deps.operationStore.insertInProgress(
-    { operationId, action: request.action, orderId, payloadHash: request.payloadHash },
-    deps.scope,
-  )
+  const plan = await request.plan()
+  const operation = toOperationRecord(deps, request, plan)
+  const insertion = await deps.operationStore.insert(operation, deps.scope)
 
-  if (insertion === 'inserted') return performAndRecord(deps, request)
+  if (insertion === 'inserted') {
+    return plan.status === 'rejected' ? plan : postAndRecord(deps, operation)
+  }
 
-  const raced = await deps.operationStore.find(operationId, deps.scope)
+  const raced = await deps.operationStore.find(request.operationId, deps.scope)
 
   if (raced) return continueExisting(deps, request, raced)
 
-  const blocking = await deps.operationStore.findUnresolved(orderId, request.action, deps.scope)
+  const blocking = await deps.operationStore.findUnresolved(request.orderId, request.action, deps.scope)
 
   if (blocking) return { status: 'blocked', blockingOperationId: blocking.operationId }
 
@@ -137,16 +176,16 @@ export function createProductionOperations(deps: ProductionOperationsDeps): Prod
 
   return {
     issueMaterial: (input) =>
-      runOperation(deps, buildRequest('issueMaterial', input, input.variantId, () => service.issueMaterial(input))),
+      runOperation(deps, buildRequest('issueMaterial', input, () => service.planIssueMaterial(input))),
     returnMaterial: (input) =>
-      runOperation(deps, buildRequest('returnMaterial', input, input.variantId, () => service.returnMaterial(input))),
+      runOperation(deps, buildRequest('returnMaterial', input, () => service.planReturnMaterial(input))),
     receiveOutput: (input) =>
-      runOperation(deps, buildRequest('receiveOutput', input, null, () => service.receiveOutput(input))),
+      runOperation(deps, buildRequest('receiveOutput', input, () => service.planReceiveOutput(input))),
     reverseMaterialIssue: (input) =>
-      runOperation(deps, buildRequest('reverseMaterialIssue', input, input.variantId, () => service.reverseMaterialIssue(input))),
+      runOperation(deps, buildRequest('reverseMaterialIssue', input, () => service.planReverseMaterialIssue(input))),
     reverseMaterialReturn: (input) =>
-      runOperation(deps, buildRequest('reverseMaterialReturn', input, input.variantId, () => service.reverseMaterialReturn(input))),
+      runOperation(deps, buildRequest('reverseMaterialReturn', input, () => service.planReverseMaterialReturn(input))),
     reverseOutputReceipt: (input) =>
-      runOperation(deps, buildRequest('reverseOutputReceipt', input, null, () => service.reverseOutputReceipt(input))),
+      runOperation(deps, buildRequest('reverseOutputReceipt', input, () => service.planReverseOutputReceipt(input))),
   }
 }

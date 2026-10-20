@@ -22,6 +22,8 @@ function recordWith(state: OperationRecord['state']): OperationRecord {
     action: 'issueMaterial',
     orderId: 'order-1',
     payloadHash: hashOperationPayload(payload),
+    requestedBy: 'user-1',
+    movement: null,
     state,
   }
 }

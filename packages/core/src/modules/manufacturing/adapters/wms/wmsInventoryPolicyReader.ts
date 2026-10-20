@@ -120,6 +120,26 @@ async function readActiveLocations(
   return locations
 }
 
+async function readActiveLocation(
+  deps: WmsPolicyReaderDeps,
+  locationId: string,
+  scope: ManufacturingScope,
+): Promise<InventoryLocationDto | null> {
+  if (!deps.isWmsEnabled()) return null
+
+  const result = await deps.queryEngine.query<unknown>(WMS_WAREHOUSE_LOCATION_ENTITY_ID, {
+    tenantId: scope.tenantId,
+    organizationId: scope.organizationId,
+    filters: { id: { $eq: locationId }, is_active: { $eq: true } },
+    fields: ['id', 'warehouse_id', 'code', 'type'],
+    page: { page: 1, pageSize: 1 },
+  })
+
+  const location = result.items[0]
+
+  return location ? toLocation(location) : null
+}
+
 export function createWmsInventoryPolicyReader(options: {
   queryEngine: QueryEngine
   isWmsEnabled?: () => boolean
@@ -132,5 +152,6 @@ export function createWmsInventoryPolicyReader(options: {
   return {
     getTrackingPolicy: (variantId, scope) => readTrackingPolicy(deps, variantId, scope),
     listActiveLocations: (scope, filter = {}) => readActiveLocations(deps, scope, filter),
+    getActiveLocation: (locationId, scope) => readActiveLocation(deps, locationId, scope),
   }
 }

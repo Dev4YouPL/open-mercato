@@ -6,7 +6,9 @@ import type { EntityManager } from '@mikro-orm/postgresql'
 import { INVENTORY_GATEWAY_FACTORY_DI_KEY, type InventoryGatewayFactory } from './ports/inventoryGateway'
 import { INVENTORY_POLICY_READER_DI_KEY, type InventoryPolicyReader } from './ports/inventoryPolicyReader'
 import { OPERATION_STORE_DI_KEY, type OperationStore } from './ports/operationStore'
+import { EXECUTION_HISTORY_READER_DI_KEY, type ExecutionHistoryReader } from './ports/executionHistoryReader'
 import { createMikroOperationStore } from './data/operationStore'
+import { createMikroExecutionHistoryReader } from './data/executionHistoryReader'
 import { createWmsInventoryGateway } from './adapters/wms/wmsInventoryGateway'
 import { createWmsInventoryPolicyReader } from './adapters/wms/wmsInventoryPolicyReader'
 
@@ -21,6 +23,9 @@ export function register(container: AppContainer): void {
     ).scoped(),
     [OPERATION_STORE_DI_KEY]: asFunction(
       ({ em }: { em: EntityManager }): OperationStore => createMikroOperationStore({ em }),
+    ).scoped(),
+    [EXECUTION_HISTORY_READER_DI_KEY]: asFunction(
+      ({ em }: { em: EntityManager }): ExecutionHistoryReader => createMikroExecutionHistoryReader({ em }),
     ).scoped(),
   })
 }

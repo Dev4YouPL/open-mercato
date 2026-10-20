@@ -24,6 +24,7 @@ export type InventoryLocationFilter = {
 export interface InventoryPolicyReader {
   getTrackingPolicy(variantId: string, scope: ManufacturingScope): Promise<TrackingPolicyResultDto>
   listActiveLocations(scope: ManufacturingScope, filter?: InventoryLocationFilter): Promise<InventoryLocationDto[]>
+  getActiveLocation(locationId: string, scope: ManufacturingScope): Promise<InventoryLocationDto | null>
 }
 
 export function resolveInventoryPolicyReader(container: AwilixContainer): InventoryPolicyReader {

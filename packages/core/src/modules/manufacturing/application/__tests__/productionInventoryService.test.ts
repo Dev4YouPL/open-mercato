@@ -1,11 +1,18 @@
 /** @jest-environment node */
 
+import type { PlannedMovement } from '../../domain/movement'
+import type { PositiveQuantity } from '../../domain/quantity'
 import type { InventoryGateway, InventoryMovementResultDto } from '../../ports/inventoryGateway'
-import type { InventoryPolicyReader, TrackingPolicyResultDto } from '../../ports/inventoryPolicyReader'
+import type {
+  InventoryLocationDto,
+  InventoryPolicyReader,
+  TrackingPolicyResultDto,
+} from '../../ports/inventoryPolicyReader'
 import type { ProductionOrderDto, ProductionOrderReader } from '../../ports/productionOrderReader'
 import {
   createProductionInventoryService,
   type MaterialMovementInput,
+  type MovementReversalInput,
   type OutputMovementInput,
   type ProductionInventoryService,
 } from '../productionInventoryService'
@@ -17,13 +24,18 @@ const untracked: TrackingPolicyResultDto = {
   policy: { tracksLot: false, tracksSerial: false, tracksExpiry: false },
 }
 
+const locations: Record<string, InventoryLocationDto> = {
+  'issue-location': { id: 'issue-location', warehouseId: 'warehouse-1', code: 'A-1', type: 'bin' },
+  'receipt-location': { id: 'receipt-location', warehouseId: 'warehouse-2', code: 'B-1', type: 'bin' },
+}
+
 const openOrder: ProductionOrderDto = {
   id: 'order-1',
   tenantId: 'tenant-1',
   organizationId: 'org-1',
   productVariantId: 'product-variant-1',
-  sourceLocationId: null,
-  targetLocationId: null,
+  sourceLocationId: 'issue-location',
+  targetLocationId: 'receipt-location',
   allowsIssue: true,
   allowsReturn: true,
   allowsConfirmation: true,
@@ -31,117 +43,147 @@ const openOrder: ProductionOrderDto = {
 
 const closedOrder: ProductionOrderDto = { ...openOrder, allowsIssue: false, allowsReturn: false, allowsConfirmation: false }
 
-const outputInput: OutputMovementInput = {
-  operationId: 'operation-1',
-  orderId: 'order-1',
-  warehouseId: 'warehouse-1',
-  locationId: 'location-1',
-  quantity: 4,
-}
-
+const outputInput: OutputMovementInput = { orderId: 'order-1', quantity: 4 }
 const materialInput: MaterialMovementInput = { ...outputInput, variantId: 'material-variant-1' }
+const reversalInput: MovementReversalInput = {
+  ...materialInput,
+  warehouseId: 'snapshot-warehouse',
+  locationId: 'snapshot-location',
+}
 
 function buildService(order: ProductionOrderDto | null = openOrder, tracking: TrackingPolicyResultDto = untracked) {
   const postMovement = jest.fn(async () => accepted)
   const getForExecution = jest.fn(async () => order)
   const getTrackingPolicy = jest.fn(async () => tracking)
+  const getActiveLocation = jest.fn(async (locationId: string) => locations[locationId] ?? null)
   const inventoryGateway: InventoryGateway = { postMovement }
-  const inventoryPolicyReader: InventoryPolicyReader = { getTrackingPolicy, listActiveLocations: jest.fn(async () => []) }
+  const inventoryPolicyReader: InventoryPolicyReader = {
+    getTrackingPolicy,
+    getActiveLocation,
+    listActiveLocations: jest.fn(async () => []),
+  }
   const productionOrderReader: ProductionOrderReader = { getForExecution }
   const service = createProductionInventoryService({ inventoryGateway, inventoryPolicyReader, productionOrderReader, scope })
-  return { service, postMovement, getForExecution, getTrackingPolicy }
+  return { service, postMovement, getForExecution, getTrackingPolicy, getActiveLocation }
 }
 
-type Action = keyof ProductionInventoryService
+type ForwardAction = 'planIssueMaterial' | 'planReturnMaterial' | 'planReceiveOutput'
 
-const materialActions = [
-  ['issueMaterial', 'consume'],
-  ['returnMaterial', 'restock'],
-  ['reverseMaterialIssue', 'restock'],
-  ['reverseMaterialReturn', 'consume'],
-] as const
-
-const outputActions = [
-  ['receiveOutput', 'receiveOutput'],
-  ['reverseOutputReceipt', 'consume'],
-] as const
-
-function runAction(service: ProductionInventoryService, action: Action) {
-  if (action === 'receiveOutput' || action === 'reverseOutputReceipt') return service[action](outputInput)
+function planForward(service: ProductionInventoryService, action: ForwardAction) {
+  if (action === 'planReceiveOutput') return service.planReceiveOutput(outputInput)
   return service[action](materialInput)
 }
 
 describe('production inventory service', () => {
-  it.each(materialActions)('%s posts a %s movement of the given material', async (action, kind) => {
-    const { service, postMovement } = buildService()
-    const result = await service[action](materialInput)
+  it.each([
+    ['planIssueMaterial', 'consume'],
+    ['planReturnMaterial', 'restock'],
+  ] as const)('%s plans a %s movement of the material at the order issue location', async (action, kind) => {
+    const { service } = buildService()
 
-    expect(result).toEqual(accepted)
-    expect(postMovement).toHaveBeenCalledWith({
-      operationId: 'operation-1',
-      kind,
-      warehouseId: 'warehouse-1',
-      locationId: 'location-1',
-      variantId: 'material-variant-1',
-      quantity: 4,
+    expect(await service[action](materialInput)).toEqual({
+      status: 'planned',
+      movement: {
+        kind,
+        variantId: 'material-variant-1',
+        warehouseId: 'warehouse-1',
+        locationId: 'issue-location',
+        quantity: 4,
+      },
     })
   })
 
-  it.each(outputActions)('%s posts a %s movement of the order product', async (action, kind) => {
-    const { service, postMovement } = buildService()
-    await service[action](outputInput)
+  it('plans the output receipt of the order product at the order receipt location', async () => {
+    const { service } = buildService()
 
-    expect(postMovement).toHaveBeenCalledWith(expect.objectContaining({ kind, variantId: 'product-variant-1' }))
+    expect(await service.planReceiveOutput(outputInput)).toEqual({
+      status: 'planned',
+      movement: {
+        kind: 'receiveOutput',
+        variantId: 'product-variant-1',
+        warehouseId: 'warehouse-2',
+        locationId: 'receipt-location',
+        quantity: 4,
+      },
+    })
   })
 
-  it('reads the order within the service scope', async () => {
-    const { service, getForExecution } = buildService()
-    await service.issueMaterial(materialInput)
+  it.each([
+    ['planReverseMaterialIssue', 'restock'],
+    ['planReverseMaterialReturn', 'consume'],
+    ['planReverseOutputReceipt', 'consume'],
+  ] as const)('%s plans a %s movement from the given snapshot, not the order', async (action, kind) => {
+    const { service, getActiveLocation, getTrackingPolicy } = buildService(closedOrder)
+
+    expect(await service[action](reversalInput)).toEqual({
+      status: 'planned',
+      movement: {
+        kind,
+        variantId: 'material-variant-1',
+        warehouseId: 'snapshot-warehouse',
+        locationId: 'snapshot-location',
+        quantity: 4,
+      },
+    })
+    expect(getActiveLocation).not.toHaveBeenCalled()
+    expect(getTrackingPolicy).not.toHaveBeenCalled()
+  })
+
+  it('reads the order and the location within the service scope', async () => {
+    const { service, getForExecution, getActiveLocation } = buildService()
+    await service.planIssueMaterial(materialInput)
 
     expect(getForExecution).toHaveBeenCalledWith('order-1', scope)
+    expect(getActiveLocation).toHaveBeenCalledWith('issue-location', scope)
   })
 
-  it.each(['issueMaterial', 'returnMaterial', 'receiveOutput'] as const)(
+  it.each(['planIssueMaterial', 'planReturnMaterial', 'planReceiveOutput'] as const)(
     'refuses %s when the order does not allow it',
     async (action) => {
-      const { service, postMovement } = buildService(closedOrder)
-      const result = await runAction(service, action)
+      const { service } = buildService(closedOrder)
 
-      expect(postMovement).not.toHaveBeenCalled()
-      expect(result).toMatchObject({ status: 'rejected', code: 'action_not_allowed' })
-    },
-  )
-
-  it.each(['reverseMaterialIssue', 'reverseMaterialReturn', 'reverseOutputReceipt'] as const)(
-    'allows %s regardless of the order flags',
-    async (action) => {
-      const { service, postMovement } = buildService(closedOrder)
-      const result = await runAction(service, action)
-
-      expect(postMovement).toHaveBeenCalledTimes(1)
-      expect(result).toEqual(accepted)
+      expect(await planForward(service, action)).toMatchObject({ status: 'rejected', code: 'action_not_allowed' })
     },
   )
 
   it('refuses when the order does not exist', async () => {
-    const { service, postMovement } = buildService(null)
-    const result = await service.issueMaterial(materialInput)
+    const { service } = buildService(null)
 
-    expect(postMovement).not.toHaveBeenCalled()
-    expect(result).toMatchObject({ status: 'rejected', code: 'order_not_found' })
+    expect(await service.planIssueMaterial(materialInput)).toMatchObject({ status: 'rejected', code: 'order_not_found' })
+    expect(await service.planReverseMaterialIssue(reversalInput)).toMatchObject({
+      status: 'rejected',
+      code: 'order_not_found',
+    })
   })
 
   it.each([0, -3, Number.NaN, Number.POSITIVE_INFINITY])(
     'refuses quantity %p before reading the order',
     async (quantity) => {
-      const { service, postMovement, getForExecution } = buildService()
-      const result = await service.returnMaterial({ ...materialInput, quantity })
+      const { service, getForExecution } = buildService()
+      const result = await service.planReturnMaterial({ ...materialInput, quantity })
 
       expect(getForExecution).not.toHaveBeenCalled()
-      expect(postMovement).not.toHaveBeenCalled()
       expect(result).toMatchObject({ status: 'rejected', code: 'invalid_quantity' })
     },
   )
+
+  it.each([
+    ['issue', 'planIssueMaterial', { sourceLocationId: null }],
+    ['receipt', 'planReceiveOutput', { targetLocationId: null }],
+  ] as const)('refuses when the order has no %s location', async (_label, action, change) => {
+    const { service } = buildService({ ...openOrder, ...change })
+
+    expect(await planForward(service, action)).toMatchObject({ status: 'rejected', code: 'location_missing' })
+  })
+
+  it('refuses when the order location is missing or inactive in WMS', async () => {
+    const { service } = buildService({ ...openOrder, sourceLocationId: 'deleted-location' })
+
+    expect(await service.planIssueMaterial(materialInput)).toMatchObject({
+      status: 'rejected',
+      code: 'location_unavailable',
+    })
+  })
 
   it.each([
     ['lot', { tracksLot: true, tracksSerial: false, tracksExpiry: false }],
@@ -150,53 +192,53 @@ describe('production inventory service', () => {
   ])('refuses forward actions on a variant tracked by %s', async (_label, policy) => {
     const tracked: TrackingPolicyResultDto = { status: 'resolved', policy }
 
-    for (const action of ['issueMaterial', 'returnMaterial', 'receiveOutput'] as const) {
-      const { service, postMovement } = buildService(openOrder, tracked)
-      const result = await runAction(service, action)
+    for (const action of ['planIssueMaterial', 'planReturnMaterial', 'planReceiveOutput'] as const) {
+      const { service } = buildService(openOrder, tracked)
 
-      expect(postMovement).not.toHaveBeenCalled()
-      expect(result).toMatchObject({ status: 'rejected', code: 'tracking_not_supported' })
+      expect(await planForward(service, action)).toMatchObject({ status: 'rejected', code: 'tracking_not_supported' })
     }
   })
 
   it('checks the tracking policy of the material for material actions and of the product for output', async () => {
     const material = buildService()
-    await material.service.issueMaterial(materialInput)
+    await material.service.planIssueMaterial(materialInput)
     expect(material.getTrackingPolicy).toHaveBeenCalledWith('material-variant-1', scope)
 
     const output = buildService()
-    await output.service.receiveOutput(outputInput)
+    await output.service.planReceiveOutput(outputInput)
     expect(output.getTrackingPolicy).toHaveBeenCalledWith('product-variant-1', scope)
   })
 
-  it.each(['reverseMaterialIssue', 'reverseMaterialReturn', 'reverseOutputReceipt'] as const)(
-    'does not check tracking for %s because it mirrors an already recorded movement',
-    async (action) => {
-      const tracked: TrackingPolicyResultDto = {
-        status: 'resolved',
-        policy: { tracksLot: true, tracksSerial: false, tracksExpiry: false },
-      }
-      const { service, postMovement, getTrackingPolicy } = buildService(openOrder, tracked)
-      await runAction(service, action)
-
-      expect(getTrackingPolicy).not.toHaveBeenCalled()
-      expect(postMovement).toHaveBeenCalledTimes(1)
-    },
-  )
-
   it('refuses when the inventory policy is unavailable', async () => {
-    const { service, postMovement } = buildService(openOrder, { status: 'unavailable' })
-    const result = await service.issueMaterial(materialInput)
+    const { service } = buildService(openOrder, { status: 'unavailable' })
 
-    expect(postMovement).not.toHaveBeenCalled()
-    expect(result).toMatchObject({ status: 'rejected', code: 'inventory_unavailable' })
+    expect(await service.planIssueMaterial(materialInput)).toMatchObject({
+      status: 'rejected',
+      code: 'inventory_unavailable',
+    })
   })
 
-  it('passes gateway rejections and unknown outcomes through unchanged', async () => {
+  it('never posts while planning', async () => {
     const { service, postMovement } = buildService()
+    await service.planIssueMaterial(materialInput)
+    await service.planReverseOutputReceipt(reversalInput)
+
+    expect(postMovement).not.toHaveBeenCalled()
+  })
+
+  it('posts a planned movement under the operation id and passes the gateway result through', async () => {
+    const { service, postMovement } = buildService()
+    const movement: PlannedMovement = {
+      kind: 'consume',
+      variantId: 'material-variant-1',
+      warehouseId: 'warehouse-1',
+      locationId: 'issue-location',
+      quantity: 4 as PositiveQuantity,
+    }
     const unknown: InventoryMovementResultDto = { status: 'unknown', cause: new Error('timeout') }
     postMovement.mockResolvedValueOnce(unknown)
 
-    expect(await service.issueMaterial(materialInput)).toBe(unknown)
+    expect(await service.postMovement('operation-1', movement)).toBe(unknown)
+    expect(postMovement).toHaveBeenCalledWith({ operationId: 'operation-1', ...movement })
   })
 })

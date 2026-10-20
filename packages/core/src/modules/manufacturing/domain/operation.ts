@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import type { PlannedMovement } from './movement'
 
 export const OPERATION_ACTIONS = [
   'issueMaterial',
@@ -29,6 +30,8 @@ export type OperationRecord = {
   action: OperationAction
   orderId: string
   payloadHash: string
+  requestedBy: string
+  movement: PlannedMovement | null
   state: OperationState
 }
 
@@ -36,8 +39,8 @@ export type OperationPayload = {
   action: OperationAction
   orderId: string
   variantId: string | null
-  warehouseId: string
-  locationId: string
+  warehouseId: string | null
+  locationId: string | null
   quantity: number
 }
 
