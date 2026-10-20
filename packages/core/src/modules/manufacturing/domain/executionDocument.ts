@@ -1,6 +1,8 @@
 import type { PlannedMovement } from './movement'
 import type { OperationAction } from './operation'
 
+export type ForwardOperationAction = Exclude<OperationAction, 'reverseDocument'>
+
 export type ExecutionDocumentType = 'issue' | 'return' | 'confirmation' | 'reversal'
 
 export type ProductionFactKind = 'material_consumed' | 'material_returned' | 'output_received' | 'output_reversed'
@@ -19,6 +21,7 @@ export type ExecutionDocumentDraft = {
   orderId: string
   operationId: string
   postedBy: string
+  reversesDocumentId: string | null
   facts: ProductionFactDraft[]
 }
 
@@ -27,17 +30,14 @@ type ActionDocumentRule = {
   factKind: ProductionFactKind
 }
 
-const ACTION_DOCUMENT_RULES: Record<OperationAction, ActionDocumentRule> = {
+const ACTION_DOCUMENT_RULES: Record<ForwardOperationAction, ActionDocumentRule> = {
   issueMaterial: { documentType: 'issue', factKind: 'material_consumed' },
   returnMaterial: { documentType: 'return', factKind: 'material_returned' },
   receiveOutput: { documentType: 'confirmation', factKind: 'output_received' },
-  reverseMaterialIssue: { documentType: 'reversal', factKind: 'material_returned' },
-  reverseMaterialReturn: { documentType: 'reversal', factKind: 'material_consumed' },
-  reverseOutputReceipt: { documentType: 'reversal', factKind: 'output_reversed' },
 }
 
 export type PostedMovement = {
-  action: OperationAction
+  action: ForwardOperationAction
   orderId: string
   operationId: string
   postedBy: string
@@ -53,6 +53,7 @@ export function buildExecutionDocument(posted: PostedMovement): ExecutionDocumen
     orderId: posted.orderId,
     operationId: posted.operationId,
     postedBy: posted.postedBy,
+    reversesDocumentId: null,
     facts: [
       {
         factKind: rule.factKind,

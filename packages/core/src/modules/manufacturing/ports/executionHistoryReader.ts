@@ -21,11 +21,14 @@ export type ExecutionDocumentDto = {
   operationId: string
   postedBy: string
   postedAt: Date
+  reversesDocumentId: string | null
+  reversedByDocumentId: string | null
   facts: ProductionFactDto[]
 }
 
 export interface ExecutionHistoryReader {
   listForOrder(orderId: string, scope: ManufacturingScope): Promise<ExecutionDocumentDto[]>
+  getDocument(documentId: string, scope: ManufacturingScope): Promise<ExecutionDocumentDto | null>
 }
 
 export function resolveExecutionHistoryReader(container: AwilixContainer): ExecutionHistoryReader {

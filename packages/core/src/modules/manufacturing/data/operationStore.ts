@@ -62,6 +62,7 @@ function toRecord(row: ManufacturingOperation): OperationRecord {
     orderId: row.orderId,
     payloadHash: row.payloadHash,
     requestedBy: row.requestedBy,
+    sourceDocumentId: row.sourceDocumentId ?? null,
     movement: toMovement(row),
     state: toState(row),
   }
@@ -127,6 +128,7 @@ export function createMikroOperationStore({ em }: MikroOperationStoreOptions): O
         orderId: operation.orderId,
         payloadHash: operation.payloadHash,
         requestedBy: operation.requestedBy,
+        sourceDocumentId: operation.sourceDocumentId,
         ...toMovementColumns(operation.movement),
         ...toStateColumns(operation.state),
       })

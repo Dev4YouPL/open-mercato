@@ -2,6 +2,7 @@
 
 import type { PlannedMovement } from '../../domain/movement'
 import type { PositiveQuantity } from '../../domain/quantity'
+import type { ReversibleDocument } from '../../domain/reversal'
 import type { InventoryGateway, InventoryMovementResultDto } from '../../ports/inventoryGateway'
 import type {
   InventoryLocationDto,
@@ -12,7 +13,6 @@ import type { ProductionOrderDto, ProductionOrderReader } from '../../ports/prod
 import {
   createProductionInventoryService,
   type MaterialMovementInput,
-  type MovementReversalInput,
   type OutputMovementInput,
   type ProductionInventoryService,
 } from '../productionInventoryService'
@@ -45,10 +45,20 @@ const closedOrder: ProductionOrderDto = { ...openOrder, allowsIssue: false, allo
 
 const outputInput: OutputMovementInput = { orderId: 'order-1', quantity: 4 }
 const materialInput: MaterialMovementInput = { ...outputInput, variantId: 'material-variant-1' }
-const reversalInput: MovementReversalInput = {
-  ...materialInput,
-  warehouseId: 'snapshot-warehouse',
-  locationId: 'snapshot-location',
+const issuedDocument: ReversibleDocument = {
+  id: 'document-1',
+  orderId: 'order-1',
+  reversedByDocumentId: null,
+  facts: [
+    {
+      factKind: 'material_consumed',
+      variantId: 'material-variant-1',
+      warehouseId: 'snapshot-warehouse',
+      locationId: 'snapshot-location',
+      quantity: 4,
+      movementId: 'movement-1',
+    },
+  ],
 }
 
 function buildService(order: ProductionOrderDto | null = openOrder, tracking: TrackingPolicyResultDto = untracked) {
@@ -108,17 +118,13 @@ describe('production inventory service', () => {
     })
   })
 
-  it.each([
-    ['planReverseMaterialIssue', 'restock'],
-    ['planReverseMaterialReturn', 'consume'],
-    ['planReverseOutputReceipt', 'consume'],
-  ] as const)('%s plans a %s movement from the given snapshot, not the order', async (action, kind) => {
+  it('plans a document reversal from the document snapshot regardless of order flags and current locations', async () => {
     const { service, getActiveLocation, getTrackingPolicy } = buildService(closedOrder)
 
-    expect(await service[action](reversalInput)).toEqual({
+    expect(await service.planReverseDocument(issuedDocument)).toEqual({
       status: 'planned',
       movement: {
-        kind,
+        kind: 'restock',
         variantId: 'material-variant-1',
         warehouseId: 'snapshot-warehouse',
         locationId: 'snapshot-location',
@@ -127,6 +133,25 @@ describe('production inventory service', () => {
     })
     expect(getActiveLocation).not.toHaveBeenCalled()
     expect(getTrackingPolicy).not.toHaveBeenCalled()
+  })
+
+  it('refuses to reverse a document twice', async () => {
+    const { service } = buildService()
+
+    expect(await service.planReverseDocument({ ...issuedDocument, reversedByDocumentId: 'document-2' })).toMatchObject({
+      status: 'rejected',
+      code: 'document_already_reversed',
+    })
+  })
+
+  it('refuses to reverse a document that the one-movement profile cannot mirror', async () => {
+    const { service } = buildService()
+    const [fact] = issuedDocument.facts
+
+    expect(await service.planReverseDocument({ ...issuedDocument, facts: [fact, fact] })).toMatchObject({
+      status: 'rejected',
+      code: 'reversal_not_supported',
+    })
   })
 
   it('reads the order and the location within the service scope', async () => {
@@ -150,7 +175,7 @@ describe('production inventory service', () => {
     const { service } = buildService(null)
 
     expect(await service.planIssueMaterial(materialInput)).toMatchObject({ status: 'rejected', code: 'order_not_found' })
-    expect(await service.planReverseMaterialIssue(reversalInput)).toMatchObject({
+    expect(await service.planReverseDocument(issuedDocument)).toMatchObject({
       status: 'rejected',
       code: 'order_not_found',
     })
@@ -221,7 +246,7 @@ describe('production inventory service', () => {
   it('never posts while planning', async () => {
     const { service, postMovement } = buildService()
     await service.planIssueMaterial(materialInput)
-    await service.planReverseOutputReceipt(reversalInput)
+    await service.planReverseDocument(issuedDocument)
 
     expect(postMovement).not.toHaveBeenCalled()
   })

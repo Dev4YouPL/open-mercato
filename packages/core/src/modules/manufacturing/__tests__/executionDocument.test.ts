@@ -1,8 +1,7 @@
 /** @jest-environment node */
 
-import { buildExecutionDocument } from '../domain/executionDocument'
+import { buildExecutionDocument, type ForwardOperationAction } from '../domain/executionDocument'
 import type { PlannedMovement } from '../domain/movement'
-import type { OperationAction } from '../domain/operation'
 import type { PositiveQuantity } from '../domain/quantity'
 
 const movement: PlannedMovement = {
@@ -13,7 +12,7 @@ const movement: PlannedMovement = {
   quantity: 2.5 as PositiveQuantity,
 }
 
-function documentFor(action: OperationAction) {
+function documentFor(action: ForwardOperationAction) {
   return buildExecutionDocument({
     action,
     orderId: 'order-1',
@@ -29,9 +28,6 @@ describe('execution document', () => {
     ['issueMaterial', 'issue', 'material_consumed'],
     ['returnMaterial', 'return', 'material_returned'],
     ['receiveOutput', 'confirmation', 'output_received'],
-    ['reverseMaterialIssue', 'reversal', 'material_returned'],
-    ['reverseMaterialReturn', 'reversal', 'material_consumed'],
-    ['reverseOutputReceipt', 'reversal', 'output_reversed'],
   ] as const)('maps %s to a %s document with a %s fact', (action, documentType, factKind) => {
     const document = documentFor(action)
 
@@ -45,6 +41,7 @@ describe('execution document', () => {
       orderId: 'order-1',
       operationId: 'operation-1',
       postedBy: 'user-1',
+      reversesDocumentId: null,
       facts: [
         {
           factKind: 'material_consumed',

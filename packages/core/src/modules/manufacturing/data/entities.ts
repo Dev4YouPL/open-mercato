@@ -29,6 +29,7 @@ export class ManufacturingOperation {
     | 'warehouseId'
     | 'locationId'
     | 'quantity'
+    | 'sourceDocumentId'
 
   @PrimaryKey({ type: 'uuid', defaultRaw: 'gen_random_uuid()' })
   id!: string
@@ -53,6 +54,9 @@ export class ManufacturingOperation {
 
   @Property({ name: 'requested_by', type: 'uuid' })
   requestedBy!: string
+
+  @Property({ name: 'source_document_id', type: 'uuid', nullable: true })
+  sourceDocumentId?: string | null
 
   @Property({ name: 'movement_kind', type: 'text', nullable: true })
   movementKind?: MovementKind | null
@@ -89,6 +93,7 @@ export class ManufacturingOperation {
 }
 
 export const EXECUTION_DOCUMENT_OPERATION_UNIQUE = 'manufacturing_execution_documents_operation_unique'
+export const EXECUTION_DOCUMENT_REVERSAL_UNIQUE = 'manufacturing_execution_documents_reversal_unique'
 
 @Entity({ tableName: 'manufacturing_execution_documents' })
 @Unique({
@@ -99,8 +104,13 @@ export const EXECUTION_DOCUMENT_OPERATION_UNIQUE = 'manufacturing_execution_docu
   name: 'manufacturing_execution_documents_order_idx',
   properties: ['tenantId', 'organizationId', 'orderId', 'postedAt'],
 })
+@Index({
+  name: EXECUTION_DOCUMENT_REVERSAL_UNIQUE,
+  expression:
+    `create unique index "${EXECUTION_DOCUMENT_REVERSAL_UNIQUE}" on "manufacturing_execution_documents" ("tenant_id", "organization_id", "reverses_document_id") where "reverses_document_id" is not null`,
+})
 export class ExecutionDocument {
-  [OptionalProps]?: 'createdAt'
+  [OptionalProps]?: 'createdAt' | 'reversesDocumentId'
 
   @PrimaryKey({ type: 'uuid', defaultRaw: 'gen_random_uuid()' })
   id!: string
@@ -122,6 +132,9 @@ export class ExecutionDocument {
 
   @Property({ name: 'posted_by', type: 'uuid' })
   postedBy!: string
+
+  @Property({ name: 'reverses_document_id', type: 'uuid', nullable: true })
+  reversesDocumentId?: string | null
 
   @Property({ name: 'posted_at', type: Date })
   postedAt!: Date

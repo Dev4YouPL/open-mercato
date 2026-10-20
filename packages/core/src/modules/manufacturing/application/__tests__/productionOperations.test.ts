@@ -4,6 +4,8 @@ import type { ExecutionDocumentDraft } from '../../domain/executionDocument'
 import type { PlannedMovement } from '../../domain/movement'
 import type { OperationRecord } from '../../domain/operation'
 import type { PositiveQuantity } from '../../domain/quantity'
+import { planReversalMovement, type ReversibleDocument } from '../../domain/reversal'
+import type { ExecutionDocumentDto, ExecutionHistoryReader } from '../../ports/executionHistoryReader'
 import type { InventoryMovementResultDto } from '../../ports/inventoryGateway'
 import type { OperationStore } from '../../ports/operationStore'
 import type {
@@ -43,6 +45,27 @@ function createMemoryOperationStore() {
   const records = new Map<string, OperationRecord>()
   const documents: ExecutionDocumentDraft[] = []
 
+  const toDto = (document: ExecutionDocumentDraft, index: number): ExecutionDocumentDto => {
+    const id = `document-${index + 1}`
+    const reversal = documents.findIndex((candidate) => candidate.reversesDocumentId === id)
+    return {
+      ...document,
+      id,
+      postedAt: new Date(0),
+      reversedByDocumentId: reversal >= 0 ? `document-${reversal + 1}` : null,
+      facts: document.facts.map((fact, factIndex) => ({ ...fact, id: `${id}-fact-${factIndex + 1}` })),
+    }
+  }
+
+  const history: ExecutionHistoryReader = {
+    async listForOrder(orderId) {
+      return documents.map(toDto).filter((document) => document.orderId === orderId)
+    },
+    async getDocument(documentId) {
+      return documents.map(toDto).find((document) => document.id === documentId) ?? null
+    },
+  }
+
   const store: OperationStore = {
     async find(operationId) {
       return records.get(operationId) ?? null
@@ -71,20 +94,37 @@ function createMemoryOperationStore() {
     },
   }
 
-  return { store, records, documents }
+  return { store, records, documents, history }
 }
 
 function buildOperations(...results: InventoryMovementResultDto[]) {
-  const { store, records, documents } = createMemoryOperationStore()
+  const { store, records, documents, history } = createMemoryOperationStore()
   const planIssueMaterial = jest.fn(async (): Promise<MovementPlanResultDto> => planned)
   const planReturnMaterial = jest.fn(async (): Promise<MovementPlanResultDto> => ({
     status: 'planned',
     movement: { ...movement, kind: 'restock' },
   }))
-  const postMovement = jest.fn(async () => results.shift() ?? accepted)
-  const inventoryService = { planIssueMaterial, planReturnMaterial, postMovement } as unknown as ProductionInventoryService
-  const operations = createProductionOperations({ operationStore: store, inventoryService, scope, userId: 'user-1' })
-  return { operations, store, records, documents, planIssueMaterial, planReturnMaterial, postMovement }
+  const planReverseDocument = jest.fn(async (document: ReversibleDocument): Promise<MovementPlanResultDto> => {
+    const plan = planReversalMovement(document)
+    if (plan.status === 'planned') return plan
+    return { status: 'rejected', code: plan.status, message: plan.status }
+  })
+  let nextMovement = 1
+  const postMovement = jest.fn(async () => results.shift() ?? { status: 'accepted', movementId: `movement-${nextMovement++}` })
+  const inventoryService = {
+    planIssueMaterial,
+    planReturnMaterial,
+    planReverseDocument,
+    postMovement,
+  } as unknown as ProductionInventoryService
+  const operations = createProductionOperations({
+    operationStore: store,
+    inventoryService,
+    executionHistoryReader: history,
+    scope,
+    userId: 'user-1',
+  })
+  return { operations, store, records, documents, history, planIssueMaterial, planReturnMaterial, planReverseDocument, postMovement }
 }
 
 describe('production operations', () => {
@@ -110,6 +150,7 @@ describe('production operations', () => {
         orderId: 'order-1',
         operationId: 'operation-1',
         postedBy: 'user-1',
+        reversesDocumentId: null,
         facts: [
           {
             factKind: 'material_consumed',
@@ -206,6 +247,7 @@ describe('production operations', () => {
     const retryingUser = createProductionOperations({
       operationStore: first.store,
       inventoryService: { postMovement: first.postMovement } as unknown as ProductionInventoryService,
+      executionHistoryReader: first.history,
       scope,
       userId: 'user-2',
     })
@@ -273,6 +315,7 @@ describe('production operations', () => {
       orderId: 'order-1',
       payloadHash: 'ignored',
       requestedBy: 'user-1',
+      sourceDocumentId: null,
       movement,
       state: { status: 'completed', movementId: 'movement-1' },
     })
@@ -282,5 +325,110 @@ describe('production operations', () => {
     expect(find).toHaveBeenCalledTimes(2)
     expect(result).toMatchObject({ status: 'rejected', code: 'operation_payload_mismatch' })
     expect(postMovement).not.toHaveBeenCalled()
+  })
+
+  describe('document reversal', () => {
+    async function postIssue() {
+      const built = buildOperations()
+      await built.operations.issueMaterial(input)
+      return built
+    }
+
+    it('posts an opposite document that points at the source and keeps both in history', async () => {
+      const { operations, history, postMovement } = await postIssue()
+
+      const result = await operations.reverseDocument({ operationId: 'operation-2', documentId: 'document-1' })
+
+      expect(result).toEqual({ status: 'accepted', movementId: 'movement-2' })
+      expect(postMovement).toHaveBeenLastCalledWith('operation-2', { ...movement, kind: 'restock' })
+
+      const documents = await history.listForOrder('order-1', scope)
+
+      expect(documents.map((document) => [document.id, document.documentType, document.reversesDocumentId, document.reversedByDocumentId])).toEqual([
+        ['document-1', 'issue', null, 'document-2'],
+        ['document-2', 'reversal', 'document-1', null],
+      ])
+      expect(documents[1].facts[0]).toMatchObject({ factKind: 'material_returned', quantity: 4, movementId: 'movement-2' })
+    })
+
+    it('refuses a second reversal of the same document without posting', async () => {
+      const { operations, postMovement } = await postIssue()
+      await operations.reverseDocument({ operationId: 'operation-2', documentId: 'document-1' })
+
+      const result = await operations.reverseDocument({ operationId: 'operation-3', documentId: 'document-1' })
+
+      expect(result).toMatchObject({ status: 'rejected', code: 'already_reversed' })
+      expect(postMovement).toHaveBeenCalledTimes(2)
+    })
+
+    it('allows the reversing document to be reversed once, forming a chain', async () => {
+      const { operations, history } = await postIssue()
+      await operations.reverseDocument({ operationId: 'operation-2', documentId: 'document-1' })
+
+      expect(await operations.reverseDocument({ operationId: 'operation-3', documentId: 'document-2' })).toMatchObject({
+        status: 'accepted',
+      })
+      expect(await operations.reverseDocument({ operationId: 'operation-4', documentId: 'document-2' })).toMatchObject({
+        status: 'rejected',
+      })
+
+      const chain = await history.listForOrder('order-1', scope)
+
+      expect(chain.map((document) => [document.reversesDocumentId, document.facts[0].factKind])).toEqual([
+        [null, 'material_consumed'],
+        ['document-1', 'material_returned'],
+        ['document-2', 'material_consumed'],
+      ])
+    })
+
+    it('leaves the source active when WMS rejects the reversal', async () => {
+      const { operations, history, postMovement } = await postIssue()
+      postMovement.mockResolvedValueOnce(rejected)
+
+      expect(await operations.reverseDocument({ operationId: 'operation-2', documentId: 'document-1' })).toEqual(rejected)
+
+      const [source] = await history.listForOrder('order-1', scope)
+
+      expect(source.reversedByDocumentId).toBeNull()
+      expect(await operations.reverseDocument({ operationId: 'operation-3', documentId: 'document-1' })).toMatchObject({
+        status: 'accepted',
+      })
+    })
+
+    it('replays a completed reversal and rejects reusing its id for another document', async () => {
+      const { operations, postMovement } = await postIssue()
+      await operations.issueMaterial({ ...input, operationId: 'operation-other' })
+      const reversal = { operationId: 'operation-2', documentId: 'document-1' }
+      const first = await operations.reverseDocument(reversal)
+
+      expect(await operations.reverseDocument(reversal)).toEqual(first)
+      expect(await operations.reverseDocument({ ...reversal, documentId: 'document-2' })).toMatchObject({
+        code: 'operation_payload_mismatch',
+      })
+      expect(postMovement).toHaveBeenCalledTimes(3)
+    })
+
+    it('completes an unknown reversal on retry with the source snapshot', async () => {
+      const { operations, history, postMovement } = await postIssue()
+      postMovement.mockResolvedValueOnce(unknown)
+      const reversal = { operationId: 'operation-2', documentId: 'document-1' }
+
+      expect(await operations.reverseDocument(reversal)).toBe(unknown)
+      expect(await operations.reverseDocument(reversal)).toMatchObject({ status: 'accepted' })
+
+      const documents = await history.listForOrder('order-1', scope)
+
+      expect(documents[1]).toMatchObject({ documentType: 'reversal', reversesDocumentId: 'document-1' })
+    })
+
+    it('rejects an unknown document without recording an operation', async () => {
+      const { operations, records } = buildOperations()
+
+      expect(await operations.reverseDocument({ operationId: 'operation-2', documentId: 'missing' })).toMatchObject({
+        status: 'rejected',
+        code: 'document_not_found',
+      })
+      expect(records.has('operation-2')).toBe(false)
+    })
   })
 })

@@ -1,5 +1,10 @@
-import { buildExecutionDocument } from '../domain/executionDocument'
+import {
+  buildExecutionDocument,
+  type ExecutionDocumentDraft,
+  type ForwardOperationAction,
+} from '../domain/executionDocument'
 import type { ManufacturingScope } from '../domain/manufacturingScope'
+import type { PlannedMovement } from '../domain/movement'
 import {
   decideOnExistingOperation,
   hashOperationPayload,
@@ -8,17 +13,23 @@ import {
   type OperationOutcome,
   type OperationRecord,
 } from '../domain/operation'
+import { buildReversalDocument } from '../domain/reversal'
+import type { ExecutionHistoryReader } from '../ports/executionHistoryReader'
 import type { InventoryMovementResultDto } from '../ports/inventoryGateway'
 import type { OperationStore } from '../ports/operationStore'
 import type {
   MaterialMovementInput,
   MovementPlanResultDto,
-  MovementReversalInput,
   OutputMovementInput,
   ProductionInventoryService,
 } from './productionInventoryService'
 
 export type WithOperationId<TInput> = TInput & { operationId: string }
+
+export type DocumentReversalInput = {
+  operationId: string
+  documentId: string
+}
 
 export type ProductionOperationResultDto =
   | InventoryMovementResultDto
@@ -28,14 +39,13 @@ export interface ProductionOperations {
   issueMaterial(input: WithOperationId<MaterialMovementInput>): Promise<ProductionOperationResultDto>
   returnMaterial(input: WithOperationId<MaterialMovementInput>): Promise<ProductionOperationResultDto>
   receiveOutput(input: WithOperationId<OutputMovementInput>): Promise<ProductionOperationResultDto>
-  reverseMaterialIssue(input: WithOperationId<MovementReversalInput>): Promise<ProductionOperationResultDto>
-  reverseMaterialReturn(input: WithOperationId<MovementReversalInput>): Promise<ProductionOperationResultDto>
-  reverseOutputReceipt(input: WithOperationId<MovementReversalInput>): Promise<ProductionOperationResultDto>
+  reverseDocument(input: DocumentReversalInput): Promise<ProductionOperationResultDto>
 }
 
 type ProductionOperationsDeps = {
   operationStore: OperationStore
   inventoryService: ProductionInventoryService
+  executionHistoryReader: ExecutionHistoryReader
   scope: ManufacturingScope
   userId: string
 }
@@ -45,26 +55,23 @@ type OperationRequest = {
   operationId: string
   orderId: string
   payloadHash: string
+  sourceDocumentId: string | null
   plan: () => Promise<MovementPlanResultDto>
 }
 
-type AnyMovementInput = WithOperationId<OutputMovementInput & Partial<MovementReversalInput>>
-
-function buildRequest(
-  action: OperationAction,
-  input: AnyMovementInput,
+function buildForwardRequest(
+  action: ForwardOperationAction,
+  input: WithOperationId<OutputMovementInput & { variantId?: string }>,
   plan: () => Promise<MovementPlanResultDto>,
 ): OperationRequest {
   const payloadHash = hashOperationPayload({
     action,
     orderId: input.orderId,
     variantId: input.variantId ?? null,
-    warehouseId: input.warehouseId ?? null,
-    locationId: input.locationId ?? null,
     quantity: input.quantity,
   })
 
-  return { action, operationId: input.operationId, orderId: input.orderId, payloadHash, plan }
+  return { action, operationId: input.operationId, orderId: input.orderId, payloadHash, sourceDocumentId: null, plan }
 }
 
 function toOutcome(result: InventoryMovementResultDto): OperationOutcome {
@@ -90,6 +97,7 @@ function toOperationRecord(deps: ProductionOperationsDeps, request: OperationReq
     orderId: request.orderId,
     payloadHash: request.payloadHash,
     requestedBy: deps.userId,
+    sourceDocumentId: request.sourceDocumentId,
   }
 
   if (plan.status === 'rejected') {
@@ -99,23 +107,39 @@ function toOperationRecord(deps: ProductionOperationsDeps, request: OperationReq
   return { ...base, movement: plan.movement, state: { status: 'in_progress' } }
 }
 
+async function buildDocument(
+  deps: ProductionOperationsDeps,
+  operation: OperationRecord,
+  movement: PlannedMovement,
+  movementId: string,
+): Promise<ExecutionDocumentDraft> {
+  if (operation.action !== 'reverseDocument') {
+    return buildExecutionDocument({
+      action: operation.action,
+      orderId: operation.orderId,
+      operationId: operation.operationId,
+      postedBy: operation.requestedBy,
+      movement,
+      movementId,
+    })
+  }
+
+  const source = operation.sourceDocumentId
+    ? await deps.executionHistoryReader.getDocument(operation.sourceDocumentId, deps.scope)
+    : null
+
+  if (!source) throw new Error(`[internal] manufacturing operation ${operation.operationId} has no source document`)
+
+  return buildReversalDocument({ source, operationId: operation.operationId, postedBy: operation.requestedBy, movementId })
+}
+
 async function postAndRecord(deps: ProductionOperationsDeps, operation: OperationRecord): Promise<InventoryMovementResultDto> {
   const movement = operation.movement
 
   if (!movement) throw new Error(`[internal] manufacturing operation ${operation.operationId} has no planned movement`)
 
   const result = await deps.inventoryService.postMovement(operation.operationId, movement)
-  const document =
-    result.status === 'accepted'
-      ? buildExecutionDocument({
-          action: operation.action,
-          orderId: operation.orderId,
-          operationId: operation.operationId,
-          postedBy: operation.requestedBy,
-          movement,
-          movementId: result.movementId,
-        })
-      : null
+  const document = result.status === 'accepted' ? await buildDocument(deps, operation, movement, result.movementId) : null
   const resolved = await deps.operationStore.resolveIfUnresolved(operation.operationId, toOutcome(result), document, deps.scope)
 
   if (resolved) return result
@@ -171,21 +195,34 @@ async function runOperation(deps: ProductionOperationsDeps, request: OperationRe
   return runOperation(deps, request)
 }
 
+async function reverseDocument(
+  deps: ProductionOperationsDeps,
+  input: DocumentReversalInput,
+): Promise<ProductionOperationResultDto> {
+  const source = await deps.executionHistoryReader.getDocument(input.documentId, deps.scope)
+
+  if (!source) return { status: 'rejected', code: 'document_not_found', message: 'Execution document was not found.' }
+
+  return runOperation(deps, {
+    action: 'reverseDocument',
+    operationId: input.operationId,
+    orderId: source.orderId,
+    payloadHash: hashOperationPayload({ action: 'reverseDocument', documentId: source.id }),
+    sourceDocumentId: source.id,
+    plan: () => deps.inventoryService.planReverseDocument(source),
+  })
+}
+
 export function createProductionOperations(deps: ProductionOperationsDeps): ProductionOperations {
   const service = deps.inventoryService
 
   return {
     issueMaterial: (input) =>
-      runOperation(deps, buildRequest('issueMaterial', input, () => service.planIssueMaterial(input))),
+      runOperation(deps, buildForwardRequest('issueMaterial', input, () => service.planIssueMaterial(input))),
     returnMaterial: (input) =>
-      runOperation(deps, buildRequest('returnMaterial', input, () => service.planReturnMaterial(input))),
+      runOperation(deps, buildForwardRequest('returnMaterial', input, () => service.planReturnMaterial(input))),
     receiveOutput: (input) =>
-      runOperation(deps, buildRequest('receiveOutput', input, () => service.planReceiveOutput(input))),
-    reverseMaterialIssue: (input) =>
-      runOperation(deps, buildRequest('reverseMaterialIssue', input, () => service.planReverseMaterialIssue(input))),
-    reverseMaterialReturn: (input) =>
-      runOperation(deps, buildRequest('reverseMaterialReturn', input, () => service.planReverseMaterialReturn(input))),
-    reverseOutputReceipt: (input) =>
-      runOperation(deps, buildRequest('reverseOutputReceipt', input, () => service.planReverseOutputReceipt(input))),
+      runOperation(deps, buildForwardRequest('receiveOutput', input, () => service.planReceiveOutput(input))),
+    reverseDocument: (input) => reverseDocument(deps, input),
   }
 }

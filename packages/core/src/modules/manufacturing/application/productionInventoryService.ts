@@ -1,6 +1,7 @@
 import type { ManufacturingScope } from '../domain/manufacturingScope'
 import type { MovementKind, PlannedMovement } from '../domain/movement'
 import { toPositiveQuantity, type PositiveQuantity } from '../domain/quantity'
+import { planReversalMovement, type ReversibleDocument } from '../domain/reversal'
 import { isTrackingSupported } from '../domain/trackingSupport'
 import type { InventoryGateway, InventoryMovementResultDto } from '../ports/inventoryGateway'
 import type { InventoryPolicyReader } from '../ports/inventoryPolicyReader'
@@ -15,11 +16,6 @@ export type MaterialMovementInput = OutputMovementInput & {
   variantId: string
 }
 
-export type MovementReversalInput = MaterialMovementInput & {
-  warehouseId: string
-  locationId: string
-}
-
 export type MovementPlanResultDto =
   | { status: 'planned'; movement: PlannedMovement }
   | { status: 'rejected'; code: string; message: string }
@@ -28,9 +24,7 @@ export interface ProductionInventoryService {
   planIssueMaterial(input: MaterialMovementInput): Promise<MovementPlanResultDto>
   planReturnMaterial(input: MaterialMovementInput): Promise<MovementPlanResultDto>
   planReceiveOutput(input: OutputMovementInput): Promise<MovementPlanResultDto>
-  planReverseMaterialIssue(input: MovementReversalInput): Promise<MovementPlanResultDto>
-  planReverseMaterialReturn(input: MovementReversalInput): Promise<MovementPlanResultDto>
-  planReverseOutputReceipt(input: MovementReversalInput): Promise<MovementPlanResultDto>
+  planReverseDocument(document: ReversibleDocument): Promise<MovementPlanResultDto>
   postMovement(operationId: string, movement: PlannedMovement): Promise<InventoryMovementResultDto>
 }
 
@@ -139,24 +133,23 @@ async function planForward(
   }
 }
 
-async function planReversal(
+async function planDocumentReversal(
   deps: ProductionInventoryDeps,
-  movementKind: MovementKind,
-  input: MovementReversalInput,
+  document: ReversibleDocument,
 ): Promise<MovementPlanResultDto> {
-  const loaded = await loadOrder(deps, input)
+  const order = await deps.productionOrderReader.getForExecution(document.orderId, deps.scope)
 
-  if (loaded.status === 'rejected') return loaded
+  if (!order) return rejected('order_not_found', 'Production order was not found.')
 
-  return {
-    status: 'planned',
-    movement: {
-      kind: movementKind,
-      variantId: input.variantId,
-      warehouseId: input.warehouseId,
-      locationId: input.locationId,
-      quantity: loaded.quantity,
-    },
+  const plan = planReversalMovement(document)
+
+  switch (plan.status) {
+    case 'already_reversed':
+      return rejected('document_already_reversed', 'This document has already been reversed.')
+    case 'unsupported':
+      return rejected('reversal_not_supported', 'This document cannot be reversed with a single inventory movement.')
+    case 'planned':
+      return plan
   }
 }
 
@@ -167,9 +160,7 @@ export function createProductionInventoryService(deps: ProductionInventoryDeps):
     planIssueMaterial: (input) => planForward(deps, issueMaterialRule, input, () => input.variantId),
     planReturnMaterial: (input) => planForward(deps, returnMaterialRule, input, () => input.variantId),
     planReceiveOutput: (input) => planForward(deps, receiveOutputRule, input, orderProduct),
-    planReverseMaterialIssue: (input) => planReversal(deps, 'restock', input),
-    planReverseMaterialReturn: (input) => planReversal(deps, 'consume', input),
-    planReverseOutputReceipt: (input) => planReversal(deps, 'consume', input),
+    planReverseDocument: (document) => planDocumentReversal(deps, document),
     postMovement: (operationId, movement) => deps.inventoryGateway.postMovement({ operationId, ...movement }),
   }
 }

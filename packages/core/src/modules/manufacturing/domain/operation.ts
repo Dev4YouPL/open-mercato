@@ -5,9 +5,7 @@ export const OPERATION_ACTIONS = [
   'issueMaterial',
   'returnMaterial',
   'receiveOutput',
-  'reverseMaterialIssue',
-  'reverseMaterialReturn',
-  'reverseOutputReceipt',
+  'reverseDocument',
 ] as const
 
 export type OperationAction = (typeof OPERATION_ACTIONS)[number]
@@ -31,18 +29,12 @@ export type OperationRecord = {
   orderId: string
   payloadHash: string
   requestedBy: string
+  sourceDocumentId: string | null
   movement: PlannedMovement | null
   state: OperationState
 }
 
-export type OperationPayload = {
-  action: OperationAction
-  orderId: string
-  variantId: string | null
-  warehouseId: string | null
-  locationId: string | null
-  quantity: number
-}
+export type OperationPayload = { action: OperationAction } & Record<string, string | number | null>
 
 export type ExistingOperationDecision =
   | { kind: 'payloadMismatch' }
@@ -50,14 +42,7 @@ export type ExistingOperationDecision =
   | { kind: 'resume' }
 
 export function hashOperationPayload(payload: OperationPayload): string {
-  const canonical = JSON.stringify([
-    payload.action,
-    payload.orderId,
-    payload.variantId,
-    payload.warehouseId,
-    payload.locationId,
-    payload.quantity,
-  ])
+  const canonical = JSON.stringify(Object.entries(payload).sort(([left], [right]) => left.localeCompare(right)))
   return createHash('sha256').update(canonical).digest('hex')
 }
 
