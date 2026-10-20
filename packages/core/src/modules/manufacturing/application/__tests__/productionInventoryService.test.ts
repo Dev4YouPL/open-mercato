@@ -1,6 +1,7 @@
 /** @jest-environment node */
 
 import type { PlannedMovement } from '../../domain/movement'
+import { executionPermissionsFor } from '../../domain/orderExecutionPermissions'
 import type { PositiveQuantity } from '../../domain/quantity'
 import type { ReversibleDocument } from '../../domain/reversal'
 import type { InventoryGateway, InventoryMovementResultDto } from '../../ports/inventoryGateway'
@@ -118,6 +119,17 @@ describe('production inventory service', () => {
       const { service } = buildService(null)
 
       expect(await service.planIssueMaterial(materialInput)).toMatchObject({ status: 'rejected', code: 'order_not_found' })
+    })
+
+    it('allows a return on a cancelled order while refusing a new issue and confirmation', async () => {
+      const { service } = buildService({ ...openOrder, ...executionPermissionsFor('cancelled') })
+
+      expect(await service.planReturnMaterial(materialInput)).toMatchObject({
+        status: 'planned',
+        execution: { documentType: 'return', movement: { kind: 'restock', locationId: 'issue-location' } },
+      })
+      expect(await service.planIssueMaterial(materialInput)).toMatchObject({ code: 'action_not_allowed' })
+      expect(await service.planConfirmProduction(confirmationInput)).toMatchObject({ code: 'action_not_allowed' })
     })
 
     it.each([0, -3, Number.NaN, Number.POSITIVE_INFINITY])('refuses quantity %p before reading the order', async (quantity) => {

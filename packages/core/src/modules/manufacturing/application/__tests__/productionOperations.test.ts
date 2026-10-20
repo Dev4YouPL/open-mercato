@@ -47,6 +47,12 @@ function issueExecution(plannedMovement: PlannedMovement): PlannedExecution {
 
 const execution = issueExecution(movement)
 
+const returnExecution: PlannedExecution = {
+  documentType: 'return',
+  movement: { ...movement, kind: 'restock' },
+  facts: execution.facts.map((fact) => ({ ...fact, factKind: 'material_returned' })),
+}
+
 const planned: ExecutionPlanResultDto = { status: 'planned', execution }
 
 function confirmationExecution(input: ProductionConfirmationInput): PlannedExecution {
@@ -127,7 +133,7 @@ function buildOperations(...results: InventoryMovementResultDto[]) {
   const planIssueMaterial = jest.fn(async (): Promise<ExecutionPlanResultDto> => planned)
   const planReturnMaterial = jest.fn(async (): Promise<ExecutionPlanResultDto> => ({
     status: 'planned',
-    execution: { ...issueExecution({ ...movement, kind: 'restock' }), documentType: 'return' },
+    execution: returnExecution,
   }))
   const planConfirmProduction = jest.fn(async (confirmation: ProductionConfirmationInput): Promise<ExecutionPlanResultDto> => ({
     status: 'planned',
@@ -139,7 +145,10 @@ function buildOperations(...results: InventoryMovementResultDto[]) {
     return { status: 'rejected', code: plan.status, message: plan.status }
   })
   let nextMovement = 1
-  const postMovement = jest.fn(async () => results.shift() ?? { status: 'accepted', movementId: `movement-${nextMovement++}` })
+  const postMovement = jest.fn(
+    async (_operationId: string, _movement: PlannedMovement): Promise<InventoryMovementResultDto> =>
+      results.shift() ?? { status: 'accepted', movementId: `movement-${nextMovement++}` },
+  )
   const inventoryService = {
     planIssueMaterial,
     planReturnMaterial,
@@ -546,4 +555,88 @@ describe('production operations', () => {
       expect(documents[1].facts[0]).toMatchObject({ factKind: 'scrap_reversed', movementId: null })
     })
   })
+
+  describe('material return', () => {
+    it('records a return of material that was never issued on the order', async () => {
+      const { operations, documents } = buildOperations()
+
+      expect(await operations.returnMaterial(input)).toMatchObject({ status: 'accepted' })
+      expect(documents.map((document) => [document.documentType, document.facts[0].factKind])).toEqual([
+        ['return', 'material_returned'],
+      ])
+    })
+
+    it('records a return larger than the earlier issue when WMS accepts it', async () => {
+      const { operations, documents } = buildOperations()
+      await operations.issueMaterial(input)
+
+      expect(await operations.returnMaterial({ ...input, operationId: 'operation-2', quantity: 10 })).toMatchObject({
+        status: 'accepted',
+      })
+      expect(documents).toHaveLength(2)
+    })
+  })
+
+  describe('correcting issues, returns and confirmations', () => {
+    it('reverses a return with a consume movement from its snapshot', async () => {
+      const { operations, documents, postMovement } = buildOperations()
+      await operations.returnMaterial(input)
+
+      await operations.reverseDocument({ operationId: 'operation-2', documentId: 'document-1' })
+
+      expect(postMovement).toHaveBeenLastCalledWith('operation-2', movement)
+      expect(documents[1]).toMatchObject({ documentType: 'reversal', reversesDocumentId: 'document-1' })
+      expect(documents[1].facts[0].factKind).toBe('material_consumed')
+    })
+
+    it('allows a new, correct issue after reversing a wrong one', async () => {
+      const { operations, documents } = buildOperations()
+      await operations.issueMaterial(input)
+      await operations.reverseDocument({ operationId: 'operation-2', documentId: 'document-1' })
+
+      expect(await operations.issueMaterial({ ...input, operationId: 'operation-3', quantity: 3 })).toMatchObject({
+        status: 'accepted',
+      })
+      expect(documents.map((document) => document.documentType)).toEqual(['issue', 'reversal', 'issue'])
+    })
+
+    it('restores the original effect when a mistaken reversal is reversed', async () => {
+      const { operations, postMovement } = buildOperations()
+      await operations.issueMaterial(input)
+      await operations.reverseDocument({ operationId: 'operation-2', documentId: 'document-1' })
+      await operations.reverseDocument({ operationId: 'operation-3', documentId: 'document-2' })
+
+      expect(postMovement.mock.calls.map(([, posted]) => posted.kind)).toEqual(['consume', 'restock', 'consume'])
+    })
+
+    it('reverses a confirmation together with its receipt and scrap', async () => {
+      const { operations, documents, postMovement } = buildOperations()
+      await operations.confirmProduction({ operationId: 'operation-1', orderId: 'order-1', goodQuantity: 8, scrapQuantity: 2 })
+
+      expect(await operations.reverseDocument({ operationId: 'operation-2', documentId: 'document-1' })).toMatchObject({
+        status: 'accepted',
+      })
+      expect(postMovement).toHaveBeenLastCalledWith(
+        'operation-2',
+        expect.objectContaining({ kind: 'consume', variantId: 'product-1', quantity: 8 }),
+      )
+      expect(documents[1].facts.map((fact) => [fact.factKind, fact.quantity])).toEqual([
+        ['output_reversed', 8],
+        ['scrap_reversed', 2],
+      ])
+    })
+
+    it('allows a new, correct confirmation after reversing a wrong one', async () => {
+      const { operations, documents } = buildOperations()
+      const confirmation = { operationId: 'operation-1', orderId: 'order-1', goodQuantity: 8, scrapQuantity: 0 }
+      await operations.confirmProduction(confirmation)
+      await operations.reverseDocument({ operationId: 'operation-2', documentId: 'document-1' })
+
+      expect(await operations.confirmProduction({ ...confirmation, operationId: 'operation-3', goodQuantity: 6 })).toMatchObject({
+        status: 'accepted',
+      })
+      expect(documents.map((document) => document.documentType)).toEqual(['confirmation', 'reversal', 'confirmation'])
+    })
+  })
 })
+
