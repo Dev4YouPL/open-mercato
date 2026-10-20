@@ -29,6 +29,7 @@ const listItemSchema = z.object({
   outputVariantId: uuidSchema,
   status: z.enum(['draft', 'released']),
   isIncomplete: z.boolean(),
+  isAvailableForNewOrders: z.boolean(),
   outputVariant: z.object({
     id: uuidSchema,
     name: z.string().nullable(),
@@ -38,7 +39,7 @@ const listItemSchema = z.object({
   }).nullable(),
   availability: z.object({
     isAvailable: z.boolean(),
-    reason: z.enum(['draft', 'variantMissing', 'variantInactive']).nullable(),
+    reason: z.enum(['draft', 'withdrawn', 'variantMissing', 'variantInactive']).nullable(),
   }),
 })
 

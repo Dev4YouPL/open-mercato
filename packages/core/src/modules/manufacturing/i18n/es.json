@@ -77,5 +77,20 @@
   "manufacturing.boms.availability.unavailable": "No disponible",
   "manufacturing.boms.availability.reason.draft": "Las revisiones en borrador no se pueden usar en órdenes de producción.",
   "manufacturing.boms.availability.reason.variantMissing": "La variante de salida ya no existe.",
-  "manufacturing.boms.availability.reason.variantInactive": "La variante de salida está inactiva."
+  "manufacturing.boms.availability.reason.variantInactive": "La variante de salida está inactiva.",
+  "manufacturing.boms.availability.reason.withdrawn": "Esta revisión se retiró de los nuevos pedidos de producción.",
+  "manufacturing.boms.availability.toggle.label": "Disponible para nuevos pedidos de producción",
+  "manufacturing.boms.availability.toggle.descriptionOn": "Esta revisión se puede seleccionar al crear un pedido de producción.",
+  "manufacturing.boms.availability.toggle.descriptionOff": "Esta revisión no se puede seleccionar para pedidos nuevos. Los pedidos existentes no se ven afectados.",
+  "manufacturing.boms.availability.toggle.confirmTitle": "¿Retirar esta revisión?",
+  "manufacturing.boms.availability.toggle.confirmDescription": "Los nuevos pedidos de producción no podrán usar esta revisión. Los pedidos existentes la conservarán y podrá volver a habilitarla cuando quiera.",
+  "manufacturing.boms.availability.toggle.confirmAction": "Retirar",
+  "manufacturing.boms.availability.toggle.enabled": "La revisión está disponible para pedidos nuevos.",
+  "manufacturing.boms.availability.toggle.disabled": "La revisión se retiró de los pedidos nuevos.",
+  "manufacturing.boms.availability.toggle.failed": "No se pudo cambiar la disponibilidad de la revisión.",
+  "manufacturing.errors.bomAvailabilityRequiresRelease": "Solo se pueden habilitar para pedidos nuevos las revisiones publicadas.",
+  "manufacturing.errors.invalidAvailabilityPayload": "La solicitud de disponibilidad no es válida.",
+  "manufacturing.errors.bomAvailabilityFailed": "No se pudo cambiar la disponibilidad de la BOM.",
+  "manufacturing.errors.bomUnavailableForNewOrders": "La revisión de BOM seleccionada no está disponible para nuevos pedidos de producción.",
+  "manufacturing.audit.bom.set_availability": "Cambio de disponibilidad de BOM"
 }

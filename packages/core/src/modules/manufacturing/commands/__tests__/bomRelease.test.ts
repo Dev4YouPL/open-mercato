@@ -190,6 +190,7 @@ beforeEach(() => {
 
 describe('releaseBomCommand', () => {
   it('releases a BOM and records before/after snapshots', async () => {
+    bom.isAvailableForNewOrders = false
     const result = await releaseBomCommand.execute(input, ctx)
 
     expect(result).toEqual({
@@ -198,6 +199,7 @@ describe('releaseBomCommand', () => {
     })
 
     expect(bom.status).toBe('released')
+    expect(bom.isAvailableForNewOrders).toBe(true)
     expect(bom.releasedAt).toBeInstanceOf(Date)
     expect(bom.releasedByUserId).toBe(userId)
 

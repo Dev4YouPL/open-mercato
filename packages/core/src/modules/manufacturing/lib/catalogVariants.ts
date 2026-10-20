@@ -167,12 +167,31 @@ export async function loadCatalogVariantSummaries(
 
   return new Map(variants.map((variant) => [
     variant.id,
-    {
-      id: variant.id,
-      name: variant.name ?? null,
-      sku: variant.sku ?? null,
-      isActive: variant.isActive,
-      isDeleted: variant.deletedAt != null,
-    },
+    toCatalogVariantSummary(variant),
   ]))
+}
+
+function toCatalogVariantSummary(variant: Pick<CatalogProductVariant, 'id' | 'name' | 'sku' | 'isActive' | 'deletedAt'>): CatalogVariantSummary {
+  return {
+    id: variant.id,
+    name: variant.name ?? null,
+    sku: variant.sku ?? null,
+    isActive: variant.isActive,
+    isDeleted: variant.deletedAt != null,
+  }
+}
+
+export async function loadFreshCatalogVariantSummary(
+  em: EntityManager,
+  variantId: string,
+  scope: CatalogVariantScope,
+): Promise<CatalogVariantSummary | null> {
+  const variant = await findOneWithDecryption(
+    em,
+    CatalogProductVariant,
+    { id: variantId, tenantId: scope.tenantId, organizationId: scope.organizationId },
+    { fields: ['id', 'name', 'sku', 'isActive', 'deletedAt'], refresh: true },
+    scope,
+  )
+  return variant ? toCatalogVariantSummary(variant) : null
 }

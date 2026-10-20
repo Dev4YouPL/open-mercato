@@ -18,7 +18,7 @@ import { crudFormExtensionSpotId } from '@open-mercato/shared/modules/widgets/ex
 
 import type {
   bomItemResponseSchema,
-  bomResponseSchema,
+  bomListItemSchema,
 } from '../../api/openapi'
 import {
   bomCreateSchema,
@@ -28,7 +28,7 @@ import {
 } from '../../data/validators'
 import { CatalogVariantSelect } from './CatalogVariantSelect'
 
-export type BomRecord = z.infer<typeof bomResponseSchema>
+export type BomRecord = z.infer<typeof bomListItemSchema>
 export type BomItemRecord = z.infer<typeof bomItemResponseSchema>
 export type BomFormValues = Record<string, unknown>
 

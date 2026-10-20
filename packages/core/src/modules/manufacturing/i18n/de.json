@@ -77,5 +77,20 @@
   "manufacturing.boms.availability.unavailable": "Nicht verfügbar",
   "manufacturing.boms.availability.reason.draft": "Entwurfsrevisionen können nicht in Fertigungsaufträgen verwendet werden.",
   "manufacturing.boms.availability.reason.variantMissing": "Die Ausgabevariante existiert nicht mehr.",
-  "manufacturing.boms.availability.reason.variantInactive": "Die Ausgabevariante ist inaktiv."
+  "manufacturing.boms.availability.reason.variantInactive": "Die Ausgabevariante ist inaktiv.",
+  "manufacturing.boms.availability.reason.withdrawn": "Diese Revision wurde für neue Produktionsaufträge zurückgezogen.",
+  "manufacturing.boms.availability.toggle.label": "Für neue Produktionsaufträge verfügbar",
+  "manufacturing.boms.availability.toggle.descriptionOn": "Diese Revision kann beim Erstellen eines Produktionsauftrags ausgewählt werden.",
+  "manufacturing.boms.availability.toggle.descriptionOff": "Diese Revision kann nicht für neue Aufträge ausgewählt werden. Bestehende Aufträge bleiben unverändert.",
+  "manufacturing.boms.availability.toggle.confirmTitle": "Diese Revision zurückziehen?",
+  "manufacturing.boms.availability.toggle.confirmDescription": "Neue Produktionsaufträge können diese Revision nicht mehr verwenden. Bestehende Aufträge behalten sie; Sie können sie jederzeit wieder verfügbar machen.",
+  "manufacturing.boms.availability.toggle.confirmAction": "Zurückziehen",
+  "manufacturing.boms.availability.toggle.enabled": "Die Revision ist für neue Aufträge verfügbar.",
+  "manufacturing.boms.availability.toggle.disabled": "Die Revision wurde für neue Aufträge zurückgezogen.",
+  "manufacturing.boms.availability.toggle.failed": "Die Verfügbarkeit der Revision konnte nicht geändert werden.",
+  "manufacturing.errors.bomAvailabilityRequiresRelease": "Nur freigegebene Revisionen können für neue Aufträge verfügbar gemacht werden.",
+  "manufacturing.errors.invalidAvailabilityPayload": "Ungültige Anfrage zur Verfügbarkeitsänderung.",
+  "manufacturing.errors.bomAvailabilityFailed": "Die BOM-Verfügbarkeit konnte nicht geändert werden.",
+  "manufacturing.errors.bomUnavailableForNewOrders": "Die ausgewählte BOM-Revision ist für neue Produktionsaufträge nicht verfügbar.",
+  "manufacturing.audit.bom.set_availability": "BOM-Verfügbarkeit geändert"
 }

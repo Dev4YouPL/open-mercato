@@ -29,7 +29,7 @@ import { Button } from '@open-mercato/ui/primitives/button'
 import { BomForm } from '../../../../components/boms/BomForm'
 import { BomItemsSection } from '../../../../components/boms/BomItemsSection'
 import type { BomRecord } from '../../../../components/boms/formConfig'
-import { bomResponseSchema } from '../../../../api/openapi'
+import { bomListItemSchema } from '../../../../api/openapi'
 
 import {
   BomStatusBadges,
@@ -42,6 +42,8 @@ import {
 import {
   BomReleaseBlockedNotice,
 } from '../../../../components/boms/BomReleaseBlockedNotice'
+import { BomAvailabilityBadge } from '../../../../components/boms/BomAvailabilityBadge'
+import { BomAvailabilityToggle } from '../../../../components/boms/BomAvailabilityToggle'
 
 import type {
   BomReleaseTrackingViolation,
@@ -52,7 +54,7 @@ import { Alert } from '@open-mercato/ui/primitives/alert'
 const uuidSchema = z.string().uuid()
 
 const bomLookupResponseSchema = z.object({
-  items: z.array(bomResponseSchema),
+  items: z.array(bomListItemSchema),
 })
 
 const featureCheckResponseSchema = z.object({
@@ -326,6 +328,7 @@ function BomDetailContent({ bomId }: { bomId: string }) {
         actions={
           <>
             <BomStatusBadges bom={bom} />
+            {bom.status === 'released' ? <BomAvailabilityBadge availability={bom.availability} /> : null}
 
             {bom.status === 'draft' && canManageManufacturing ? (
               <BomReleaseAction
@@ -342,6 +345,14 @@ function BomDetailContent({ bomId }: { bomId: string }) {
       />
 
       <PageBody>
+        {bom.status === 'released' ? (
+          <BomAvailabilityToggle
+            bom={bom}
+            canManage={canManageManufacturing}
+            disabled={isLoading || permissionsFailed}
+            onChanged={reloadBom}
+          />
+        ) : null}
         <BomReleaseBlockedNotice
           violations={releaseViolations}
         />

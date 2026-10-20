@@ -15,6 +15,7 @@ import {
 const decoratableBomSchema = z.object({
   outputVariantId: bomResponseSchema.shape.outputVariantId,
   status: bomResponseSchema.shape.status,
+  isAvailableForNewOrders: bomResponseSchema.shape.isAvailableForNewOrders,
 })
 
 export async function decorateBomListItems(

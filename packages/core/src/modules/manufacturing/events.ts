@@ -9,6 +9,15 @@ export type BomReleasedEventPayload = {
   isIncomplete: boolean
 }
 
+export type BomAvailabilityChangedEventPayload = {
+  id: string
+  tenantId: string
+  organizationId: string
+  outputVariantId: string
+  revision: string
+  isAvailableForNewOrders: boolean
+}
+
 const events = [
     {
         id: 'manufacturing.bom.created',
@@ -37,6 +46,12 @@ const events = [
     {
         id: 'manufacturing.bom.released',
         label: 'BOM Released',
+        entity: 'bom',
+        category: 'lifecycle',
+    },
+    {
+        id: 'manufacturing.bom.availability_changed',
+        label: 'BOM Availability Changed',
         entity: 'bom',
         category: 'lifecycle',
     },

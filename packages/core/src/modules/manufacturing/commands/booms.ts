@@ -12,6 +12,7 @@ import { withAtomicFlush } from '@open-mercato/shared/lib/commands/flush'
 import { emitCrudSideEffects } from '@open-mercato/shared/lib/commands/helpers'
 import {
   loadActiveBomItems,
+  requireLockedBom,
   requireLockedDraftBom,
   resolveBomCommandScope,
 } from '../lib/bomCommandHelpers'
@@ -30,12 +31,14 @@ import {
 import type { ManufacturingBomStatus } from '../data/entities'
 import {
   bomCreateSchema,
+  bomAvailabilityUpdateSchema,
   bomDeleteSchema,
   bomReleaseSchema,
   bomUpdateSchema,
 } from '../data/validators'
 import type {
   BomCreateInput,
+  BomAvailabilityUpdateInput,
   BomDeleteInput,
   BomReleaseInput,
   BomUpdateInput,
@@ -54,8 +57,9 @@ import { resolveNextBomRevision } from '../lib/bomRevisions'
 
 import type { EventBus } from '@open-mercato/events/types'
 
-import type { BomReleasedEventPayload } from '../events'
+import type { BomAvailabilityChangedEventPayload, BomReleasedEventPayload } from '../events'
 import { runBomCommitEffects } from '../lib/bomCommitEffects'
+import { assertBomIsReleased } from '../lib/bomValidation'
 import {
   collectReleaseVariantIds,
   findTrackingViolations,
@@ -72,6 +76,11 @@ type BomResult = {
 
 type BomReleaseResult = BomResult & {
   isIncomplete: boolean
+}
+
+type BomAvailabilityResult = BomResult & {
+  isAvailableForNewOrders: boolean
+  updatedAt: string
 }
 
 type BomItemSnapshot = {
@@ -95,6 +104,7 @@ type BomSnapshot = {
   baseQuantity: string
   revision: string
   status: ManufacturingBomStatus
+  isAvailableForNewOrders: boolean
   isIncomplete: boolean
   releasedAt: string | null
   releasedByUserId: string | null
@@ -174,6 +184,7 @@ function snapshotBom(
     baseQuantity: bom.baseQuantity,
     revision: bom.revision,
     status: bom.status,
+    isAvailableForNewOrders: bom.isAvailableForNewOrders,
     isIncomplete: bom.isIncomplete,
     releasedAt: bom.releasedAt?.toISOString() ?? null,
     releasedByUserId: bom.releasedByUserId ?? null,
@@ -550,6 +561,7 @@ async function executeBomRelease(
         const now = new Date()
 
         bom.status = 'released'
+        bom.isAvailableForNewOrders = true
         bom.isIncomplete = isIncompleteRelease(items)
         bom.releasedAt = now
         bom.releasedByUserId = ctx.auth?.sub ?? null
@@ -616,9 +628,80 @@ async function executeBomRelease(
   return result
 }
 
+async function executeBomAvailabilityChange(
+  input: BomAvailabilityUpdateInput,
+  ctx: CommandRuntimeContext,
+): Promise<BomAvailabilityResult> {
+  const { translate } = await resolveTranslations()
+  const scope = resolveBomCommandScope(ctx, translate('manufacturing.errors.scopeRequired'))
+  const em = ctx.transactionalEm ?? ctx.container.resolve<EntityManager>('em').fork()
+  const dataEngine = ctx.container.resolve<DataEngine>('dataEngine')
+  const eventBus = ctx.container.resolve<EventBus>('eventBus')
+  let bom!: ManufacturingBom
+  let before: BomSnapshot | null = null
+  let after: BomSnapshot | null = null
+  let changed = false
+
+  await withAtomicFlush(em, [
+    async () => {
+      bom = await requireLockedBom(em, input.id, scope, translate)
+      assertBomIsReleased(bom, translate('manufacturing.errors.bomAvailabilityRequiresRelease'))
+      await enforceCommandOptimisticLockWithGuards(ctx.container, {
+        resourceKind: 'manufacturing.bom',
+        resourceId: bom.id,
+        current: bom.updatedAt,
+        request: ctx.request,
+      })
+      if (bom.isAvailableForNewOrders === input.isAvailableForNewOrders) return
+      changed = true
+      before = snapshotBom(bom, [])
+      bom.isAvailableForNewOrders = input.isAvailableForNewOrders
+      bom.updatedAt = new Date()
+      em.persist(bom)
+    },
+    () => {
+      if (changed) after = snapshotBom(bom, [])
+    },
+  ], { transaction: !ctx.transactionalEm, label: 'manufacturing.boms.set_availability' })
+
+  const result: BomAvailabilityResult = {
+    bomId: bom.id,
+    isAvailableForNewOrders: bom.isAvailableForNewOrders,
+    updatedAt: bom.updatedAt.toISOString(),
+  }
+  if (!changed) return result
+  executionSnapshots.set(result, { before, after })
+
+  const payload: BomAvailabilityChangedEventPayload = {
+    id: bom.id,
+    tenantId: bom.tenantId,
+    organizationId: bom.organizationId,
+    outputVariantId: bom.outputVariantId,
+    revision: bom.revision,
+    isAvailableForNewOrders: bom.isAvailableForNewOrders,
+  }
+  await runBomCommitEffects(em, async () => {
+    await emitCrudSideEffects({
+      dataEngine,
+      action: 'updated',
+      entity: bom,
+      identifiers: { id: bom.id, tenantId: bom.tenantId, organizationId: bom.organizationId },
+      events: bomCrudEvents,
+      indexer: bomCrudIndexer,
+    })
+    await dataEngine.flushOrmEntityChanges(ctx.bulkImport)
+    await eventBus.emitEvent('manufacturing.bom.availability_changed', payload, {
+      persistent: true,
+      tenantId: scope.tenantId,
+      organizationId: scope.organizationId,
+    })
+  })
+  return result
+}
+
 async function buildBomLog(
   result: BomResult,
-  operation: BomMutation['operation'] | 'release',
+  operation: BomMutation['operation'] | 'release' | 'set_availability',
 ): Promise<CommandLogMetadata | null> {
   const snapshots = executionSnapshots.get(result)
 
@@ -748,14 +831,33 @@ const releaseBomCommand: CommandHandler<
   },
 }
 
+const setBomAvailabilityCommand: CommandHandler<
+  BomAvailabilityUpdateInput,
+  BomAvailabilityResult
+> = {
+  id: 'manufacturing.boms.set_availability',
+  isUndoable: false,
+  execute(input, ctx) {
+    return executeBomAvailabilityChange(bomAvailabilityUpdateSchema.parse(input), ctx)
+  },
+  captureAfter(_input, result) {
+    return executionSnapshots.get(result)?.after
+  },
+  buildLog({ result }) {
+    return buildBomLog(result, 'set_availability')
+  },
+}
+
 registerCommand(createBomCommand)
 registerCommand(updateBomCommand)
 registerCommand(deleteBomCommand)
 registerCommand(releaseBomCommand)
+registerCommand(setBomAvailabilityCommand)
 
 export {
   createBomCommand,
   updateBomCommand,
   deleteBomCommand,
-  releaseBomCommand
+  releaseBomCommand,
+  setBomAvailabilityCommand
 }

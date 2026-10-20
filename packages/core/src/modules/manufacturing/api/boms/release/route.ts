@@ -1,22 +1,12 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 
-import {
-  getAuthFromRequest,
-} from '@open-mercato/shared/lib/auth/server'
-import {
-  createRequestContainer,
-} from '@open-mercato/shared/lib/di/container'
 import type {
   CommandBus,
-  CommandRuntimeContext,
 } from '@open-mercato/shared/lib/commands'
 import {
   getCommandInterceptorHttpRejection,
 } from '@open-mercato/shared/lib/commands/errors'
-import {
-  serializeOperationMetadata,
-} from '@open-mercato/shared/lib/commands/operationMetadata'
 import {
   CrudHttpError,
   isCrudHttpError,
@@ -36,9 +26,6 @@ import type {
 import {
   getTelemetryRuntime,
 } from '@open-mercato/shared/lib/telemetry/runtime'
-import {
-  resolveOrganizationScopeForRequest,
-} from '@open-mercato/core/modules/directory/utils/organizationScope'
 
 import {
   bomReleaseSchema,
@@ -46,9 +33,7 @@ import {
 import type {
   BomReleaseInput,
 } from '../../../data/validators'
-import {
-  resolveBomCommandScope,
-} from '../../../lib/bomCommandHelpers'
+import { attachOperationHeader, resolveBomActionContext } from '../../../lib/bomActionRoute'
 
 const uuidSchema = z.string().uuid()
 
@@ -85,16 +70,6 @@ const releaseBlockedSchema = errorSchema.extend({
   variantIds: z.array(uuidSchema).optional(),
 })
 
-const operationLogSchema = z.object({
-  id: z.string().min(1),
-  commandId: z.string().min(1),
-  undoToken: z.string().min(1),
-  actionLabel: z.string().nullish(),
-  resourceKind: z.string().nullish(),
-  resourceId: z.string().nullish(),
-  createdAt: z.union([z.date(), z.string()]).nullish(),
-})
-
 export const metadata = {
   POST: {
     requireAuth: true,
@@ -102,84 +77,11 @@ export const metadata = {
   },
 }
 
-function attachOperationHeader(
-  response: Response,
-  logEntry: unknown,
-): void {
-  const parsed = operationLogSchema.safeParse(logEntry)
-
-  if (!parsed.success) return
-
-  const log = parsed.data
-
-  const executedAt = log.createdAt instanceof Date
-    ? log.createdAt.toISOString()
-    : log.createdAt ?? new Date().toISOString()
-
-  response.headers.set(
-    'x-om-operation',
-    serializeOperationMetadata({
-      id: log.id,
-      undoToken: log.undoToken,
-      commandId: log.commandId,
-      actionLabel: log.actionLabel ?? null,
-      resourceKind: log.resourceKind ?? null,
-      resourceId: log.resourceId ?? null,
-      executedAt,
-    }),
-  )
-}
-
 export async function POST(req: Request): Promise<Response> {
   try {
     const { translate } = await resolveTranslations()
 
-    const auth = await getAuthFromRequest(req)
-
-    if (!auth?.sub || !auth.tenantId) {
-      throw new CrudHttpError(401, {
-        error: translate('manufacturing.errors.unauthorized'),
-      })
-    }
-
-    const container = await createRequestContainer()
-
-    const organizationScope =
-      await resolveOrganizationScopeForRequest({
-        container,
-        auth,
-        request: req,
-      })
-
-    if (organizationScope.selectionRejected) {
-      throw new CrudHttpError(403, {
-        error: translate('manufacturing.errors.forbidden'),
-      })
-    }
-
-    const organizationId =
-      organizationScope.selectedId ?? auth.orgId
-
-    if (!organizationId) {
-      throw new CrudHttpError(400, {
-        error: translate('manufacturing.errors.scopeRequired'),
-      })
-    }
-
-    const ctx: CommandRuntimeContext = {
-      container,
-      auth,
-      organizationScope,
-      selectedOrganizationId: organizationId,
-      organizationIds:
-        organizationScope.filterIds ?? [organizationId],
-      request: req,
-    }
-
-    const scope = resolveBomCommandScope(
-      ctx,
-      translate('manufacturing.errors.scopeRequired'),
-    )
+    const { container, ctx, scope, userId } = await resolveBomActionContext(req, translate)
 
     const parsed = bomReleaseSchema.safeParse(
       await readJsonSafe<unknown>(req),
@@ -200,7 +102,7 @@ export async function POST(req: Request): Promise<Response> {
       container,
       req,
       auth: {
-        userId: auth.sub,
+        userId,
         tenantId: scope.tenantId,
         organizationId: scope.organizationId,
       },

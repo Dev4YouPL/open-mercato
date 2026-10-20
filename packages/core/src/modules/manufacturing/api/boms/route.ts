@@ -89,6 +89,8 @@ function transformBomResponse(item: unknown) {
       record.base_quantity ?? record.baseQuantity,
     revision: record.revision,
     status: record.status,
+    isAvailableForNewOrders:
+      record.is_available_for_new_orders ?? record.isAvailableForNewOrders,
     isIncomplete:
       record.is_incomplete ?? record.isIncomplete,
     releasedAt: serializeTimestamp(
@@ -144,6 +146,7 @@ const crud = makeCrudRoute<
       'base_quantity',
       'revision',
       'status',
+      'is_available_for_new_orders',
       'is_incomplete',
       'released_at',
       'released_by_user_id',
@@ -207,6 +210,15 @@ const crud = makeCrudRoute<
       if (query.isIncomplete !== undefined) {
         filters.is_incomplete = {
           $eq: query.isIncomplete,
+        }
+      }
+
+      if (query.availableForNewOrders !== undefined) {
+        if (query.status && query.status !== 'released') {
+          filters.id = { $eq: NO_MATCH_ID }
+        } else {
+          filters.status = { $eq: 'released' }
+          filters.is_available_for_new_orders = { $eq: query.availableForNewOrders }
         }
       }
 

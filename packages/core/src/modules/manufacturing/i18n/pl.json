@@ -120,5 +120,20 @@
   "manufacturing.boms.availability.unavailable": "Niedostępny",
   "manufacturing.boms.availability.reason.draft": "Rewizja robocza nie może być użyta w zleceniu.",
   "manufacturing.boms.availability.reason.variantMissing": "Wariant wynikowy nie istnieje.",
-  "manufacturing.boms.availability.reason.variantInactive": "Wariant wynikowy jest nieaktywny."
+  "manufacturing.boms.availability.reason.variantInactive": "Wariant wynikowy jest nieaktywny.",
+  "manufacturing.boms.availability.reason.withdrawn": "Rewizja została wycofana z użycia w nowych zleceniach.",
+  "manufacturing.boms.availability.toggle.label": "Dostępna dla nowych zleceń produkcyjnych",
+  "manufacturing.boms.availability.toggle.descriptionOn": "Rewizję można wybrać podczas tworzenia zlecenia produkcyjnego.",
+  "manufacturing.boms.availability.toggle.descriptionOff": "Rewizji nie można wybrać w nowych zleceniach. Istniejące zlecenia nie są zmieniane.",
+  "manufacturing.boms.availability.toggle.confirmTitle": "Wycofać tę rewizję?",
+  "manufacturing.boms.availability.toggle.confirmDescription": "Nowe zlecenia produkcyjne nie będą mogły korzystać z tej rewizji. Istniejące zlecenia ją zachowają, a dostępność można w każdej chwili przywrócić.",
+  "manufacturing.boms.availability.toggle.confirmAction": "Wycofaj",
+  "manufacturing.boms.availability.toggle.enabled": "Rewizja jest dostępna dla nowych zleceń.",
+  "manufacturing.boms.availability.toggle.disabled": "Rewizja została wycofana z nowych zleceń.",
+  "manufacturing.boms.availability.toggle.failed": "Nie udało się zmienić dostępności rewizji.",
+  "manufacturing.errors.bomAvailabilityRequiresRelease": "Dostępność dla nowych zleceń można zmienić tylko dla wydanej rewizji.",
+  "manufacturing.errors.invalidAvailabilityPayload": "Nieprawidłowe żądanie zmiany dostępności.",
+  "manufacturing.errors.bomAvailabilityFailed": "Nie udało się zmienić dostępności BOM-u.",
+  "manufacturing.errors.bomUnavailableForNewOrders": "Wybrana rewizja BOM nie jest dostępna dla nowych zleceń produkcyjnych.",
+  "manufacturing.audit.bom.set_availability": "Zmiana dostępności BOM-u"
 }

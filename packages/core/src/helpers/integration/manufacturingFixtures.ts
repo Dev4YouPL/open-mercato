@@ -35,6 +35,7 @@ const bomSchema = z.object({
   revision: z.string(),
   status: z.enum(['draft', 'released']),
   isIncomplete: z.boolean(),
+  isAvailableForNewOrders: z.boolean(),
   releasedAt: z.string().nullable(),
   releasedByUserId: uuidSchema.nullable(),
   updatedAt: z.string().datetime({ offset: true }),
@@ -56,6 +57,7 @@ type ExpectedItem = Pick<ItemState, 'id' | 'updatedAt'>
 type TrackingRequirement = 'lot' | 'serial' | 'expiration'
 
 type BomFixtures = {
+  organizationId: string
   productId: string
   outputVariantId: string
   componentVariantId: string
@@ -82,6 +84,7 @@ type BomFixtures = {
     bomId: string,
     expectedItems?: readonly ExpectedItem[],
   ) => Promise<APIResponse>
+  setAvailability: (bomId: string, isAvailable: boolean, updatedAt: string) => Promise<APIResponse>
   createProfile: (
     variantId: string | null,
     requirements: readonly TrackingRequirement[],
@@ -364,6 +367,7 @@ export async function withBomFixtures(
     )
 
     const fixture: BomFixtures = {
+      organizationId: scope.organizationId,
       productId,
       outputVariantId,
       componentVariantId,
@@ -416,6 +420,13 @@ export async function withBomFixtures(
           },
           bom.updatedAt,
         )
+      },
+
+      async setAvailability(bomId, isAvailable, updatedAt) {
+        return call('POST', '/api/manufacturing/boms/availability', {
+          id: bomId,
+          isAvailableForNewOrders: isAvailable,
+        }, updatedAt)
       },
 
       async createProfile(variantId, requirements) {
