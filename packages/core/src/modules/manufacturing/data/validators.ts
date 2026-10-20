@@ -67,6 +67,7 @@ export const bomReleaseSchema = z
     ),
   })
   .strict()
+
   .superRefine((input, context) => {
     const seenItemIds = new Set<string>()
 
@@ -84,6 +85,11 @@ export const bomReleaseSchema = z
       seenItemIds.add(normalizedItemId)
     })
   })
+
+export const bomAvailabilityUpdateSchema = z.object({
+  id: uuidSchema,
+  isAvailableForNewOrders: z.boolean(),
+}).strict()
 
 const bomItemEditableSchema = z
   .object({
@@ -125,6 +131,9 @@ export const bomListQuerySchema = paginationSchema.extend({
   search: z.string().trim().max(200).optional(),
   status: bomStatusSchema.optional(),
   isIncomplete: optionalBooleanQuerySchema,
+  availableForNewOrders: optionalBooleanQuerySchema.describe(
+    'Filter released BOM revisions by whether they can be selected for new production orders.',
+  ),
   sortField: z.enum([
     'id',
     'outputVariantId',
@@ -153,6 +162,7 @@ export type BomCreateInput = z.infer<typeof bomCreateSchema>
 export type BomUpdateInput = z.infer<typeof bomUpdateSchema>
 export type BomDeleteInput = z.infer<typeof bomDeleteSchema>
 export type BomReleaseInput = z.infer<typeof bomReleaseSchema>
+export type BomAvailabilityUpdateInput = z.infer<typeof bomAvailabilityUpdateSchema>
 
 export type BomItemCreateInput = z.infer<typeof bomItemCreateSchema>
 export type BomItemUpdateInput = z.infer<typeof bomItemUpdateSchema>

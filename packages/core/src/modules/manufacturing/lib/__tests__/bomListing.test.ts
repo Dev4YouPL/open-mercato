@@ -54,14 +54,17 @@ describe('decorateBomListItems', () => {
     const released: Record<string, unknown> = {
       outputVariantId: firstVariantId,
       status: 'released',
+      isAvailableForNewOrders: true,
     }
     const draft: Record<string, unknown> = {
       outputVariantId: firstVariantId,
       status: 'draft',
+      isAvailableForNewOrders: true,
     }
     const missing: Record<string, unknown> = {
       outputVariantId: secondVariantId,
       status: 'released',
+      isAvailableForNewOrders: true,
     }
 
     await decorateBomListItems(em, [released, draft, missing], scope)
@@ -96,6 +99,7 @@ describe('decorateBomListItems', () => {
       baseQuantity: '1.000000',
       revision: '1',
       status: 'released',
+      isAvailableForNewOrders: true,
       isIncomplete: false,
       releasedAt: '2026-10-16T09:38:12.484Z',
       releasedByUserId: '66666666-6666-4666-8666-666666666666',
@@ -131,6 +135,7 @@ describe('decorateBomListItems', () => {
     await expect(decorateBomListItems(em, [{
       outputVariantId: firstVariantId,
       status: 'released',
+      isAvailableForNewOrders: true,
     }], scope)).rejects.toBe(error)
   })
 })

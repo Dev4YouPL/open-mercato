@@ -22,6 +22,7 @@ const listItem = {
   baseQuantity: '1',
   revision: '1',
   status: 'released',
+  isAvailableForNewOrders: true,
   isIncomplete: false,
   releasedAt: timestamp,
   releasedByUserId: null,

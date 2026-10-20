@@ -1,12 +1,13 @@
 import type { EntityManager } from '@mikro-orm/postgresql'
 
 import { CatalogProductVariant } from '@open-mercato/core/modules/catalog/data/entities'
-import { findWithDecryption } from '@open-mercato/shared/lib/encryption/find'
+import { findOneWithDecryption, findWithDecryption } from '@open-mercato/shared/lib/encryption/find'
 
 import {
   findCatalogVariantIdsBySearch,
   loadCatalogVariantSummaries,
   loadCatalogVariantsForRelease,
+  loadFreshCatalogVariantSummary,
 } from '../catalogVariants'
 
 jest.mock('@open-mercato/shared/lib/encryption/find', () => ({
@@ -15,6 +16,7 @@ jest.mock('@open-mercato/shared/lib/encryption/find', () => ({
 }))
 
 const findVariants = jest.mocked(findWithDecryption)
+const findVariant = jest.mocked(findOneWithDecryption)
 
 const scope = {
   tenantId: '11111111-1111-4111-8111-111111111111',
@@ -316,5 +318,32 @@ describe('loadCatalogVariantSummaries', () => {
       isActive: false,
       isDeleted: true,
     })
+  })
+})
+
+describe('loadFreshCatalogVariantSummary', () => {
+  beforeEach(() => findVariant.mockReset())
+
+  it('reads the scoped variant with refresh and maps its state', async () => {
+    const variant = createVariant(firstVariantId, 'Finished product', 'OUTPUT-01')
+    variant.isActive = false
+    findVariant.mockResolvedValue(variant)
+    await expect(loadFreshCatalogVariantSummary(em, firstVariantId, scope)).resolves.toEqual({
+      id: firstVariantId,
+      name: 'Finished product',
+      sku: 'OUTPUT-01',
+      isActive: false,
+      isDeleted: false,
+    })
+    expect(findVariant).toHaveBeenCalledWith(em, CatalogProductVariant, {
+      id: firstVariantId,
+      tenantId: scope.tenantId,
+      organizationId: scope.organizationId,
+    }, { fields: ['id', 'name', 'sku', 'isActive', 'deletedAt'], refresh: true }, scope)
+  })
+
+  it('returns null when the variant is missing', async () => {
+    findVariant.mockResolvedValue(null)
+    await expect(loadFreshCatalogVariantSummary(em, firstVariantId, scope)).resolves.toBeNull()
   })
 })

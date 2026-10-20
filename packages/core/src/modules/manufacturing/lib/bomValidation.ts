@@ -1,6 +1,6 @@
 import type { EntityManager } from "@mikro-orm/postgresql";
-import { findOneWithDecryption } from "@open-mercato/shared/lib/encryption/find";
-import {conflict, notFound} from '@open-mercato/shared/lib/crud/errors'
+import { findOneWithDecryption } from '@open-mercato/shared/lib/encryption/find'
+import { conflict, CrudHttpError, notFound } from '@open-mercato/shared/lib/crud/errors'
 
 import { isBomStatusUsableInOrder } from '../data/bomStatus'
 import { ManufacturingBom } from '../data/entities'
@@ -45,11 +45,14 @@ export function assertBomIsDraft(
   }
 }
 
-export function assertBomCanBeUsedInOrder(
+export function assertBomIsReleased(
   bom: ManufacturingBom,
   errorMessage: string,
 ): void {
   if (!isBomStatusUsableInOrder(bom.status)) {
-    throw conflict(errorMessage)
+    throw new CrudHttpError(409, {
+      error: errorMessage,
+      code: 'manufacturing.bom_availability.not_released',
+    })
   }
 }

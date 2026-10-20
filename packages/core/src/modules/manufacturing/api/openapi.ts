@@ -27,6 +27,7 @@ export const bomResponseSchema = z.object({
   id: uuidSchema,
   revision: z.string(),
   status: bomStatusSchema,
+  isAvailableForNewOrders: z.boolean(),
   isIncomplete: z.boolean(),
   releasedAt: timestampSchema.nullable(),
   releasedByUserId: uuidSchema.nullable(),
@@ -63,6 +64,7 @@ export const createManufacturingCrudOpenApi =
   createCrudOpenApiFactory({
     defaultTag: 'Manufacturing',
   })
+
 
 export const bomOpenApi = createManufacturingCrudOpenApi({
   resourceName: 'BOM',

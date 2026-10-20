@@ -47,7 +47,7 @@ export function resolveBomCommandScope(
   }
 }
 
-export async function requireLockedDraftBom(
+export async function requireLockedBom(
   em: EntityManager,
   bomId: string,
   scope: BomScope,
@@ -75,11 +75,17 @@ export async function requireLockedDraftBom(
     )
   }
 
-  assertBomIsDraft(
-    bom,
-    translate('manufacturing.errors.bomNotDraft'),
-  )
+  return bom
+}
 
+export async function requireLockedDraftBom(
+  em: EntityManager,
+  bomId: string,
+  scope: BomScope,
+  translate: Translate,
+): Promise<ManufacturingBom> {
+  const bom = await requireLockedBom(em, bomId, scope, translate)
+  assertBomIsDraft(bom, translate('manufacturing.errors.bomNotDraft'))
   return bom
 }
 

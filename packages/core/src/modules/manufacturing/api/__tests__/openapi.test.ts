@@ -2,6 +2,7 @@ import {
   bomListItemSchema,
   bomResponseSchema,
 } from '../openapi'
+import { bomAvailabilityReasonSchema } from '../../lib/bomAvailability'
 
 const bomRecord = {
   id: '33333333-3333-4333-8333-333333333333',
@@ -9,6 +10,7 @@ const bomRecord = {
   baseQuantity: '1.000000',
   revision: '1',
   status: 'released',
+  isAvailableForNewOrders: true,
   isIncomplete: false,
   releasedAt: '2026-10-16T09:38:12.484Z',
   releasedByUserId: '77777777-7777-4777-8777-777777777777',
@@ -47,5 +49,11 @@ describe('BOM response schemas', () => {
       ...listDecoration,
       _extension: { flag: true },
     }).success).toBe(true)
+  })
+
+  it('requires the raw availability flag and accepts withdrawn availability', () => {
+    const { isAvailableForNewOrders: _availability, ...withoutAvailability } = bomRecord
+    expect(bomResponseSchema.safeParse(withoutAvailability).success).toBe(false)
+    expect(bomAvailabilityReasonSchema.safeParse('withdrawn').success).toBe(true)
   })
 })

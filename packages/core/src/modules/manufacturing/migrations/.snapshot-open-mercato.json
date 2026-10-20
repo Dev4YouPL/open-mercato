@@ -307,6 +307,23 @@
           "enumItems": [],
           "mappedType": "uuid"
         },
+        "is_available_for_new_orders": {
+          "name": "is_available_for_new_orders",
+          "type": "boolean",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "unique": false,
+          "length": null,
+          "precision": null,
+          "scale": null,
+          "default": "true",
+          "comment": null,
+          "collation": null,
+          "enumItems": [],
+          "mappedType": "boolean"
+        },
         "is_incomplete": {
           "name": "is_incomplete",
           "type": "boolean",

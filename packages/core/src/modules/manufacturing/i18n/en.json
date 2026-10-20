@@ -117,5 +117,20 @@
   "manufacturing.boms.availability.unavailable": "Unavailable",
   "manufacturing.boms.availability.reason.draft": "Draft revisions cannot be used in production orders.",
   "manufacturing.boms.availability.reason.variantMissing": "The output variant no longer exists.",
-  "manufacturing.boms.availability.reason.variantInactive": "The output variant is inactive."
+  "manufacturing.boms.availability.reason.variantInactive": "The output variant is inactive.",
+  "manufacturing.boms.availability.reason.withdrawn": "This revision was withdrawn from new production orders.",
+  "manufacturing.boms.availability.toggle.label": "Available for new production orders",
+  "manufacturing.boms.availability.toggle.descriptionOn": "This revision can be selected when creating a production order.",
+  "manufacturing.boms.availability.toggle.descriptionOff": "This revision cannot be selected for new orders. Existing orders are not affected.",
+  "manufacturing.boms.availability.toggle.confirmTitle": "Withdraw this revision?",
+  "manufacturing.boms.availability.toggle.confirmDescription": "New production orders will not be able to use this revision. Existing orders keep it, and you can make it available again at any time.",
+  "manufacturing.boms.availability.toggle.confirmAction": "Withdraw",
+  "manufacturing.boms.availability.toggle.enabled": "The revision is available for new orders.",
+  "manufacturing.boms.availability.toggle.disabled": "The revision was withdrawn from new orders.",
+  "manufacturing.boms.availability.toggle.failed": "Could not change the revision availability.",
+  "manufacturing.errors.bomAvailabilityRequiresRelease": "Only released revisions can be made available for new orders.",
+  "manufacturing.errors.invalidAvailabilityPayload": "Invalid availability request.",
+  "manufacturing.errors.bomAvailabilityFailed": "Could not change the BOM availability.",
+  "manufacturing.errors.bomUnavailableForNewOrders": "The selected BOM revision is not available for new production orders.",
+  "manufacturing.audit.bom.set_availability": "BOM availability change"
 }

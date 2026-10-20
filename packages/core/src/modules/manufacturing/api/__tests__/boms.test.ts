@@ -83,6 +83,7 @@ const draftRecord = {
   base_quantity: '1',
   revision: '2',
   status: 'draft',
+  is_available_for_new_orders: true,
   is_incomplete: false,
   released_at: null,
   released_by_user_id: null,
@@ -113,11 +114,13 @@ describe('BOM response', () => {
     expect(transformItem({
       ...draftRecord,
       status: 'released',
+      is_available_for_new_orders: true,
       is_incomplete: true,
       released_at: new Date(timestamp),
       released_by_user_id: userId,
     })).toMatchObject({
       status: 'released',
+      isAvailableForNewOrders: true,
       isIncomplete: true,
       releasedAt: timestamp,
       releasedByUserId: userId,
@@ -131,6 +134,7 @@ describe('BOM response', () => {
       baseQuantity: '1',
       revision: '2',
       status: 'released',
+      isAvailableForNewOrders: true,
       isIncomplete: false,
       releasedAt: '2026-10-08T15:00:00+02:00',
       releasedByUserId: userId,
@@ -141,6 +145,11 @@ describe('BOM response', () => {
       releasedAt: timestamp,
       releasedByUserId: userId,
     })
+  })
+
+  it('maps the availability flag from database records', () => {
+    expect(transformItem({ ...draftRecord, is_available_for_new_orders: false }))
+      .toMatchObject({ isAvailableForNewOrders: false })
   })
 
   it('rejects an invalid release timestamp', () => {
@@ -185,6 +194,19 @@ describe('BOM list filters', () => {
       output_variant_id: { $eq: outputVariantId },
       status: { $eq: 'released' },
     })
+  })
+
+  it.each([[true, true], [false, false]])('filters released BOMs available=%s', async (value, expected) => {
+    await expect(buildFilters(bomListQuerySchema.parse({ availableForNewOrders: String(value) }), ctx))
+      .resolves.toMatchObject({
+        status: { $eq: 'released' },
+        is_available_for_new_orders: { $eq: expected },
+      })
+  })
+
+  it('returns no rows when availableForNewOrders intersects with draft status', async () => {
+    await expect(buildFilters(bomListQuerySchema.parse({ status: 'draft', availableForNewOrders: 'true' }), ctx))
+      .resolves.toMatchObject({ id: { $eq: NO_MATCH_ID } })
   })
 
   it('narrows the list to variants matching the search in the resolved scope', async () => {

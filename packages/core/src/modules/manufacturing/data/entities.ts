@@ -33,7 +33,7 @@ export type { ManufacturingBomStatus } from './bomStatus'
   expression: '"base_quantity" > 0',
 })
 export class ManufacturingBom{
-    [OptionalProps]?: 'status' | 'isIncomplete' | 'createdAt' | 'updatedAt' | 'deletedAt'
+    [OptionalProps]?: 'status' | 'isIncomplete' | 'isAvailableForNewOrders' | 'createdAt' | 'updatedAt' | 'deletedAt'
 
     @PrimaryKey({type: 'uuid', defaultRaw: 'gen_random_uuid()'})
     id!: string
@@ -58,6 +58,9 @@ export class ManufacturingBom{
 
     @Property({ name: 'is_incomplete', type: 'boolean', default: false })
     isIncomplete: boolean = false
+
+    @Property({ name: 'is_available_for_new_orders', type: 'boolean', default: true })
+    isAvailableForNewOrders: boolean = true
 
     @Property({ name: 'released_at', type: Date, nullable: true })
     releasedAt?: Date | null

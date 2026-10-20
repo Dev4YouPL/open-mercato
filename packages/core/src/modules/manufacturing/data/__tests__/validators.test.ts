@@ -1,5 +1,6 @@
 import {
   bomCreateSchema,
+  bomAvailabilityUpdateSchema,
   bomListQuerySchema,
   bomReleaseSchema,
   bomUpdateSchema,
@@ -90,6 +91,14 @@ describe('bomListQuerySchema', () => {
     expect(bomListQuerySchema.parse({}).isIncomplete).toBeUndefined()
   })
 
+  it.each([['true', true], ['false', false], ['1', true]])('parses availableForNewOrders=%s', (value, expected) => {
+    expect(bomListQuerySchema.parse({ availableForNewOrders: value }).availableForNewOrders).toBe(expected)
+  })
+
+  it('allows omitting availableForNewOrders', () => {
+    expect(bomListQuerySchema.parse({}).availableForNewOrders).toBeUndefined()
+  })
+
   it('rejects an invalid boolean token', () => {
     expect(bomListQuerySchema.safeParse({
       isIncomplete: 'abc',
@@ -114,6 +123,15 @@ describe('bomListQuerySchema', () => {
     expect(bomListQuerySchema.safeParse({
       search: 'a'.repeat(201),
     }).success).toBe(false)
+  })
+})
+
+describe('bomAvailabilityUpdateSchema', () => {
+  it('requires a UUID and boolean availability value', () => {
+    expect(bomAvailabilityUpdateSchema.safeParse({ id: bomId, isAvailableForNewOrders: false }).success).toBe(true)
+    expect(bomAvailabilityUpdateSchema.safeParse({ id: bomId, isAvailableForNewOrders: 'true' }).success).toBe(false)
+    expect(bomAvailabilityUpdateSchema.safeParse({ id: bomId }).success).toBe(false)
+    expect(bomAvailabilityUpdateSchema.safeParse({ id: bomId, isAvailableForNewOrders: true, tenantId: bomId }).success).toBe(false)
   })
 })
 

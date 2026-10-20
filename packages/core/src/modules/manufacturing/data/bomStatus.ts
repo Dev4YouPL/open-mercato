@@ -10,3 +10,14 @@ export function isBomStatusUsableInOrder(
 ): boolean {
   return status === 'released'
 }
+
+export type BomNewOrderSelectionState = {
+  status: ManufacturingBomStatus
+  isAvailableForNewOrders: boolean
+}
+
+export function isBomSelectableForNewOrder(
+  bom: BomNewOrderSelectionState,
+): boolean {
+  return isBomStatusUsableInOrder(bom.status) && bom.isAvailableForNewOrders
+}
