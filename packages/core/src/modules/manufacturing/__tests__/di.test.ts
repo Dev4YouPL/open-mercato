@@ -6,6 +6,7 @@ import type { AppContainer } from '@open-mercato/shared/lib/di/container'
 import { register } from '../di'
 import { resolveInventoryGatewayFactory } from '../ports/inventoryGateway'
 import { resolveInventoryPolicyReader } from '../ports/inventoryPolicyReader'
+import { resolveOperationStore } from '../ports/operationStore'
 
 describe('manufacturing DI', () => {
   it('builds an inventory gateway bound to the context and organization from the registered factory', async () => {
@@ -33,5 +34,18 @@ describe('manufacturing DI', () => {
 
     expect(query).toHaveBeenCalledTimes(1)
     expect(policy).toMatchObject({ status: 'resolved' })
+  })
+
+  it('builds the operation store on a fork of the container entity manager', async () => {
+    const findOne = jest.fn(async () => null)
+    const fork = jest.fn(() => ({ findOne }))
+    const container = createContainer() as AppContainer
+    container.register({ em: asValue({ fork }) })
+    register(container)
+
+    const operation = await resolveOperationStore(container).find('operation-1', { tenantId: 'tenant-1', organizationId: 'org-1' })
+
+    expect(operation).toBeNull()
+    expect(fork).toHaveBeenCalled()
   })
 })
