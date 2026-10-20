@@ -1,3 +1,4 @@
+import type { AwilixContainer } from 'awilix'
 import type { ManufacturingScope } from '../domain/manufacturingScope'
 import type { OrderExecutionPermissions } from '../domain/orderExecutionPermissions'
 
@@ -14,4 +15,8 @@ export type ProductionOrderDto = OrderExecutionPermissions & {
 
 export interface ProductionOrderReader {
   getForExecution(orderId: string, scope: ManufacturingScope): Promise<ProductionOrderDto | null>
+}
+
+export function resolveProductionOrderReader(container: AwilixContainer): ProductionOrderReader {
+  return container.resolve<ProductionOrderReader>(PRODUCTION_ORDER_READER_DI_KEY)
 }

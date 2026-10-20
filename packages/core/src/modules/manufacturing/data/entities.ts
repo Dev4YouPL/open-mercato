@@ -3,6 +3,7 @@ import { Entity, Index, ManyToOne, PrimaryKey, Property, Unique } from '@mikro-o
 import type { ExecutionDocumentType, PlannedFact, ProductionFactKind } from '../domain/executionDocument'
 import type { MovementKind } from '../domain/movement'
 import type { OperationAction, OperationStatus } from '../domain/operation'
+import type { ProductionOrderStatus } from '../domain/orderExecutionPermissions'
 
 export const MANUFACTURING_OPERATION_ID_UNIQUE = 'manufacturing_operations_operation_id_unique'
 export const MANUFACTURING_OPERATION_UNRESOLVED_UNIQUE = 'manufacturing_operations_unresolved_unique'
@@ -188,4 +189,89 @@ export class ProductionFact {
 
   @Property({ name: 'created_at', type: Date, onCreate: () => new Date() })
   createdAt: Date = new Date()
+}
+
+export const PRODUCTION_ORDER_NUMBER_UNIQUE = 'manufacturing_production_orders_number_unique'
+
+@Entity({ tableName: 'manufacturing_production_orders' })
+@Unique({
+  name: PRODUCTION_ORDER_NUMBER_UNIQUE,
+  properties: ['tenantId', 'organizationId', 'orderNumber'],
+})
+@Index({ name: 'manufacturing_production_orders_status_idx', properties: ['tenantId', 'organizationId', 'status'] })
+@Index({
+  name: 'manufacturing_production_orders_variant_idx',
+  properties: ['tenantId', 'organizationId', 'productVariantId'],
+})
+export class ProductionOrder {
+  [OptionalProps]?: 'createdAt' | 'updatedAt' | 'deletedAt' | 'dueAt' | 'status'
+
+  @PrimaryKey({ type: 'uuid', defaultRaw: 'gen_random_uuid()' })
+  id!: string
+
+  @Property({ name: 'organization_id', type: 'uuid' })
+  organizationId!: string
+
+  @Property({ name: 'tenant_id', type: 'uuid' })
+  tenantId!: string
+
+  @Property({ name: 'order_number', type: 'text' })
+  orderNumber!: string
+
+  @Property({ name: 'product_variant_id', type: 'uuid' })
+  productVariantId!: string
+
+  @Property({ name: 'bom_revision_id', type: 'uuid' })
+  bomRevisionId!: string
+
+  @Property({ name: 'planned_quantity', type: 'numeric', precision: 18, scale: 4 })
+  plannedQuantity!: string
+
+  @Property({ name: 'source_location_id', type: 'uuid' })
+  sourceLocationId!: string
+
+  @Property({ name: 'target_location_id', type: 'uuid' })
+  targetLocationId!: string
+
+  @Property({ name: 'due_at', type: Date, nullable: true })
+  dueAt?: Date | null
+
+  @Property({ name: 'status', type: 'text', default: 'draft' })
+  status: ProductionOrderStatus = 'draft'
+
+  @Property({ name: 'created_at', type: Date, onCreate: () => new Date() })
+  createdAt: Date = new Date()
+
+  @Property({ name: 'updated_at', type: Date, onCreate: () => new Date(), onUpdate: () => new Date() })
+  updatedAt: Date = new Date()
+
+  @Property({ name: 'deleted_at', type: Date, nullable: true })
+  deletedAt?: Date | null
+}
+
+@Entity({ tableName: 'manufacturing_order_sequences' })
+@Unique({
+  name: 'manufacturing_order_sequences_scope_unique',
+  properties: ['tenantId', 'organizationId'],
+})
+export class ProductionOrderSequence {
+  [OptionalProps]?: 'createdAt' | 'updatedAt' | 'nextNumber'
+
+  @PrimaryKey({ type: 'uuid', defaultRaw: 'gen_random_uuid()' })
+  id!: string
+
+  @Property({ name: 'organization_id', type: 'uuid' })
+  organizationId!: string
+
+  @Property({ name: 'tenant_id', type: 'uuid' })
+  tenantId!: string
+
+  @Property({ name: 'next_number', type: 'int', default: 1 })
+  nextNumber: number = 1
+
+  @Property({ name: 'created_at', type: Date, onCreate: () => new Date() })
+  createdAt: Date = new Date()
+
+  @Property({ name: 'updated_at', type: Date, onCreate: () => new Date(), onUpdate: () => new Date() })
+  updatedAt: Date = new Date()
 }

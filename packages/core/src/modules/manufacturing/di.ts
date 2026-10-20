@@ -9,6 +9,10 @@ import { OPERATION_STORE_DI_KEY, type OperationStore } from './ports/operationSt
 import { EXECUTION_HISTORY_READER_DI_KEY, type ExecutionHistoryReader } from './ports/executionHistoryReader'
 import { createMikroOperationStore } from './data/operationStore'
 import { createMikroExecutionHistoryReader } from './data/executionHistoryReader'
+import { PRODUCTION_ORDER_READER_DI_KEY, type ProductionOrderReader } from './ports/productionOrderReader'
+import { PRODUCTION_ORDER_STORE_DI_KEY, type ProductionOrderStore } from './ports/productionOrderStore'
+import { createMikroProductionOrderReader } from './data/productionOrderReader'
+import { createMikroProductionOrderStore } from './data/productionOrderStore'
 import { createWmsInventoryGateway } from './adapters/wms/wmsInventoryGateway'
 import { createWmsInventoryPolicyReader } from './adapters/wms/wmsInventoryPolicyReader'
 
@@ -26,6 +30,12 @@ export function register(container: AppContainer): void {
     ).scoped(),
     [EXECUTION_HISTORY_READER_DI_KEY]: asFunction(
       ({ em }: { em: EntityManager }): ExecutionHistoryReader => createMikroExecutionHistoryReader({ em }),
+    ).scoped(),
+    [PRODUCTION_ORDER_READER_DI_KEY]: asFunction(
+      ({ em }: { em: EntityManager }): ProductionOrderReader => createMikroProductionOrderReader({ em }),
+    ).scoped(),
+    [PRODUCTION_ORDER_STORE_DI_KEY]: asFunction(
+      ({ em }: { em: EntityManager }): ProductionOrderStore => createMikroProductionOrderStore({ em }),
     ).scoped(),
   })
 }

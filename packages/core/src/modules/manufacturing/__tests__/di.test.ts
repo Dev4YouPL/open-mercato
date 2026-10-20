@@ -8,6 +8,8 @@ import { resolveInventoryGatewayFactory } from '../ports/inventoryGateway'
 import { resolveInventoryPolicyReader } from '../ports/inventoryPolicyReader'
 import { resolveOperationStore } from '../ports/operationStore'
 import { resolveExecutionHistoryReader } from '../ports/executionHistoryReader'
+import { resolveProductionOrderReader } from '../ports/productionOrderReader'
+import { resolveProductionOrderStore } from '../ports/productionOrderStore'
 
 describe('manufacturing DI', () => {
   it('builds an inventory gateway bound to the context and organization from the registered factory', async () => {
@@ -64,5 +66,14 @@ describe('manufacturing DI', () => {
 
     expect(history).toEqual([])
     expect(fork).toHaveBeenCalled()
+  })
+
+  it('registers the production order reader and store on the container entity manager', () => {
+    const container = createContainer() as AppContainer
+    container.register({ em: asValue({ fork: jest.fn() }) })
+    register(container)
+
+    expect(typeof resolveProductionOrderReader(container).getForExecution).toBe('function')
+    expect(typeof resolveProductionOrderStore(container).create).toBe('function')
   })
 })
