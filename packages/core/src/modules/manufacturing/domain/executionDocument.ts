@@ -1,18 +1,34 @@
 import type { PlannedMovement } from './movement'
-import type { OperationAction } from './operation'
-
-export type ForwardOperationAction = Exclude<OperationAction, 'reverseDocument'>
 
 export type ExecutionDocumentType = 'issue' | 'return' | 'confirmation' | 'reversal'
 
-export type ProductionFactKind = 'material_consumed' | 'material_returned' | 'output_received' | 'output_reversed'
+export const PRODUCTION_FACT_KINDS = [
+  'material_consumed',
+  'material_returned',
+  'output_received',
+  'output_reversed',
+  'scrap_recorded',
+  'scrap_reversed',
+] as const
 
-export type ProductionFactDraft = {
+export type ProductionFactKind = (typeof PRODUCTION_FACT_KINDS)[number]
+
+export type PlannedFact = {
   factKind: ProductionFactKind
   variantId: string
-  warehouseId: string
-  locationId: string
+  warehouseId: string | null
+  locationId: string | null
   quantity: number
+  moves: boolean
+}
+
+export type PlannedExecution = {
+  documentType: ExecutionDocumentType
+  movement: PlannedMovement | null
+  facts: PlannedFact[]
+}
+
+export type ProductionFactDraft = Omit<PlannedFact, 'moves'> & {
   movementId: string | null
 }
 
@@ -25,44 +41,22 @@ export type ExecutionDocumentDraft = {
   facts: ProductionFactDraft[]
 }
 
-type ActionDocumentRule = {
-  documentType: ExecutionDocumentType
-  factKind: ProductionFactKind
-}
-
-const ACTION_DOCUMENT_RULES: Record<ForwardOperationAction, ActionDocumentRule> = {
-  issueMaterial: { documentType: 'issue', factKind: 'material_consumed' },
-  returnMaterial: { documentType: 'return', factKind: 'material_returned' },
-  receiveOutput: { documentType: 'confirmation', factKind: 'output_received' },
-}
-
-export type PostedMovement = {
-  action: ForwardOperationAction
+export type PostedExecution = {
   orderId: string
   operationId: string
   postedBy: string
-  movement: PlannedMovement
-  movementId: string
+  reversesDocumentId: string | null
+  execution: PlannedExecution
+  movementId: string | null
 }
 
-export function buildExecutionDocument(posted: PostedMovement): ExecutionDocumentDraft {
-  const rule = ACTION_DOCUMENT_RULES[posted.action]
-
+export function buildExecutionDocument(posted: PostedExecution): ExecutionDocumentDraft {
   return {
-    documentType: rule.documentType,
+    documentType: posted.execution.documentType,
     orderId: posted.orderId,
     operationId: posted.operationId,
     postedBy: posted.postedBy,
-    reversesDocumentId: null,
-    facts: [
-      {
-        factKind: rule.factKind,
-        variantId: posted.movement.variantId,
-        warehouseId: posted.movement.warehouseId,
-        locationId: posted.movement.locationId,
-        quantity: posted.movement.quantity,
-        movementId: posted.movementId,
-      },
-    ],
+    reversesDocumentId: posted.reversesDocumentId,
+    facts: posted.execution.facts.map(({ moves, ...fact }) => ({ ...fact, movementId: moves ? posted.movementId : null })),
   }
 }

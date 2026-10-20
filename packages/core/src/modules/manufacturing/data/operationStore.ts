@@ -1,7 +1,13 @@
 import type { EntityManager } from '@mikro-orm/postgresql'
+import { z } from 'zod'
 import { isUniqueViolation } from '@open-mercato/shared/lib/crud/errors'
 import { findOneWithDecryption } from '@open-mercato/shared/lib/encryption/find'
-import type { ExecutionDocumentDraft } from '../domain/executionDocument'
+import {
+  PRODUCTION_FACT_KINDS,
+  type ExecutionDocumentDraft,
+  type PlannedExecution,
+  type PlannedFact,
+} from '../domain/executionDocument'
 import type { ManufacturingScope } from '../domain/manufacturingScope'
 import type { PlannedMovement } from '../domain/movement'
 import { UNRESOLVED_OPERATION_STATUSES, type OperationRecord, type OperationState } from '../domain/operation'
@@ -18,6 +24,17 @@ import {
 export type MikroOperationStoreOptions = {
   em: EntityManager
 }
+
+const plannedFactsSchema = z.array(
+  z.object({
+    factKind: z.enum(PRODUCTION_FACT_KINDS),
+    variantId: z.string(),
+    warehouseId: z.string().nullable(),
+    locationId: z.string().nullable(),
+    quantity: z.number().positive(),
+    moves: z.boolean(),
+  }),
+)
 
 function requireColumn<TValue>(row: ManufacturingOperation, column: string, value: TValue | null | undefined): TValue {
   if (value) return value
@@ -38,10 +55,26 @@ function toMovement(row: ManufacturingOperation): PlannedMovement | null {
   }
 }
 
+function toPlannedFacts(row: ManufacturingOperation): PlannedFact[] {
+  const parsed = plannedFactsSchema.safeParse(row.plannedFacts)
+
+  if (!parsed.success) {
+    throw new Error(`[internal] manufacturing operation ${row.operationId} has malformed planned_facts`, { cause: parsed.error })
+  }
+
+  return parsed.data
+}
+
+function toExecution(row: ManufacturingOperation): PlannedExecution | null {
+  if (!row.documentType) return null
+
+  return { documentType: row.documentType, movement: toMovement(row), facts: toPlannedFacts(row) }
+}
+
 function toState(row: ManufacturingOperation): OperationState {
   switch (row.status) {
     case 'completed':
-      return { status: 'completed', movementId: requireColumn(row, 'movement_id', row.movementId) }
+      return { status: 'completed', movementId: row.movementId ?? null }
     case 'rejected':
       return {
         status: 'rejected',
@@ -63,7 +96,7 @@ function toRecord(row: ManufacturingOperation): OperationRecord {
     payloadHash: row.payloadHash,
     requestedBy: row.requestedBy,
     sourceDocumentId: row.sourceDocumentId ?? null,
-    movement: toMovement(row),
+    execution: toExecution(row),
     state: toState(row),
   }
 }
@@ -77,6 +110,14 @@ function toStateColumns(state: OperationState) {
     case 'unknown':
     case 'in_progress':
       return { status: state.status, movementId: null, rejectionCode: null, rejectionMessage: null }
+  }
+}
+
+function toExecutionColumns(execution: PlannedExecution | null) {
+  return {
+    documentType: execution?.documentType ?? null,
+    plannedFacts: execution?.facts ?? null,
+    ...toMovementColumns(execution?.movement ?? null),
   }
 }
 
@@ -129,7 +170,7 @@ export function createMikroOperationStore({ em }: MikroOperationStoreOptions): O
         payloadHash: operation.payloadHash,
         requestedBy: operation.requestedBy,
         sourceDocumentId: operation.sourceDocumentId,
-        ...toMovementColumns(operation.movement),
+        ...toExecutionColumns(operation.execution),
         ...toStateColumns(operation.state),
       })
 

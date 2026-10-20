@@ -1,16 +1,17 @@
 /** @jest-environment node */
 
-import type { ExecutionDocumentDraft } from '../../domain/executionDocument'
+import type { ExecutionDocumentDraft, PlannedExecution } from '../../domain/executionDocument'
 import type { PlannedMovement } from '../../domain/movement'
 import type { OperationRecord } from '../../domain/operation'
 import type { PositiveQuantity } from '../../domain/quantity'
-import { planReversalMovement, type ReversibleDocument } from '../../domain/reversal'
+import { planReversal, type ReversibleDocument } from '../../domain/reversal'
 import type { ExecutionDocumentDto, ExecutionHistoryReader } from '../../ports/executionHistoryReader'
 import type { InventoryMovementResultDto } from '../../ports/inventoryGateway'
 import type { OperationStore } from '../../ports/operationStore'
 import type {
+  ExecutionPlanResultDto,
   MaterialMovementInput,
-  MovementPlanResultDto,
+  ProductionConfirmationInput,
   ProductionInventoryService,
 } from '../productionInventoryService'
 import { createProductionOperations, type WithOperationId } from '../productionOperations'
@@ -35,7 +36,31 @@ const movement: PlannedMovement = {
   quantity: 4 as PositiveQuantity,
 }
 
-const planned: MovementPlanResultDto = { status: 'planned', movement }
+function issueExecution(plannedMovement: PlannedMovement): PlannedExecution {
+  const { kind: _kind, ...snapshot } = plannedMovement
+  return {
+    documentType: 'issue',
+    movement: plannedMovement,
+    facts: [{ factKind: 'material_consumed', ...snapshot, moves: true }],
+  }
+}
+
+const execution = issueExecution(movement)
+
+const planned: ExecutionPlanResultDto = { status: 'planned', execution }
+
+function confirmationExecution(input: ProductionConfirmationInput): PlannedExecution {
+  const receipt = { variantId: 'product-1', warehouseId: 'warehouse-2', locationId: 'location-2' }
+  const scrap = { factKind: 'scrap_recorded' as const, variantId: 'product-1', warehouseId: null, locationId: null }
+  return {
+    documentType: 'confirmation',
+    movement: input.goodQuantity > 0 ? { kind: 'receiveOutput', ...receipt, quantity: input.goodQuantity as PositiveQuantity } : null,
+    facts: [
+      ...(input.goodQuantity > 0 ? [{ factKind: 'output_received' as const, ...receipt, quantity: input.goodQuantity, moves: true }] : []),
+      ...(input.scrapQuantity > 0 ? [{ ...scrap, quantity: input.scrapQuantity, moves: false }] : []),
+    ],
+  }
+}
 
 function isUnresolved(record: OperationRecord): boolean {
   return record.state.status === 'in_progress' || record.state.status === 'unknown'
@@ -99,14 +124,18 @@ function createMemoryOperationStore() {
 
 function buildOperations(...results: InventoryMovementResultDto[]) {
   const { store, records, documents, history } = createMemoryOperationStore()
-  const planIssueMaterial = jest.fn(async (): Promise<MovementPlanResultDto> => planned)
-  const planReturnMaterial = jest.fn(async (): Promise<MovementPlanResultDto> => ({
+  const planIssueMaterial = jest.fn(async (): Promise<ExecutionPlanResultDto> => planned)
+  const planReturnMaterial = jest.fn(async (): Promise<ExecutionPlanResultDto> => ({
     status: 'planned',
-    movement: { ...movement, kind: 'restock' },
+    execution: { ...issueExecution({ ...movement, kind: 'restock' }), documentType: 'return' },
   }))
-  const planReverseDocument = jest.fn(async (document: ReversibleDocument): Promise<MovementPlanResultDto> => {
-    const plan = planReversalMovement(document)
-    if (plan.status === 'planned') return plan
+  const planConfirmProduction = jest.fn(async (confirmation: ProductionConfirmationInput): Promise<ExecutionPlanResultDto> => ({
+    status: 'planned',
+    execution: confirmationExecution(confirmation),
+  }))
+  const planReverseDocument = jest.fn(async (document: ReversibleDocument): Promise<ExecutionPlanResultDto> => {
+    const plan = planReversal(document)
+    if (plan.status === 'planned') return { status: 'planned', execution: plan.execution }
     return { status: 'rejected', code: plan.status, message: plan.status }
   })
   let nextMovement = 1
@@ -114,6 +143,7 @@ function buildOperations(...results: InventoryMovementResultDto[]) {
   const inventoryService = {
     planIssueMaterial,
     planReturnMaterial,
+    planConfirmProduction,
     planReverseDocument,
     postMovement,
   } as unknown as ProductionInventoryService
@@ -124,7 +154,18 @@ function buildOperations(...results: InventoryMovementResultDto[]) {
     scope,
     userId: 'user-1',
   })
-  return { operations, store, records, documents, history, planIssueMaterial, planReturnMaterial, planReverseDocument, postMovement }
+  return {
+    operations,
+    store,
+    records,
+    documents,
+    history,
+    planIssueMaterial,
+    planReturnMaterial,
+    planConfirmProduction,
+    planReverseDocument,
+    postMovement,
+  }
 }
 
 describe('production operations', () => {
@@ -135,7 +176,7 @@ describe('production operations', () => {
     expect(postMovement).toHaveBeenCalledWith('operation-1', movement)
     expect(records.get('operation-1')).toMatchObject({
       requestedBy: 'user-1',
-      movement,
+      execution,
       state: { status: 'completed', movementId: 'movement-1' },
     })
   })
@@ -186,7 +227,7 @@ describe('production operations', () => {
     expect(retry).toEqual(first)
     expect(planIssueMaterial).toHaveBeenCalledTimes(1)
     expect(postMovement).not.toHaveBeenCalled()
-    expect(records.get('operation-1')).toMatchObject({ movement: null, state: { status: 'rejected' } })
+    expect(records.get('operation-1')).toMatchObject({ execution: null, state: { status: 'rejected' } })
   })
 
   it('replays a completed operation without posting again or adding a document', async () => {
@@ -232,7 +273,10 @@ describe('production operations', () => {
     expect(await operations.issueMaterial(input)).toBe(unknown)
     expect(records.get('operation-1')?.state).toEqual({ status: 'unknown' })
 
-    planIssueMaterial.mockResolvedValue({ status: 'planned', movement: { ...movement, locationId: 'moved-location' } })
+    planIssueMaterial.mockResolvedValue({
+      status: 'planned',
+      execution: issueExecution({ ...movement, locationId: 'moved-location' }),
+    })
 
     expect(await operations.issueMaterial(input)).toEqual(accepted)
     expect(planIssueMaterial).toHaveBeenCalledTimes(1)
@@ -316,7 +360,7 @@ describe('production operations', () => {
       payloadHash: 'ignored',
       requestedBy: 'user-1',
       sourceDocumentId: null,
-      movement,
+      execution,
       state: { status: 'completed', movementId: 'movement-1' },
     })
 
@@ -429,6 +473,77 @@ describe('production operations', () => {
         code: 'document_not_found',
       })
       expect(records.has('operation-2')).toBe(false)
+    })
+  })
+
+  describe('production confirmation', () => {
+    const confirmation = { operationId: 'operation-1', orderId: 'order-1', goodQuantity: 8, scrapQuantity: 2 }
+
+    it('receives the good quantity and records scrap in one confirmation document', async () => {
+      const { operations, documents, postMovement } = buildOperations()
+
+      expect(await operations.confirmProduction(confirmation)).toEqual({ status: 'accepted', movementId: 'movement-1' })
+      expect(postMovement).toHaveBeenCalledTimes(1)
+      expect(documents).toHaveLength(1)
+      expect(documents[0].documentType).toBe('confirmation')
+      expect(documents[0].facts.map((fact) => [fact.factKind, fact.quantity, fact.movementId])).toEqual([
+        ['output_received', 8, 'movement-1'],
+        ['scrap_recorded', 2, null],
+      ])
+    })
+
+    it('posts nothing to WMS for a scrap-only confirmation but still records the document', async () => {
+      const { operations, records, documents, postMovement } = buildOperations()
+
+      const result = await operations.confirmProduction({ ...confirmation, goodQuantity: 0 })
+
+      expect(result).toEqual({ status: 'accepted', movementId: null })
+      expect(postMovement).not.toHaveBeenCalled()
+      expect(records.get('operation-1')?.state).toEqual({ status: 'completed', movementId: null })
+      expect(documents[0].facts).toEqual([
+        { factKind: 'scrap_recorded', variantId: 'product-1', warehouseId: null, locationId: null, quantity: 2, movementId: null },
+      ])
+    })
+
+    it('treats a confirmation with good quantity as posted only once WMS accepts the receipt', async () => {
+      const { operations, documents } = buildOperations(rejected)
+
+      expect(await operations.confirmProduction(confirmation)).toEqual(rejected)
+      expect(documents).toEqual([])
+    })
+
+    it('allows many partial confirmations on the same order', async () => {
+      const { operations, documents } = buildOperations()
+
+      await operations.confirmProduction(confirmation)
+      await operations.confirmProduction({ ...confirmation, operationId: 'operation-2', goodQuantity: 100 })
+
+      expect(documents.map((document) => document.facts[0].quantity)).toEqual([8, 100])
+    })
+
+    it('replays a scrap-only confirmation and rejects the same id with other quantities', async () => {
+      const { operations, documents } = buildOperations()
+      const scrapOnly = { ...confirmation, goodQuantity: 0 }
+      await operations.confirmProduction(scrapOnly)
+
+      expect(await operations.confirmProduction(scrapOnly)).toEqual({ status: 'accepted', movementId: null })
+      expect(await operations.confirmProduction({ ...scrapOnly, scrapQuantity: 3 })).toMatchObject({
+        code: 'operation_payload_mismatch',
+      })
+      expect(documents).toHaveLength(1)
+    })
+
+    it('reverses a scrap-only confirmation without calling WMS', async () => {
+      const { operations, documents, postMovement } = buildOperations()
+      await operations.confirmProduction({ ...confirmation, goodQuantity: 0 })
+
+      expect(await operations.reverseDocument({ operationId: 'operation-2', documentId: 'document-1' })).toEqual({
+        status: 'accepted',
+        movementId: null,
+      })
+      expect(postMovement).not.toHaveBeenCalled()
+      expect(documents[1]).toMatchObject({ documentType: 'reversal', reversesDocumentId: 'document-1' })
+      expect(documents[1].facts[0]).toMatchObject({ factKind: 'scrap_reversed', movementId: null })
     })
   })
 })

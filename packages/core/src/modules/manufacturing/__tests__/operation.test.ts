@@ -24,7 +24,7 @@ function recordWith(state: OperationRecord['state']): OperationRecord {
     payloadHash: hashOperationPayload(payload),
     requestedBy: 'user-1',
     sourceDocumentId: null,
-    movement: null,
+    execution: null,
     state,
   }
 }

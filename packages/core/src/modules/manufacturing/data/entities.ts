@@ -1,6 +1,6 @@
 import { OptionalProps } from '@mikro-orm/core'
 import { Entity, Index, ManyToOne, PrimaryKey, Property, Unique } from '@mikro-orm/decorators/legacy'
-import type { ExecutionDocumentType, ProductionFactKind } from '../domain/executionDocument'
+import type { ExecutionDocumentType, PlannedFact, ProductionFactKind } from '../domain/executionDocument'
 import type { MovementKind } from '../domain/movement'
 import type { OperationAction, OperationStatus } from '../domain/operation'
 
@@ -30,6 +30,8 @@ export class ManufacturingOperation {
     | 'locationId'
     | 'quantity'
     | 'sourceDocumentId'
+    | 'documentType'
+    | 'plannedFacts'
 
   @PrimaryKey({ type: 'uuid', defaultRaw: 'gen_random_uuid()' })
   id!: string
@@ -57,6 +59,12 @@ export class ManufacturingOperation {
 
   @Property({ name: 'source_document_id', type: 'uuid', nullable: true })
   sourceDocumentId?: string | null
+
+  @Property({ name: 'document_type', type: 'text', nullable: true })
+  documentType?: ExecutionDocumentType | null
+
+  @Property({ name: 'planned_facts', type: 'json', nullable: true })
+  plannedFacts?: PlannedFact[] | null
 
   @Property({ name: 'movement_kind', type: 'text', nullable: true })
   movementKind?: MovementKind | null
@@ -146,7 +154,7 @@ export class ExecutionDocument {
 @Entity({ tableName: 'manufacturing_production_facts' })
 @Index({ name: 'manufacturing_production_facts_document_idx', properties: ['document'] })
 export class ProductionFact {
-  [OptionalProps]?: 'createdAt' | 'movementId'
+  [OptionalProps]?: 'createdAt' | 'movementId' | 'warehouseId' | 'locationId'
 
   @PrimaryKey({ type: 'uuid', defaultRaw: 'gen_random_uuid()' })
   id!: string
@@ -166,11 +174,11 @@ export class ProductionFact {
   @Property({ name: 'variant_id', type: 'uuid' })
   variantId!: string
 
-  @Property({ name: 'warehouse_id', type: 'uuid' })
-  warehouseId!: string
+  @Property({ name: 'warehouse_id', type: 'uuid', nullable: true })
+  warehouseId?: string | null
 
-  @Property({ name: 'location_id', type: 'uuid' })
-  locationId!: string
+  @Property({ name: 'location_id', type: 'uuid', nullable: true })
+  locationId?: string | null
 
   @Property({ name: 'quantity', type: 'numeric', precision: 18, scale: 4 })
   quantity!: string

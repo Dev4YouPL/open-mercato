@@ -8,8 +8,8 @@ export type ProductionFactDto = {
   id: string
   factKind: ProductionFactKind
   variantId: string
-  warehouseId: string
-  locationId: string
+  warehouseId: string | null
+  locationId: string | null
   quantity: number
   movementId: string | null
 }

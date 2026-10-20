@@ -1,26 +1,21 @@
-import {
-  buildExecutionDocument,
-  type ExecutionDocumentDraft,
-  type ForwardOperationAction,
-} from '../domain/executionDocument'
+import { buildExecutionDocument } from '../domain/executionDocument'
 import type { ManufacturingScope } from '../domain/manufacturingScope'
-import type { PlannedMovement } from '../domain/movement'
 import {
   decideOnExistingOperation,
   hashOperationPayload,
   type FinalOperationOutcome,
   type OperationAction,
   type OperationOutcome,
+  type OperationPayload,
   type OperationRecord,
 } from '../domain/operation'
-import { buildReversalDocument } from '../domain/reversal'
 import type { ExecutionHistoryReader } from '../ports/executionHistoryReader'
 import type { InventoryMovementResultDto } from '../ports/inventoryGateway'
 import type { OperationStore } from '../ports/operationStore'
 import type {
+  ExecutionPlanResultDto,
   MaterialMovementInput,
-  MovementPlanResultDto,
-  OutputMovementInput,
+  ProductionConfirmationInput,
   ProductionInventoryService,
 } from './productionInventoryService'
 
@@ -32,13 +27,17 @@ export type DocumentReversalInput = {
 }
 
 export type ProductionOperationResultDto =
-  | InventoryMovementResultDto
+  | { status: 'accepted'; movementId: string | null }
+  | { status: 'rejected'; code: string; message: string }
+  | { status: 'unknown'; cause: unknown }
   | { status: 'blocked'; blockingOperationId: string }
+
+type PostingResult = Exclude<ProductionOperationResultDto, { status: 'blocked' }>
 
 export interface ProductionOperations {
   issueMaterial(input: WithOperationId<MaterialMovementInput>): Promise<ProductionOperationResultDto>
   returnMaterial(input: WithOperationId<MaterialMovementInput>): Promise<ProductionOperationResultDto>
-  receiveOutput(input: WithOperationId<OutputMovementInput>): Promise<ProductionOperationResultDto>
+  confirmProduction(input: WithOperationId<ProductionConfirmationInput>): Promise<ProductionOperationResultDto>
   reverseDocument(input: DocumentReversalInput): Promise<ProductionOperationResultDto>
 }
 
@@ -56,25 +55,25 @@ type OperationRequest = {
   orderId: string
   payloadHash: string
   sourceDocumentId: string | null
-  plan: () => Promise<MovementPlanResultDto>
+  plan: () => Promise<ExecutionPlanResultDto>
 }
 
-function buildForwardRequest(
-  action: ForwardOperationAction,
-  input: WithOperationId<OutputMovementInput & { variantId?: string }>,
-  plan: () => Promise<MovementPlanResultDto>,
+function buildOrderRequest(
+  input: { operationId: string; orderId: string },
+  payload: OperationPayload,
+  plan: () => Promise<ExecutionPlanResultDto>,
 ): OperationRequest {
-  const payloadHash = hashOperationPayload({
-    action,
+  return {
+    action: payload.action,
+    operationId: input.operationId,
     orderId: input.orderId,
-    variantId: input.variantId ?? null,
-    quantity: input.quantity,
-  })
-
-  return { action, operationId: input.operationId, orderId: input.orderId, payloadHash, sourceDocumentId: null, plan }
+    payloadHash: hashOperationPayload(payload),
+    sourceDocumentId: null,
+    plan,
+  }
 }
 
-function toOutcome(result: InventoryMovementResultDto): OperationOutcome {
+function toOutcome(result: PostingResult): OperationOutcome {
   switch (result.status) {
     case 'accepted':
       return { status: 'completed', movementId: result.movementId }
@@ -85,12 +84,12 @@ function toOutcome(result: InventoryMovementResultDto): OperationOutcome {
   }
 }
 
-function toReplayResult(outcome: FinalOperationOutcome): InventoryMovementResultDto {
+function toReplayResult(outcome: FinalOperationOutcome): PostingResult {
   if (outcome.status === 'completed') return { status: 'accepted', movementId: outcome.movementId }
   return { status: 'rejected', code: outcome.code, message: outcome.message }
 }
 
-function toOperationRecord(deps: ProductionOperationsDeps, request: OperationRequest, plan: MovementPlanResultDto): OperationRecord {
+function toOperationRecord(deps: ProductionOperationsDeps, request: OperationRequest, plan: ExecutionPlanResultDto): OperationRecord {
   const base = {
     operationId: request.operationId,
     action: request.action,
@@ -101,45 +100,34 @@ function toOperationRecord(deps: ProductionOperationsDeps, request: OperationReq
   }
 
   if (plan.status === 'rejected') {
-    return { ...base, movement: null, state: { status: 'rejected', code: plan.code, message: plan.message } }
+    return { ...base, execution: null, state: { status: 'rejected', code: plan.code, message: plan.message } }
   }
 
-  return { ...base, movement: plan.movement, state: { status: 'in_progress' } }
+  return { ...base, execution: plan.execution, state: { status: 'in_progress' } }
 }
 
-async function buildDocument(
-  deps: ProductionOperationsDeps,
-  operation: OperationRecord,
-  movement: PlannedMovement,
-  movementId: string,
-): Promise<ExecutionDocumentDraft> {
-  if (operation.action !== 'reverseDocument') {
-    return buildExecutionDocument({
-      action: operation.action,
-      orderId: operation.orderId,
-      operationId: operation.operationId,
-      postedBy: operation.requestedBy,
-      movement,
-      movementId,
-    })
-  }
+async function post(deps: ProductionOperationsDeps, operation: OperationRecord): Promise<PostingResult> {
+  const execution = operation.execution
 
-  const source = operation.sourceDocumentId
-    ? await deps.executionHistoryReader.getDocument(operation.sourceDocumentId, deps.scope)
-    : null
+  if (!execution) throw new Error(`[internal] manufacturing operation ${operation.operationId} has no planned execution`)
+  if (!execution.movement) return { status: 'accepted', movementId: null }
 
-  if (!source) throw new Error(`[internal] manufacturing operation ${operation.operationId} has no source document`)
-
-  return buildReversalDocument({ source, operationId: operation.operationId, postedBy: operation.requestedBy, movementId })
+  return deps.inventoryService.postMovement(operation.operationId, execution.movement)
 }
 
-async function postAndRecord(deps: ProductionOperationsDeps, operation: OperationRecord): Promise<InventoryMovementResultDto> {
-  const movement = operation.movement
-
-  if (!movement) throw new Error(`[internal] manufacturing operation ${operation.operationId} has no planned movement`)
-
-  const result = await deps.inventoryService.postMovement(operation.operationId, movement)
-  const document = result.status === 'accepted' ? await buildDocument(deps, operation, movement, result.movementId) : null
+async function postAndRecord(deps: ProductionOperationsDeps, operation: OperationRecord): Promise<PostingResult> {
+  const result = await post(deps, operation)
+  const document =
+    result.status === 'accepted' && operation.execution
+      ? buildExecutionDocument({
+          orderId: operation.orderId,
+          operationId: operation.operationId,
+          postedBy: operation.requestedBy,
+          reversesDocumentId: operation.sourceDocumentId,
+          execution: operation.execution,
+          movementId: result.movementId,
+        })
+      : null
   const resolved = await deps.operationStore.resolveIfUnresolved(operation.operationId, toOutcome(result), document, deps.scope)
 
   if (resolved) return result
@@ -218,11 +206,37 @@ export function createProductionOperations(deps: ProductionOperationsDeps): Prod
 
   return {
     issueMaterial: (input) =>
-      runOperation(deps, buildForwardRequest('issueMaterial', input, () => service.planIssueMaterial(input))),
+      runOperation(
+        deps,
+        buildOrderRequest(
+          input,
+          { action: 'issueMaterial', orderId: input.orderId, variantId: input.variantId, quantity: input.quantity },
+          () => service.planIssueMaterial(input),
+        ),
+      ),
     returnMaterial: (input) =>
-      runOperation(deps, buildForwardRequest('returnMaterial', input, () => service.planReturnMaterial(input))),
-    receiveOutput: (input) =>
-      runOperation(deps, buildForwardRequest('receiveOutput', input, () => service.planReceiveOutput(input))),
+      runOperation(
+        deps,
+        buildOrderRequest(
+          input,
+          { action: 'returnMaterial', orderId: input.orderId, variantId: input.variantId, quantity: input.quantity },
+          () => service.planReturnMaterial(input),
+        ),
+      ),
+    confirmProduction: (input) =>
+      runOperation(
+        deps,
+        buildOrderRequest(
+          input,
+          {
+            action: 'confirmProduction',
+            orderId: input.orderId,
+            goodQuantity: input.goodQuantity,
+            scrapQuantity: input.scrapQuantity,
+          },
+          () => service.planConfirmProduction(input),
+        ),
+      ),
     reverseDocument: (input) => reverseDocument(deps, input),
   }
 }

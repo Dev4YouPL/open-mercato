@@ -13,8 +13,8 @@ function toFact(row: ProductionFact): ProductionFactDto {
     id: row.id,
     factKind: row.factKind,
     variantId: row.variantId,
-    warehouseId: row.warehouseId,
-    locationId: row.locationId,
+    warehouseId: row.warehouseId ?? null,
+    locationId: row.locationId ?? null,
     quantity: Number(row.quantity),
     movementId: row.movementId ?? null,
   }

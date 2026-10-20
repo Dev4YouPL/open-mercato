@@ -1,17 +1,17 @@
 import { createHash } from 'node:crypto'
-import type { PlannedMovement } from './movement'
+import type { PlannedExecution } from './executionDocument'
 
 export const OPERATION_ACTIONS = [
   'issueMaterial',
   'returnMaterial',
-  'receiveOutput',
+  'confirmProduction',
   'reverseDocument',
 ] as const
 
 export type OperationAction = (typeof OPERATION_ACTIONS)[number]
 
 export type OperationOutcome =
-  | { status: 'completed'; movementId: string }
+  | { status: 'completed'; movementId: string | null }
   | { status: 'rejected'; code: string; message: string }
   | { status: 'unknown' }
 
@@ -30,7 +30,7 @@ export type OperationRecord = {
   payloadHash: string
   requestedBy: string
   sourceDocumentId: string | null
-  movement: PlannedMovement | null
+  execution: PlannedExecution | null
   state: OperationState
 }
 

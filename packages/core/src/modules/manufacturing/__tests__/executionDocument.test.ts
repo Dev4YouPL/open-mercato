@@ -1,57 +1,57 @@
 /** @jest-environment node */
 
-import { buildExecutionDocument, type ForwardOperationAction } from '../domain/executionDocument'
-import type { PlannedMovement } from '../domain/movement'
+import { buildExecutionDocument, type PlannedExecution } from '../domain/executionDocument'
 import type { PositiveQuantity } from '../domain/quantity'
 
-const movement: PlannedMovement = {
-  kind: 'consume',
-  variantId: 'variant-1',
-  warehouseId: 'warehouse-1',
-  locationId: 'location-1',
-  quantity: 2.5 as PositiveQuantity,
-}
-
-function documentFor(action: ForwardOperationAction) {
-  return buildExecutionDocument({
-    action,
-    orderId: 'order-1',
-    operationId: 'operation-1',
-    postedBy: 'user-1',
-    movement,
-    movementId: 'movement-1',
-  })
+const confirmation: PlannedExecution = {
+  documentType: 'confirmation',
+  movement: {
+    kind: 'receiveOutput',
+    variantId: 'product-1',
+    warehouseId: 'warehouse-1',
+    locationId: 'location-1',
+    quantity: 8 as PositiveQuantity,
+  },
+  facts: [
+    { factKind: 'output_received', variantId: 'product-1', warehouseId: 'warehouse-1', locationId: 'location-1', quantity: 8, moves: true },
+    { factKind: 'scrap_recorded', variantId: 'product-1', warehouseId: null, locationId: null, quantity: 2, moves: false },
+  ],
 }
 
 describe('execution document', () => {
-  it.each([
-    ['issueMaterial', 'issue', 'material_consumed'],
-    ['returnMaterial', 'return', 'material_returned'],
-    ['receiveOutput', 'confirmation', 'output_received'],
-  ] as const)('maps %s to a %s document with a %s fact', (action, documentType, factKind) => {
-    const document = documentFor(action)
+  it('copies the planned facts and attaches the WMS movement only to moving facts', () => {
+    const document = buildExecutionDocument({
+      orderId: 'order-1',
+      operationId: 'operation-1',
+      postedBy: 'user-1',
+      reversesDocumentId: null,
+      execution: confirmation,
+      movementId: 'movement-1',
+    })
 
-    expect(document.documentType).toBe(documentType)
-    expect(document.facts.map((fact) => fact.factKind)).toEqual([factKind])
-  })
-
-  it('copies the movement snapshot, the WMS correlation and the poster', () => {
-    expect(documentFor('issueMaterial')).toEqual({
-      documentType: 'issue',
+    expect(document).toEqual({
+      documentType: 'confirmation',
       orderId: 'order-1',
       operationId: 'operation-1',
       postedBy: 'user-1',
       reversesDocumentId: null,
       facts: [
-        {
-          factKind: 'material_consumed',
-          variantId: 'variant-1',
-          warehouseId: 'warehouse-1',
-          locationId: 'location-1',
-          quantity: 2.5,
-          movementId: 'movement-1',
-        },
+        { factKind: 'output_received', variantId: 'product-1', warehouseId: 'warehouse-1', locationId: 'location-1', quantity: 8, movementId: 'movement-1' },
+        { factKind: 'scrap_recorded', variantId: 'product-1', warehouseId: null, locationId: null, quantity: 2, movementId: null },
       ],
     })
+  })
+
+  it('keeps the reversed document reference', () => {
+    const document = buildExecutionDocument({
+      orderId: 'order-1',
+      operationId: 'operation-2',
+      postedBy: 'user-1',
+      reversesDocumentId: 'document-1',
+      execution: { ...confirmation, documentType: 'reversal' },
+      movementId: 'movement-2',
+    })
+
+    expect(document).toMatchObject({ documentType: 'reversal', reversesDocumentId: 'document-1' })
   })
 })

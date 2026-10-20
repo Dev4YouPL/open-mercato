@@ -13,8 +13,7 @@ import type { ProductionOrderDto, ProductionOrderReader } from '../../ports/prod
 import {
   createProductionInventoryService,
   type MaterialMovementInput,
-  type OutputMovementInput,
-  type ProductionInventoryService,
+  type ProductionConfirmationInput,
 } from '../productionInventoryService'
 
 const scope = { tenantId: 'tenant-1', organizationId: 'org-1' }
@@ -22,6 +21,10 @@ const accepted: InventoryMovementResultDto = { status: 'accepted', movementId: '
 const untracked: TrackingPolicyResultDto = {
   status: 'resolved',
   policy: { tracksLot: false, tracksSerial: false, tracksExpiry: false },
+}
+const lotTracked: TrackingPolicyResultDto = {
+  status: 'resolved',
+  policy: { tracksLot: true, tracksSerial: false, tracksExpiry: false },
 }
 
 const locations: Record<string, InventoryLocationDto> = {
@@ -43,8 +46,9 @@ const openOrder: ProductionOrderDto = {
 
 const closedOrder: ProductionOrderDto = { ...openOrder, allowsIssue: false, allowsReturn: false, allowsConfirmation: false }
 
-const outputInput: OutputMovementInput = { orderId: 'order-1', quantity: 4 }
-const materialInput: MaterialMovementInput = { ...outputInput, variantId: 'material-variant-1' }
+const materialInput: MaterialMovementInput = { orderId: 'order-1', variantId: 'material-variant-1', quantity: 4 }
+const confirmationInput: ProductionConfirmationInput = { orderId: 'order-1', goodQuantity: 8, scrapQuantity: 0 }
+
 const issuedDocument: ReversibleDocument = {
   id: 'document-1',
   orderId: 'order-1',
@@ -77,175 +81,246 @@ function buildService(order: ProductionOrderDto | null = openOrder, tracking: Tr
   return { service, postMovement, getForExecution, getTrackingPolicy, getActiveLocation }
 }
 
-type ForwardAction = 'planIssueMaterial' | 'planReturnMaterial' | 'planReceiveOutput'
-
-function planForward(service: ProductionInventoryService, action: ForwardAction) {
-  if (action === 'planReceiveOutput') return service.planReceiveOutput(outputInput)
-  return service[action](materialInput)
-}
-
 describe('production inventory service', () => {
-  it.each([
-    ['planIssueMaterial', 'consume'],
-    ['planReturnMaterial', 'restock'],
-  ] as const)('%s plans a %s movement of the material at the order issue location', async (action, kind) => {
-    const { service } = buildService()
+  describe('material issue and return', () => {
+    it.each([
+      ['planIssueMaterial', 'issue', 'consume', 'material_consumed'],
+      ['planReturnMaterial', 'return', 'restock', 'material_returned'],
+    ] as const)('%s plans a %s document with a %s movement at the order issue location', async (action, documentType, kind, factKind) => {
+      const { service } = buildService()
+      const snapshot = { variantId: 'material-variant-1', warehouseId: 'warehouse-1', locationId: 'issue-location', quantity: 4 }
 
-    expect(await service[action](materialInput)).toEqual({
-      status: 'planned',
-      movement: {
-        kind,
-        variantId: 'material-variant-1',
-        warehouseId: 'warehouse-1',
-        locationId: 'issue-location',
-        quantity: 4,
-      },
+      expect(await service[action](materialInput)).toEqual({
+        status: 'planned',
+        execution: {
+          documentType,
+          movement: { kind, ...snapshot },
+          facts: [{ factKind, ...snapshot, moves: true }],
+        },
+      })
     })
-  })
 
-  it('plans the output receipt of the order product at the order receipt location', async () => {
-    const { service } = buildService()
+    it('reads the order and the location within the service scope', async () => {
+      const { service, getForExecution, getActiveLocation } = buildService()
+      await service.planIssueMaterial(materialInput)
 
-    expect(await service.planReceiveOutput(outputInput)).toEqual({
-      status: 'planned',
-      movement: {
-        kind: 'receiveOutput',
-        variantId: 'product-variant-1',
-        warehouseId: 'warehouse-2',
-        locationId: 'receipt-location',
-        quantity: 4,
-      },
+      expect(getForExecution).toHaveBeenCalledWith('order-1', scope)
+      expect(getActiveLocation).toHaveBeenCalledWith('issue-location', scope)
     })
-  })
 
-  it('plans a document reversal from the document snapshot regardless of order flags and current locations', async () => {
-    const { service, getActiveLocation, getTrackingPolicy } = buildService(closedOrder)
-
-    expect(await service.planReverseDocument(issuedDocument)).toEqual({
-      status: 'planned',
-      movement: {
-        kind: 'restock',
-        variantId: 'material-variant-1',
-        warehouseId: 'snapshot-warehouse',
-        locationId: 'snapshot-location',
-        quantity: 4,
-      },
-    })
-    expect(getActiveLocation).not.toHaveBeenCalled()
-    expect(getTrackingPolicy).not.toHaveBeenCalled()
-  })
-
-  it('refuses to reverse a document twice', async () => {
-    const { service } = buildService()
-
-    expect(await service.planReverseDocument({ ...issuedDocument, reversedByDocumentId: 'document-2' })).toMatchObject({
-      status: 'rejected',
-      code: 'document_already_reversed',
-    })
-  })
-
-  it('refuses to reverse a document that the one-movement profile cannot mirror', async () => {
-    const { service } = buildService()
-    const [fact] = issuedDocument.facts
-
-    expect(await service.planReverseDocument({ ...issuedDocument, facts: [fact, fact] })).toMatchObject({
-      status: 'rejected',
-      code: 'reversal_not_supported',
-    })
-  })
-
-  it('reads the order and the location within the service scope', async () => {
-    const { service, getForExecution, getActiveLocation } = buildService()
-    await service.planIssueMaterial(materialInput)
-
-    expect(getForExecution).toHaveBeenCalledWith('order-1', scope)
-    expect(getActiveLocation).toHaveBeenCalledWith('issue-location', scope)
-  })
-
-  it.each(['planIssueMaterial', 'planReturnMaterial', 'planReceiveOutput'] as const)(
-    'refuses %s when the order does not allow it',
-    async (action) => {
+    it.each(['planIssueMaterial', 'planReturnMaterial'] as const)('refuses %s when the order does not allow it', async (action) => {
       const { service } = buildService(closedOrder)
 
-      expect(await planForward(service, action)).toMatchObject({ status: 'rejected', code: 'action_not_allowed' })
-    },
-  )
-
-  it('refuses when the order does not exist', async () => {
-    const { service } = buildService(null)
-
-    expect(await service.planIssueMaterial(materialInput)).toMatchObject({ status: 'rejected', code: 'order_not_found' })
-    expect(await service.planReverseDocument(issuedDocument)).toMatchObject({
-      status: 'rejected',
-      code: 'order_not_found',
+      expect(await service[action](materialInput)).toMatchObject({ status: 'rejected', code: 'action_not_allowed' })
     })
-  })
 
-  it.each([0, -3, Number.NaN, Number.POSITIVE_INFINITY])(
-    'refuses quantity %p before reading the order',
-    async (quantity) => {
+    it('refuses when the order does not exist', async () => {
+      const { service } = buildService(null)
+
+      expect(await service.planIssueMaterial(materialInput)).toMatchObject({ status: 'rejected', code: 'order_not_found' })
+    })
+
+    it.each([0, -3, Number.NaN, Number.POSITIVE_INFINITY])('refuses quantity %p before reading the order', async (quantity) => {
       const { service, getForExecution } = buildService()
       const result = await service.planReturnMaterial({ ...materialInput, quantity })
 
       expect(getForExecution).not.toHaveBeenCalled()
       expect(result).toMatchObject({ status: 'rejected', code: 'invalid_quantity' })
-    },
-  )
+    })
 
-  it.each([
-    ['issue', 'planIssueMaterial', { sourceLocationId: null }],
-    ['receipt', 'planReceiveOutput', { targetLocationId: null }],
-  ] as const)('refuses when the order has no %s location', async (_label, action, change) => {
-    const { service } = buildService({ ...openOrder, ...change })
+    it('refuses when the order has no issue location', async () => {
+      const { service } = buildService({ ...openOrder, sourceLocationId: null })
 
-    expect(await planForward(service, action)).toMatchObject({ status: 'rejected', code: 'location_missing' })
-  })
+      expect(await service.planIssueMaterial(materialInput)).toMatchObject({ status: 'rejected', code: 'location_missing' })
+    })
 
-  it('refuses when the order location is missing or inactive in WMS', async () => {
-    const { service } = buildService({ ...openOrder, sourceLocationId: 'deleted-location' })
+    it('refuses when the order location is missing or inactive in WMS', async () => {
+      const { service } = buildService({ ...openOrder, sourceLocationId: 'deleted-location' })
 
-    expect(await service.planIssueMaterial(materialInput)).toMatchObject({
-      status: 'rejected',
-      code: 'location_unavailable',
+      expect(await service.planIssueMaterial(materialInput)).toMatchObject({
+        status: 'rejected',
+        code: 'location_unavailable',
+      })
+    })
+
+    it.each([
+      ['lot', { tracksLot: true, tracksSerial: false, tracksExpiry: false }],
+      ['serial number', { tracksLot: false, tracksSerial: true, tracksExpiry: false }],
+      ['expiry date', { tracksLot: false, tracksSerial: false, tracksExpiry: true }],
+    ])('refuses a material tracked by %s', async (_label, policy) => {
+      const { service, getTrackingPolicy } = buildService(openOrder, { status: 'resolved', policy })
+
+      expect(await service.planIssueMaterial(materialInput)).toMatchObject({
+        status: 'rejected',
+        code: 'tracking_not_supported',
+      })
+      expect(getTrackingPolicy).toHaveBeenCalledWith('material-variant-1', scope)
+    })
+
+    it('refuses when the inventory policy is unavailable', async () => {
+      const { service } = buildService(openOrder, { status: 'unavailable' })
+
+      expect(await service.planIssueMaterial(materialInput)).toMatchObject({
+        status: 'rejected',
+        code: 'inventory_unavailable',
+      })
     })
   })
 
-  it.each([
-    ['lot', { tracksLot: true, tracksSerial: false, tracksExpiry: false }],
-    ['serial number', { tracksLot: false, tracksSerial: true, tracksExpiry: false }],
-    ['expiry date', { tracksLot: false, tracksSerial: false, tracksExpiry: true }],
-  ])('refuses forward actions on a variant tracked by %s', async (_label, policy) => {
-    const tracked: TrackingPolicyResultDto = { status: 'resolved', policy }
+  describe('production confirmation', () => {
+    const receipt = { variantId: 'product-variant-1', warehouseId: 'warehouse-2', locationId: 'receipt-location' }
 
-    for (const action of ['planIssueMaterial', 'planReturnMaterial', 'planReceiveOutput'] as const) {
-      const { service } = buildService(openOrder, tracked)
+    it('plans a receipt of the good quantity of the order product at the order receipt location', async () => {
+      const { service } = buildService()
 
-      expect(await planForward(service, action)).toMatchObject({ status: 'rejected', code: 'tracking_not_supported' })
-    }
+      expect(await service.planConfirmProduction(confirmationInput)).toEqual({
+        status: 'planned',
+        execution: {
+          documentType: 'confirmation',
+          movement: { kind: 'receiveOutput', ...receipt, quantity: 8 },
+          facts: [{ factKind: 'output_received', ...receipt, quantity: 8, moves: true }],
+        },
+      })
+    })
+
+    it('records scrap next to the receipt without moving it into stock', async () => {
+      const { service } = buildService()
+
+      expect(await service.planConfirmProduction({ ...confirmationInput, scrapQuantity: 2 })).toEqual({
+        status: 'planned',
+        execution: {
+          documentType: 'confirmation',
+          movement: { kind: 'receiveOutput', ...receipt, quantity: 8 },
+          facts: [
+            { factKind: 'output_received', ...receipt, quantity: 8, moves: true },
+            {
+              factKind: 'scrap_recorded',
+              variantId: 'product-variant-1',
+              warehouseId: null,
+              locationId: null,
+              quantity: 2,
+              moves: false,
+            },
+          ],
+        },
+      })
+    })
+
+    it('plans a scrap-only confirmation without any movement, location or WMS policy lookup', async () => {
+      const { service, getActiveLocation, getTrackingPolicy } = buildService({ ...openOrder, targetLocationId: null })
+
+      expect(await service.planConfirmProduction({ ...confirmationInput, goodQuantity: 0, scrapQuantity: 3 })).toEqual({
+        status: 'planned',
+        execution: {
+          documentType: 'confirmation',
+          movement: null,
+          facts: [
+            {
+              factKind: 'scrap_recorded',
+              variantId: 'product-variant-1',
+              warehouseId: null,
+              locationId: null,
+              quantity: 3,
+              moves: false,
+            },
+          ],
+        },
+      })
+      expect(getActiveLocation).not.toHaveBeenCalled()
+      expect(getTrackingPolicy).not.toHaveBeenCalled()
+    })
+
+    it.each([
+      ['both quantities are zero', 0, 0],
+      ['the good quantity is negative', -1, 2],
+      ['the scrap quantity is negative', 2, -1],
+      ['the good quantity is not a number', Number.NaN, 0],
+    ])('refuses when %s', async (_label, goodQuantity, scrapQuantity) => {
+      const { service, getForExecution } = buildService()
+
+      expect(await service.planConfirmProduction({ orderId: 'order-1', goodQuantity, scrapQuantity })).toMatchObject({
+        status: 'rejected',
+        code: 'invalid_quantity',
+      })
+      expect(getForExecution).not.toHaveBeenCalled()
+    })
+
+    it('refuses when the order does not allow confirmation, even for scrap only', async () => {
+      const { service } = buildService(closedOrder)
+
+      expect(await service.planConfirmProduction({ ...confirmationInput, goodQuantity: 0, scrapQuantity: 1 })).toMatchObject({
+        status: 'rejected',
+        code: 'action_not_allowed',
+      })
+    })
+
+    it('refuses a good quantity of a tracked product', async () => {
+      const { service, getTrackingPolicy } = buildService(openOrder, lotTracked)
+
+      expect(await service.planConfirmProduction(confirmationInput)).toMatchObject({
+        status: 'rejected',
+        code: 'tracking_not_supported',
+      })
+      expect(getTrackingPolicy).toHaveBeenCalledWith('product-variant-1', scope)
+    })
+
+    it('refuses a good quantity when the order has no receipt location', async () => {
+      const { service } = buildService({ ...openOrder, targetLocationId: null })
+
+      expect(await service.planConfirmProduction(confirmationInput)).toMatchObject({
+        status: 'rejected',
+        code: 'location_missing',
+      })
+    })
   })
 
-  it('checks the tracking policy of the material for material actions and of the product for output', async () => {
-    const material = buildService()
-    await material.service.planIssueMaterial(materialInput)
-    expect(material.getTrackingPolicy).toHaveBeenCalledWith('material-variant-1', scope)
+  describe('document reversal', () => {
+    it('plans the opposite document from the snapshot regardless of order flags and current locations', async () => {
+      const { service, getActiveLocation, getTrackingPolicy } = buildService(closedOrder)
+      const snapshot = { variantId: 'material-variant-1', warehouseId: 'snapshot-warehouse', locationId: 'snapshot-location', quantity: 4 }
 
-    const output = buildService()
-    await output.service.planReceiveOutput(outputInput)
-    expect(output.getTrackingPolicy).toHaveBeenCalledWith('product-variant-1', scope)
-  })
+      expect(await service.planReverseDocument(issuedDocument)).toEqual({
+        status: 'planned',
+        execution: {
+          documentType: 'reversal',
+          movement: { kind: 'restock', ...snapshot },
+          facts: [{ factKind: 'material_returned', ...snapshot, moves: true }],
+        },
+      })
+      expect(getActiveLocation).not.toHaveBeenCalled()
+      expect(getTrackingPolicy).not.toHaveBeenCalled()
+    })
 
-  it('refuses when the inventory policy is unavailable', async () => {
-    const { service } = buildService(openOrder, { status: 'unavailable' })
+    it('refuses when the order does not exist', async () => {
+      const { service } = buildService(null)
 
-    expect(await service.planIssueMaterial(materialInput)).toMatchObject({
-      status: 'rejected',
-      code: 'inventory_unavailable',
+      expect(await service.planReverseDocument(issuedDocument)).toMatchObject({ status: 'rejected', code: 'order_not_found' })
+    })
+
+    it('refuses to reverse a document twice', async () => {
+      const { service } = buildService()
+
+      expect(await service.planReverseDocument({ ...issuedDocument, reversedByDocumentId: 'document-2' })).toMatchObject({
+        status: 'rejected',
+        code: 'document_already_reversed',
+      })
+    })
+
+    it('refuses to reverse a document that the one-movement profile cannot mirror', async () => {
+      const { service } = buildService()
+      const [fact] = issuedDocument.facts
+
+      expect(await service.planReverseDocument({ ...issuedDocument, facts: [fact, fact] })).toMatchObject({
+        status: 'rejected',
+        code: 'reversal_not_supported',
+      })
     })
   })
 
   it('never posts while planning', async () => {
     const { service, postMovement } = buildService()
     await service.planIssueMaterial(materialInput)
+    await service.planConfirmProduction(confirmationInput)
     await service.planReverseDocument(issuedDocument)
 
     expect(postMovement).not.toHaveBeenCalled()
