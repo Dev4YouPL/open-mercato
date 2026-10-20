@@ -122,6 +122,7 @@ const paginationSchema = z.object({
 export const bomListQuerySchema = paginationSchema.extend({
   id: uuidSchema.optional(),
   outputVariantId: uuidSchema.optional(),
+  search: z.string().trim().max(200).optional(),
   status: bomStatusSchema.optional(),
   isIncomplete: optionalBooleanQuerySchema,
   sortField: z.enum([

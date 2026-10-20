@@ -2,6 +2,7 @@ import type { EntityManager } from "@mikro-orm/postgresql";
 import { findOneWithDecryption } from "@open-mercato/shared/lib/encryption/find";
 import {conflict, notFound} from '@open-mercato/shared/lib/crud/errors'
 
+import { isBomStatusUsableInOrder } from '../data/bomStatus'
 import { ManufacturingBom } from '../data/entities'
 
 export type BomScope = {
@@ -48,7 +49,7 @@ export function assertBomCanBeUsedInOrder(
   bom: ManufacturingBom,
   errorMessage: string,
 ): void {
-  if (bom.status !== 'released') {
+  if (!isBomStatusUsableInOrder(bom.status)) {
     throw conflict(errorMessage)
   }
 }

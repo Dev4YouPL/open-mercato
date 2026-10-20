@@ -95,6 +95,26 @@ describe('bomListQuerySchema', () => {
       isIncomplete: 'abc',
     }).success).toBe(false)
   })
+
+  it('trims the search term', () => {
+    expect(bomListQuerySchema.parse({
+      search: '  Widget  ',
+    }).search).toBe('Widget')
+  })
+
+  it('allows omitting search', () => {
+    expect(bomListQuerySchema.parse({}).search).toBeUndefined()
+  })
+
+  it('limits search to 200 characters', () => {
+    expect(bomListQuerySchema.safeParse({
+      search: 'a'.repeat(200),
+    }).success).toBe(true)
+
+    expect(bomListQuerySchema.safeParse({
+      search: 'a'.repeat(201),
+    }).success).toBe(false)
+  })
 })
 
 describe('BOM release fields', () => {

@@ -11,12 +11,20 @@ import {
   createProductFixture,
   createVariantFixture,
 } from './catalogFixtures'
-import { createUserFixture } from './authFixtures'
+import {
+  createUserFixture,
+  setUserAclVisibility,
+} from './authFixtures'
 import {
   getTokenContext,
   readJsonSafe,
 } from './generalFixtures'
-import { withClient } from './dbFixtures'
+import {
+  createOrganizationInDb,
+  deleteOrganizationInDb,
+  deleteUserAclInDb,
+  withClient,
+} from './dbFixtures'
 
 const uuidSchema = z.string().uuid()
 
@@ -53,14 +61,16 @@ type BomFixtures = {
   componentVariantId: string
   alternateVariantId: string
   outputName: string
+  outputSku: string
   componentName: string
+  alternateName: string
   call: (
     method: string,
     path: string,
     data?: unknown,
     updatedAt?: string,
   ) => Promise<APIResponse>
-  createBom: () => Promise<string>
+  createBom: (outputVariantId?: string) => Promise<string>
   createItem: (
     bomId: string,
     variantId: string,
@@ -76,10 +86,17 @@ type BomFixtures = {
     variantId: string | null,
     requirements: readonly TrackingRequirement[],
   ) => Promise<string>
-  createViewer: () => Promise<{
+  createViewer: (features?: readonly string[]) => Promise<{
     email: string
     password: string
   }>
+  setVariantActive: (
+    variantId: string,
+    isActive: boolean,
+  ) => Promise<void>
+  createForeignOrganizationBom: (
+    variantName: string,
+  ) => Promise<string>
 }
 
 export async function withBomFixtures(
@@ -100,11 +117,14 @@ export async function withBomFixtures(
 
   const tag = randomUUID()
   const outputName = `BOM output ${tag}`
+  const outputSku = `MFG-O-${tag}`
   const componentName = `BOM component ${tag}`
+  const alternateName = `BOM alternate ${tag}`
 
   const bomIds: string[] = []
   const profileIds: string[] = []
   const userIds: string[] = []
+  const foreignCleanupTasks: Array<() => Promise<void>> = []
 
   let productId: string | null = null
 
@@ -218,16 +238,23 @@ export async function withBomFixtures(
   }
 
   async function cleanupBoms(): Promise<void> {
-    if (bomIds.length === 0) return
+    await deleteBomRecords(bomIds, scope.organizationId)
+  }
+
+  async function deleteBomRecords(
+    ids: readonly string[],
+    organizationId: string,
+  ): Promise<void> {
+    if (ids.length === 0) return
 
     await withClient(async (client) => {
       await client.query('begin')
 
       try {
         const parameters = [
-          bomIds,
+          ids,
           scope.tenantId,
-          scope.organizationId,
+          organizationId,
         ]
 
         const items = await client.query<{ id: string }>(
@@ -240,7 +267,7 @@ export async function withBomFixtures(
         )
 
         const recordIds = [
-          ...bomIds,
+          ...ids,
           ...items.rows.map((item) => item.id),
         ]
 
@@ -253,7 +280,7 @@ export async function withBomFixtures(
           [
             recordIds,
             scope.tenantId,
-            scope.organizationId,
+            organizationId,
           ],
         )
 
@@ -312,7 +339,7 @@ export async function withBomFixtures(
       {
         productId,
         name: outputName,
-        sku: `MFG-O-${tag}`,
+        sku: outputSku,
       },
     )
 
@@ -331,7 +358,7 @@ export async function withBomFixtures(
       token,
       {
         productId,
-        name: `BOM alternate ${tag}`,
+        name: alternateName,
         sku: `MFG-A-${tag}`,
       },
     )
@@ -342,16 +369,18 @@ export async function withBomFixtures(
       componentVariantId,
       alternateVariantId,
       outputName,
+      outputSku,
       componentName,
+      alternateName,
       call,
       readBom,
       readItems,
 
-      async createBom() {
+      async createBom(bomOutputVariantId = outputVariantId) {
         const id = await create(
           '/api/manufacturing/boms',
           {
-            outputVariantId,
+            outputVariantId: bomOutputVariantId,
             baseQuantity: '1',
           },
         )
@@ -410,7 +439,7 @@ export async function withBomFixtures(
         return id
       },
 
-      async createViewer() {
+      async createViewer(features = ['manufacturing.view']) {
         const email = `bom-viewer-${randomUUID()}@example.com`
         const password = `${randomUUID()}Aa1!`
 
@@ -434,7 +463,7 @@ export async function withBomFixtures(
             userId,
             tenantId: scope.tenantId,
             isSuperAdmin: false,
-            features: ['manufacturing.view'],
+            features: [...features],
             organizations: [scope.organizationId],
           },
         )
@@ -443,12 +472,139 @@ export async function withBomFixtures(
 
         return { email, password }
       },
+
+      async setVariantActive(variantId, isActive) {
+        await withClient(async (client) => {
+          const result = await client.query(
+            `update catalog_product_variants
+             set is_active = $1, updated_at = now()
+             where id = $2
+               and tenant_id = $3
+               and organization_id = $4`,
+            [
+              isActive,
+              variantId,
+              scope.tenantId,
+              scope.organizationId,
+            ],
+          )
+
+          expect(result.rowCount).toBe(1)
+        })
+      },
+
+      async createForeignOrganizationBom(variantName) {
+        const foreignTag = randomUUID()
+        const email = `bom-foreign-${foreignTag}@example.com`
+        const password = `${foreignTag}Aa1!`
+
+        const organizationId = await createOrganizationInDb({
+          name: `BOM foreign org ${foreignTag}`,
+          tenantId: scope.tenantId,
+        })
+
+        foreignCleanupTasks.push(() => (
+          deleteOrganizationInDb(organizationId)
+        ))
+
+        const userId = await createUserFixture(request, token, {
+          email,
+          password,
+          organizationId,
+          roles: [],
+        })
+
+        foreignCleanupTasks.unshift(
+          () => deleteCreatedRecord('/api/auth/users', userId),
+          () => deleteUserAclInDb(userId),
+        )
+
+        await setUserAclVisibility(request, token, {
+          userId,
+          organizations: [organizationId],
+          features: [
+            'manufacturing.view',
+            'manufacturing.manage',
+            'catalog.products.view',
+            'catalog.products.manage',
+          ],
+        })
+
+        const foreignToken = await getAuthToken(request, email, password)
+
+        expect(getTokenContext(foreignToken).organizationId).toBe(
+          organizationId,
+        )
+
+        const foreignProductId = await createProductFixture(
+          request,
+          foreignToken,
+          {
+            title: `BOM foreign ${foreignTag}`,
+            sku: `MFG-FP-${foreignTag}`,
+          },
+        )
+
+        foreignCleanupTasks.unshift(async () => {
+          const response = await apiRequest(
+            request,
+            'DELETE',
+            `/api/catalog/products?id=${foreignProductId}`,
+            { token: foreignToken, retryTransport: false },
+          )
+
+          expect(
+            response.ok() || response.status() === 404,
+            `Cleanup foreign product: ${response.status()}`,
+          ).toBe(true)
+        })
+
+        const foreignVariantId = await createVariantFixture(
+          request,
+          foreignToken,
+          {
+            productId: foreignProductId,
+            name: variantName,
+            sku: `MFG-FO-${foreignTag}`,
+          },
+        )
+
+        const response = await apiRequest(
+          request,
+          'POST',
+          '/api/manufacturing/boms',
+          {
+            token: foreignToken,
+            retryTransport: false,
+            data: {
+              outputVariantId: foreignVariantId,
+              baseQuantity: '1',
+            },
+          },
+        )
+
+        expect(
+          response.ok(),
+          `POST foreign BOM: ${response.status()}`,
+        ).toBe(true)
+
+        const bomId = z.object({ id: uuidSchema }).parse(
+          await readJsonSafe(response),
+        ).id
+
+        foreignCleanupTasks.unshift(() => (
+          deleteBomRecords([bomId], organizationId)
+        ))
+
+        return bomId
+      },
     }
 
     await run(fixture)
   } finally {
     const cleanupTasks: Array<() => Promise<void>> = [
       cleanupBoms,
+      ...foreignCleanupTasks,
       ...profileIds.map((id) => (
         () => deleteCreatedRecord(
           '/api/wms/inventory-profiles',

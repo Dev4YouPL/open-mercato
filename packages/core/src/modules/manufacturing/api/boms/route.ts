@@ -1,3 +1,4 @@
+import type { EntityManager } from '@mikro-orm/postgresql'
 import { z } from 'zod'
 
 import { E } from '#generated/entities.ids.generated'
@@ -20,6 +21,11 @@ import type {
 } from '../../data/validators'
 
 import {
+  decorateBomListItems,
+  findBomOutputVariantIdsBySearch,
+} from '../../lib/bomListing'
+
+import {
   bomOpenApi,
   bomResponseSchema,
 } from '../openapi'
@@ -35,6 +41,8 @@ import {
 type BomListQuery = z.infer<typeof bomListQuerySchema>
 
 const bomEntityId = E.manufacturing.manufacturing_bom
+
+const NO_MATCH_ID = '00000000-0000-0000-0000-000000000000'
 
 const recordSchema = z.record(z.string(), z.unknown())
 
@@ -178,6 +186,20 @@ const crud = makeCrudRoute<
         }
       }
 
+      if (query.search) {
+        const em = ctx.container.resolve('em') as EntityManager
+        const matchedVariantIds = await findBomOutputVariantIdsBySearch(
+          em,
+          query.search,
+          scope,
+          query.outputVariantId,
+        )
+
+        filters.output_variant_id = matchedVariantIds.length
+          ? { $in: matchedVariantIds }
+          : { $eq: NO_MATCH_ID }
+      }
+
       if (query.status) {
         filters.status = { $eq: query.status }
       }
@@ -235,6 +257,19 @@ const crud = makeCrudRoute<
   hooks: {
     beforeList: async (_query, ctx) => {
       await resolveManufacturingApiScope(ctx)
+    },
+
+    afterList: async (payload, ctx) => {
+      const items = Array.isArray(payload.items) ? payload.items : []
+
+      if (!items.length) {
+        return
+      }
+
+      const scope = await resolveManufacturingApiScope(ctx)
+      const em = ctx.container.resolve('em') as EntityManager
+
+      await decorateBomListItems(em, items, scope)
     },
   },
 })
