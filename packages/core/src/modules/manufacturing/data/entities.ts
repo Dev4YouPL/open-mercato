@@ -217,6 +217,10 @@ export const PRODUCTION_ORDER_NUMBER_UNIQUE = 'manufacturing_production_orders_n
   name: 'manufacturing_production_orders_variant_idx',
   properties: ['tenantId', 'organizationId', 'productVariantId'],
 })
+@Index({
+  name: 'manufacturing_production_orders_bom_revision_idx',
+  properties: ['tenantId', 'organizationId', 'bomRevisionId'],
+})
 export class ProductionOrder {
   [OptionalProps]?: 'createdAt' | 'updatedAt' | 'deletedAt' | 'dueAt' | 'status'
 

@@ -2214,6 +2214,18 @@
           "columnNames": [
             "tenant_id",
             "organization_id",
+            "bom_revision_id"
+          ],
+          "composite": true,
+          "constraint": false,
+          "keyName": "manufacturing_production_orders_bom_revision_idx",
+          "primary": false,
+          "unique": false
+        },
+        {
+          "columnNames": [
+            "tenant_id",
+            "organization_id",
             "order_number"
           ],
           "composite": true,

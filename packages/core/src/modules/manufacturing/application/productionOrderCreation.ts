@@ -143,5 +143,9 @@ export async function createProductionOrder(
   }
   const created = await deps.productionOrderStore.create(order, deps.scope)
 
+  if (created.status === 'revision_unavailable') {
+    return rejected('bom_revision_unavailable', 'BOM revision is not available.', 'bomRevisionId')
+  }
+
   return { status: 'created', orderId: created.id, orderNumber: created.orderNumber }
 }

@@ -32,6 +32,7 @@ import {
 import type { BomListItem } from '../../lib/bomListClient'
 import { BomAvailabilityBadge } from './BomAvailabilityBadge'
 import { BomStatusBadges } from './BomStatusBadges'
+import { BomDeleteAction } from './BomDeleteAction'
 
 const PAGE_SIZE = 25
 const SHORT_ID_LENGTH = 8
@@ -42,6 +43,8 @@ export function BomListTable() {
   const locale = useOptionalLocale()
   const { decimal } = resolveLocaleNumberSeparators(locale)
   const canCreate = useBomCreatePermission()
+  const canManage = useBomManagePermission()
+  const [deleteTarget, setDeleteTarget] = useState<BomListItem | null>(null)
 
   const [rows, setRows] = useState<BomListItem[]>([])
   const [page, setPage] = useState(1)
@@ -189,6 +192,8 @@ export function BomListTable() {
   )
 
   return (
+    <div className="space-y-4">
+    {deleteTarget ? <BomDeleteAction bom={deleteTarget} onChanged={() => { setDeleteTarget(null); setReloadToken((token) => token + 1) }} /> : null}
     <DataTable<BomListItem>
       title={t('manufacturing.boms.list.title')}
       titleHeadingLevel={1}
@@ -247,6 +252,7 @@ export function BomListTable() {
               label: t('manufacturing.boms.list.open'),
               href: `/backend/manufacturing/boms/${row.id}`,
             },
+            ...(canManage ? [{ id: 'delete', label: t('manufacturing.boms.list.delete'), destructive: true, onSelect: () => setDeleteTarget(row) }] : []),
           ]}
         />
       )}
@@ -254,6 +260,7 @@ export function BomListTable() {
         ? t('manufacturing.boms.list.emptySearch')
         : t('manufacturing.backend.boms.empty.description')}
     />
+    </div>
   )
 }
 
@@ -318,4 +325,19 @@ function useBomCreatePermission(): boolean {
   }, [])
 
   return canCreate
+}
+
+function useBomManagePermission(): boolean {
+  const [canManage, setCanManage] = useState(false)
+  useEffect(() => {
+    const controller = new AbortController()
+    void apiCall<{ ok: boolean }>('/api/auth/feature-check', {
+      method: 'POST', signal: controller.signal, headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ features: ['manufacturing.manage'] }),
+    }).then((response) => {
+      if (!controller.signal.aborted) setCanManage(response.ok && response.result?.ok === true)
+    }).catch(() => { if (!controller.signal.aborted) setCanManage(false) })
+    return () => controller.abort()
+  }, [])
+  return canManage
 }

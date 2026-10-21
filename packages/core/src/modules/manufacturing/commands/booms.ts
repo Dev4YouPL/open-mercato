@@ -32,14 +32,12 @@ import type { ManufacturingBomStatus } from '../data/entities'
 import {
   bomCreateSchema,
   bomAvailabilityUpdateSchema,
-  bomDeleteSchema,
   bomReleaseSchema,
   bomUpdateSchema,
 } from '../data/validators'
 import type {
   BomCreateInput,
   BomAvailabilityUpdateInput,
-  BomDeleteInput,
   BomReleaseInput,
   BomUpdateInput,
 } from '../data/validators'
@@ -54,12 +52,13 @@ import {
 } from '@open-mercato/shared/lib/crud/errors'
 
 import { resolveNextBomRevision } from '../lib/bomRevisions'
+import { lockBomFamilies, lockBomFamily } from '../data/bomUsageReader'
 
 import type { EventBus } from '@open-mercato/events/types'
 
 import type { BomAvailabilityChangedEventPayload, BomReleasedEventPayload } from '../events'
 import { runBomCommitEffects } from '../lib/bomCommitEffects'
-import { assertBomIsReleased } from '../lib/bomValidation'
+import { assertBomIsReleased, requireScopedBom } from '../lib/bomValidation'
 import {
   collectReleaseVariantIds,
   findTrackingViolations,
@@ -83,7 +82,7 @@ type BomAvailabilityResult = BomResult & {
   updatedAt: string
 }
 
-type BomItemSnapshot = {
+export type BomItemSnapshot = {
   id: string
   bomId: string
   tenantId: string
@@ -96,7 +95,7 @@ type BomItemSnapshot = {
   deletedAt: string | null
 }
 
-type BomSnapshot = {
+export type BomSnapshot = {
   id: string
   tenantId: string
   organizationId: string
@@ -128,10 +127,6 @@ type BomMutation =
     operation: 'update'
     input: BomUpdateInput
   }
-  | {
-    operation: 'delete'
-    input: BomDeleteInput
-  }
 
 type Translate = (key: string) => string
 
@@ -142,7 +137,7 @@ const executionSnapshots = new WeakMap<
 
 const bomEntityId = E.manufacturing.manufacturing_bom
 
-const bomCrudEvents: CrudEventsConfig<ManufacturingBom> = {
+export const bomCrudEvents: CrudEventsConfig<ManufacturingBom> = {
   module: 'manufacturing',
   entity: 'bom',
   persistent: true,
@@ -153,11 +148,11 @@ const bomCrudEvents: CrudEventsConfig<ManufacturingBom> = {
   }),
 }
 
-const bomCrudIndexer: CrudIndexerConfig<ManufacturingBom> = {
+export const bomCrudIndexer: CrudIndexerConfig<ManufacturingBom> = {
   entityType: bomEntityId,
 }
 
-const bomItemCrudEvents: CrudEventsConfig<ManufacturingBomItem> = {
+export const bomItemCrudEvents: CrudEventsConfig<ManufacturingBomItem> = {
   module: 'manufacturing',
   entity: 'bom_item',
   persistent: true,
@@ -168,11 +163,11 @@ const bomItemCrudEvents: CrudEventsConfig<ManufacturingBomItem> = {
   }),
 }
 
-const bomItemCrudIndexer: CrudIndexerConfig<ManufacturingBomItem> = {
+export const bomItemCrudIndexer: CrudIndexerConfig<ManufacturingBomItem> = {
   entityType: E.manufacturing.manufacturing_bom_item,
 }
 
-function snapshotBom(
+export function snapshotBom(
   bom: ManufacturingBom,
   items: ManufacturingBomItem[],
 ): BomSnapshot {
@@ -232,6 +227,7 @@ async function executeBomMutation(
     [
       async () => {
         if (mutation.operation === 'create') {
+          await lockBomFamily(em, scope, mutation.input.outputVariantId)
           await requireAvailableCatalogVariant(
             em,
             mutation.input.outputVariantId,
@@ -261,12 +257,28 @@ async function executeBomMutation(
           return
         }
 
+        const initialBom = await requireScopedBom(
+          em,
+          mutation.input.id,
+          scope,
+          translate('manufacturing.errors.bomUnavailable'),
+        )
+        const initialOutputVariantId = initialBom.outputVariantId
+        await lockBomFamilies(em, scope, [
+          initialOutputVariantId,
+          mutation.operation === 'update' ? mutation.input.outputVariantId ?? initialOutputVariantId : initialOutputVariantId,
+        ])
+
         bom = await requireLockedDraftBom(
           em,
           mutation.input.id,
           scope,
           translate,
         )
+
+        if (bom.outputVariantId !== initialOutputVariantId) {
+          throw conflict(translate('manufacturing.errors.bomChangedRefresh'))
+        }
 
         await enforceCommandOptimisticLockWithGuards(
           ctx.container,
@@ -334,29 +346,9 @@ async function executeBomMutation(
           return
         }
 
-        items = await loadActiveBomItems(
-          em,
-          bom.id,
-          scope,
-        )
-
-        before = snapshotBom(bom, items)
-
-        const now = new Date()
-
-        bom.deletedAt = now
-        bom.updatedAt = now
-
-        for (const item of items) {
-          item.deletedAt = now
-          item.updatedAt = now
-        }
-
-        em.persist(bom)
-        em.persist(items)
       },
       () => {
-        if (changed && mutation.operation !== 'delete') {
+        if (changed) {
           after = snapshotBom(bom, items)
         }
       },
@@ -391,12 +383,7 @@ async function executeBomMutation(
   const dataEngine =
     ctx.container.resolve<DataEngine>('dataEngine')
 
-  const action =
-    mutation.operation === 'create'
-      ? 'created'
-      : mutation.operation === 'update'
-        ? 'updated'
-        : 'deleted'
+  const action = mutation.operation === 'create' ? 'created' : 'updated'
 
   await emitCrudSideEffects({
     dataEngine,
@@ -410,23 +397,6 @@ async function executeBomMutation(
     events: bomCrudEvents,
     indexer: bomCrudIndexer,
   })
-
-  if (mutation.operation === 'delete') {
-    for (const item of items) {
-      await emitCrudSideEffects({
-        dataEngine,
-        action: 'deleted',
-        entity: item,
-        identifiers: {
-          id: item.id,
-          tenantId: item.tenantId,
-          organizationId: item.organizationId,
-        },
-        events: bomItemCrudEvents,
-        indexer: bomItemCrudIndexer,
-      })
-    }
-  }
 
   executionSnapshots.set(result, {
     before,
@@ -782,32 +752,6 @@ const updateBomCommand: CommandHandler<
   },
 }
 
-const deleteBomCommand: CommandHandler<
-  BomDeleteInput,
-  BomResult
-> = {
-  id: 'manufacturing.boms.delete',
-  isUndoable: false,
-
-  execute(input, ctx) {
-    return executeBomMutation(
-      {
-        operation: 'delete',
-        input: bomDeleteSchema.parse(input),
-      },
-      ctx,
-    )
-  },
-
-  captureAfter() {
-    return null
-  },
-
-  buildLog({ result }) {
-    return buildBomLog(result, 'delete')
-  },
-}
-
 const releaseBomCommand: CommandHandler<
   BomReleaseInput,
   BomReleaseResult
@@ -850,14 +794,14 @@ const setBomAvailabilityCommand: CommandHandler<
 
 registerCommand(createBomCommand)
 registerCommand(updateBomCommand)
-registerCommand(deleteBomCommand)
 registerCommand(releaseBomCommand)
 registerCommand(setBomAvailabilityCommand)
 
 export {
   createBomCommand,
   updateBomCommand,
-  deleteBomCommand,
   releaseBomCommand,
   setBomAvailabilityCommand
 }
+
+export { deleteBomCommand } from './bomDeletion'

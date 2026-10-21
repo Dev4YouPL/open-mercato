@@ -81,7 +81,7 @@ export const bomOpenApi = createManufacturingCrudOpenApi({
   },
   del: {
     schema: bomDeleteSchema,
-    description: 'Soft deletes a draft BOM and its active items.',
+    description: 'Soft deletes an unused BOM revision and its active items.',
   },
 })
 
