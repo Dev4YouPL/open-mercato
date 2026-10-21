@@ -3,7 +3,7 @@ import type { CrudFieldOption } from '@open-mercato/ui/backend/CrudForm'
 import { parseLocaleNumber } from '@open-mercato/shared/lib/number'
 import type { CreateProductionOrderInput } from '../../data/validators'
 
-export const RELEASED_BOM_REVISIONS_URL = '/api/manufacturing/boms?status=released&pageSize=100'
+export const RELEASED_BOM_REVISIONS_URL = '/api/manufacturing/boms?availableForNewOrders=true&pageSize=100'
 
 const bomRevisionListSchema = z.object({
   items: z.array(
@@ -11,6 +11,10 @@ const bomRevisionListSchema = z.object({
       id: z.string(),
       outputVariantId: z.string(),
       revision: z.string(),
+      outputVariant: z
+        .object({ name: z.string().nullable(), sku: z.string().nullable() })
+        .nullable()
+        .optional(),
     }),
   ),
 })
@@ -38,7 +42,7 @@ export function toBomRevisionOptions(response: unknown): BomRevisionOption[] {
 
   return parsed.data.items.map((item) => ({
     value: item.id,
-    label: `${item.revision} · ${item.outputVariantId}`,
+    label: `${item.revision} · ${item.outputVariant?.name ?? item.outputVariant?.sku ?? item.outputVariantId}`,
     productVariantId: item.outputVariantId,
   }))
 }

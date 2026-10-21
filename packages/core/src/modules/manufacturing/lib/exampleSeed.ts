@@ -1,10 +1,13 @@
 import { randomUUID } from 'node:crypto'
 import type { EntityManager } from '@mikro-orm/postgresql'
+import { z } from 'zod'
+import type { CommandBus } from '@open-mercato/shared/lib/commands/command-bus'
 import type { CommandRuntimeContext } from '@open-mercato/shared/lib/commands/types'
+import { findWithDecryption } from '@open-mercato/shared/lib/encryption/find'
 import { createLogger } from '@open-mercato/shared/lib/logger'
 import type { InitSetupContext } from '@open-mercato/shared/modules/setup'
 import type { ProductionOperationResultDto, ProductionOperations } from '../application/productionOperations'
-import { ProductionExecution, ProductionOrder } from '../data/entities'
+import { ManufacturingBomItem, ProductionExecution, ProductionOrder } from '../data/entities'
 import type { ManufacturingScope } from '../domain/manufacturingScope'
 import type { ProductionOrderStatus } from '../domain/orderExecutionPermissions'
 import { toPositiveQuantity } from '../domain/quantity'
@@ -20,10 +23,34 @@ const logger = createLogger('manufacturing').child({ component: 'example-seed' }
 
 export const EXAMPLE_MATERIAL_LOCATION_CODE = 'B-01-01'
 export const EXAMPLE_RECEIPT_LOCATION_CODE = 'STAGE-OUT'
-export const EXAMPLE_BOM_REVISION_IDS = {
-  table: '00000000-0000-4000-8000-00000000a001',
-  bench: '00000000-0000-4000-8000-00000000a002',
-} as const
+
+type ExampleBomSpec = {
+  outputSku: string
+  components: Array<{ sku: string; quantity: string }>
+}
+
+export const EXAMPLE_BOMS: Record<'table' | 'bench', ExampleBomSpec> = {
+  table: {
+    outputSku: 'OAK-TABLE-180',
+    components: [
+      { sku: 'OAK-TOP-180', quantity: '1' },
+      { sku: 'OAK-LEG-72', quantity: '4' },
+      { sku: 'SCREW-SET-M8', quantity: '1' },
+      { sku: 'FINISH-OIL-1L', quantity: '0.25' },
+    ],
+  },
+  bench: {
+    outputSku: 'OAK-BENCH-140',
+    components: [
+      { sku: 'OAK-SEAT-140', quantity: '1' },
+      { sku: 'OAK-LEG-45', quantity: '4' },
+      { sku: 'SCREW-SET-M8', quantity: '1' },
+      { sku: 'FINISH-OIL-1L', quantity: '0.2' },
+    ],
+  },
+}
+
+const bomCreatedSchema = z.object({ bomId: z.string() })
 
 export const EXAMPLE_PRODUCTS: ExampleProductSpec[] = [
   { sku: 'OAK-TABLE-180', title: 'Oak Dining Table 180' },
@@ -114,6 +141,30 @@ async function seedOpeningStock(env: SeedEnvironment): Promise<void> {
       quantity,
     })
   }
+}
+
+async function createReleasedBom(env: SeedEnvironment, em: EntityManager, spec: ExampleBomSpec): Promise<string> {
+  const commandBus = env.ctx.container.resolve<CommandBus>('commandBus')
+  const created = await commandBus.execute('manufacturing.boms.create', {
+    input: { outputVariantId: variant(env, spec.outputSku), baseQuantity: '1' },
+    ctx: env.ctx,
+  })
+  const { bomId } = bomCreatedSchema.parse(created.result)
+
+  for (const [index, component] of spec.components.entries()) {
+    await commandBus.execute('manufacturing.bom_items.create', {
+      input: { bomId, componentVariantId: variant(env, component.sku), quantity: component.quantity, position: index + 1 },
+      ctx: env.ctx,
+    })
+  }
+
+  const items = await findWithDecryption(em.fork(), ManufacturingBomItem, { ...env.scope, bom: bomId, deletedAt: null }, undefined, env.scope)
+  await commandBus.execute('manufacturing.boms.release', {
+    input: { id: bomId, expectedItems: items.map((item) => ({ id: item.id, updatedAt: item.updatedAt.toISOString() })) },
+    ctx: env.ctx,
+  })
+
+  return bomId
 }
 
 async function createOrder(
@@ -244,14 +295,14 @@ export async function seedManufacturingExamples(ctx: InitSetupContext): Promise<
 
   const tableOrderId = await createOrder(env, em, {
     sku: 'OAK-TABLE-180',
-    bomRevisionId: EXAMPLE_BOM_REVISION_IDS.table,
+    bomRevisionId: await createReleasedBom(env, em, EXAMPLE_BOMS.table),
     plannedQuantity: 10,
     dueInDays: 7,
     status: 'in_progress',
   })
   await createOrder(env, em, {
     sku: 'OAK-BENCH-140',
-    bomRevisionId: EXAMPLE_BOM_REVISION_IDS.bench,
+    bomRevisionId: await createReleasedBom(env, em, EXAMPLE_BOMS.bench),
     plannedQuantity: 4,
     dueInDays: 14,
     status: 'released',

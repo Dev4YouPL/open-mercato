@@ -1,18 +1,17 @@
-"use client"
+'use client'
+
+import { useOrganizationScopeVersion } from '@open-mercato/shared/lib/frontend/useOrganizationScope'
 import { Page, PageBody } from '@open-mercato/ui/backend/Page'
-import { EmptyState } from '@open-mercato/ui/backend/EmptyState'
-import { useT } from '@open-mercato/shared/lib/i18n/context'
+
+import { BomListTable } from '../../../components/boms/BomListTable'
 
 export default function ManufacturingBomsPage() {
-  const t = useT()
+  const scopeVersion = useOrganizationScopeVersion()
 
   return (
     <Page>
       <PageBody>
-        <EmptyState
-          title={t('manufacturing.backend.boms.empty.title')}
-          description={t('manufacturing.backend.boms.empty.description')}
-        />
+        <BomListTable key={scopeVersion} />
       </PageBody>
     </Page>
   )

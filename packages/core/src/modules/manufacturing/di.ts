@@ -18,6 +18,8 @@ import { PRODUCTION_EXECUTION_STORE_DI_KEY, type ProductionExecutionStore } from
 import { createMikroExecutionContextReader } from './data/executionContextReader'
 import { createMikroProductionExecutionStore } from './data/productionExecutionStore'
 import { EXAMPLE_CATALOG_DI_KEY, type ExampleCatalog } from './ports/exampleCatalog'
+import { BOM_REVISION_READER_DI_KEY, type BomRevisionReader } from './ports/bomRevisionReader'
+import { createMikroBomRevisionReader } from './data/bomRevisionReader'
 import { createCatalogExampleProducts } from './adapters/catalog/catalogExampleProducts'
 import { createWmsInventoryGateway } from './adapters/wms/wmsInventoryGateway'
 import { createWmsInventoryPolicyReader } from './adapters/wms/wmsInventoryPolicyReader'
@@ -49,6 +51,9 @@ export function register(container: AppContainer): void {
     ).scoped().proxy(),
     [PRODUCTION_EXECUTION_STORE_DI_KEY]: asFunction(
       ({ em }: { em: EntityManager }): ProductionExecutionStore => createMikroProductionExecutionStore({ em }),
+    ).scoped().proxy(),
+    [BOM_REVISION_READER_DI_KEY]: asFunction(
+      ({ em }: { em: EntityManager }): BomRevisionReader => createMikroBomRevisionReader({ em }),
     ).scoped().proxy(),
     [EXECUTION_CONTEXT_READER_DI_KEY]: asFunction(
       ({ em, manufacturingProductionOrderReader }: { em: EntityManager; manufacturingProductionOrderReader: ProductionOrderReader }): ExecutionContextReader =>

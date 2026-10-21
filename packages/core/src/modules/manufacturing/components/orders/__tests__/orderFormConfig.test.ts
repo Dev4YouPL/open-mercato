@@ -11,6 +11,14 @@ describe('production order form config', () => {
     )
   })
 
+  it('labels options with the output variant name when the list provides it', () => {
+    expect(
+      toBomRevisionOptions({
+        items: [{ id: 'revision-1', outputVariantId: 'table', revision: 'R1', outputVariant: { name: 'Oak table', sku: 'OAK-TABLE-180' } }],
+      }),
+    ).toEqual([{ value: 'revision-1', label: 'R1 · Oak table', productVariantId: 'table' }])
+  })
+
   it('returns no options for an unexpected response', () => {
     expect(toBomRevisionOptions({ data: [] })).toEqual([])
   })
