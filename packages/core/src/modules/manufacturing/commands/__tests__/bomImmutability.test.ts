@@ -13,7 +13,6 @@ import {
 import { ManufacturingBom } from '../../data/entities'
 import { bomUpdateSchema } from '../../data/validators'
 import {
-  deleteBomCommand,
   releaseBomCommand,
   updateBomCommand,
 } from '../booms'
@@ -102,6 +101,8 @@ beforeEach(() => {
     fork: jest.fn(),
     persist,
     create: createEntity,
+    isInTransaction: jest.fn(() => true),
+    execute: jest.fn(async (sql: string) => sql.includes('transaction_isolation') ? [{ level: 'read committed' }] : undefined),
   }
 
   em = emMock as unknown as EntityManager
@@ -167,13 +168,6 @@ const mutationCases: MutationCase[] = [
     name: 'changing the output variant',
     execute: () => updateBomCommand.execute(
       { id: bomId, outputVariantId: componentVariantId },
-      ctx,
-    ),
-  },
-  {
-    name: 'deleting the BOM',
-    execute: () => deleteBomCommand.execute(
-      { id: bomId },
       ctx,
     ),
   },

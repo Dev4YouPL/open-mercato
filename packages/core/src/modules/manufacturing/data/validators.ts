@@ -242,8 +242,16 @@ export const bomUpdateSchema = bomCreateSchema
 export const bomDeleteSchema = z
   .object({
     id: uuidSchema,
+    expectedVersion: z.string().regex(/^v1:[0-9a-f]{64}$/).optional(),
   })
   .strict()
+
+export const bomDeleteAllSchema = z.object({
+  outputVariantId: uuidSchema,
+  expectedVersion: z.string().regex(/^v1:[0-9a-f]{64}$/),
+}).strict()
+
+export const bomDeletionPreviewQuerySchema = z.object({ id: uuidSchema }).strict()
 
 export const bomReleaseSchema = z
   .object({
@@ -352,6 +360,7 @@ export const bomItemListQuerySchema = paginationSchema.extend({
 export type BomCreateInput = z.infer<typeof bomCreateSchema>
 export type BomUpdateInput = z.infer<typeof bomUpdateSchema>
 export type BomDeleteInput = z.infer<typeof bomDeleteSchema>
+export type BomDeleteAllInput = z.infer<typeof bomDeleteAllSchema>
 export type BomReleaseInput = z.infer<typeof bomReleaseSchema>
 export type BomAvailabilityUpdateInput = z.infer<typeof bomAvailabilityUpdateSchema>
 

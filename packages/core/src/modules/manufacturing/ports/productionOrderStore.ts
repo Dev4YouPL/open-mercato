@@ -4,13 +4,14 @@ import type { NewProductionOrder } from '../domain/productionOrder'
 
 export const PRODUCTION_ORDER_STORE_DI_KEY = 'manufacturingProductionOrderStore'
 
-export type CreatedProductionOrderDto = {
-  id: string
-  orderNumber: string
-}
+export type CreateProductionOrderStoreResult =
+  | { status: 'created'; id: string; orderNumber: string }
+  | { status: 'revision_unavailable' }
+
+export type CreatedProductionOrderDto = Extract<CreateProductionOrderStoreResult, { status: 'created' }>
 
 export interface ProductionOrderStore {
-  create(order: NewProductionOrder, scope: ManufacturingScope): Promise<CreatedProductionOrderDto>
+  create(order: NewProductionOrder, scope: ManufacturingScope): Promise<CreateProductionOrderStoreResult>
 }
 
 export function resolveProductionOrderStore(container: AwilixContainer): ProductionOrderStore {

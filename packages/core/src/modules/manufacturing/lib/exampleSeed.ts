@@ -184,6 +184,7 @@ async function createOrder(
     env.scope,
   )
 
+  if (created.status !== 'created') throw new Error('[internal] Example production order BOM revision is unavailable')
   await em.nativeUpdate(ProductionOrder, { ...env.scope, id: created.id }, { status: input.status })
 
   return created.id

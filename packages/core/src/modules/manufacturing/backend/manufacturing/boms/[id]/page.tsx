@@ -38,6 +38,9 @@ import {
 import {
   BomReleaseAction,
 } from '../../../../components/boms/BomReleaseAction'
+import { BomDeleteAction } from '../../../../components/boms/BomDeleteAction'
+import type { BomDeletionBlockedFailure } from '../../../../components/boms/BomDeleteAction'
+import { BomDeletionBlockedNotice } from '../../../../components/boms/BomDeletionBlockedNotice'
 
 import {
   BomReleaseBlockedNotice,
@@ -98,6 +101,7 @@ function BomDetailContent({ bomId }: { bomId: string }) {
   const [releaseViolations, setReleaseViolations] = useState<
     BomReleaseTrackingViolation[] | null
   >(null)
+  const [deletionBlocked, setDeletionBlocked] = useState<BomDeletionBlockedFailure | null>(null)
 
   const requestRef = useRef<AbortController | null>(null)
 
@@ -107,6 +111,7 @@ function BomDetailContent({ bomId }: { bomId: string }) {
 
   const reloadBom = useCallback(async () => {
     setReleaseViolations(null)
+    setDeletionBlocked(null)
     requestRef.current?.abort()
 
     const controller = new AbortController()
@@ -339,12 +344,15 @@ function BomDetailContent({ bomId }: { bomId: string }) {
               />
             ) : null}
 
+            {canManageManufacturing ? <BomDeleteAction bom={bom} disabled={isLoading || permissionsFailed} onRefresh={reloadBom} onBlocked={setDeletionBlocked} /> : null}
+
             {backButton}
           </>
         }
       />
 
       <PageBody>
+        {deletionBlocked ? <BomDeletionBlockedNotice failure={deletionBlocked} revision={bom.revision} /> : null}
         {bom.status === 'released' ? (
           <BomAvailabilityToggle
             bom={bom}
