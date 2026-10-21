@@ -1,10 +1,11 @@
-import type { PlannedExecution, ProductionFactDraft, ProductionFactKind } from './executionDocument'
+import type { PlannedDocument, ProductionFactDraft, ProductionFactKind } from './executionDocument'
 import type { MovementKind, PlannedMovement } from './movement'
 import { toPositiveQuantity } from './quantity'
 
 export type ReversibleDocument = {
   id: string
-  orderId: string
+  executionId: string
+  orderId: string | null
   reversedByDocumentId: string | null
   facts: ProductionFactDraft[]
 }
@@ -24,7 +25,7 @@ const FACT_REVERSAL_RULES: Record<ProductionFactKind, FactReversalRule> = {
 }
 
 export type ReversalPlan =
-  | { status: 'planned'; execution: PlannedExecution }
+  | { status: 'planned'; plan: PlannedDocument }
   | { status: 'already_reversed' }
   | { status: 'unsupported' }
 
@@ -50,8 +51,9 @@ export function planReversal(document: ReversibleDocument): ReversalPlan {
 
   return {
     status: 'planned',
-    execution: {
+    plan: {
       documentType: 'reversal',
+      orderId: document.orderId,
       movement,
       facts: document.facts.map((fact) => ({
         factKind: FACT_REVERSAL_RULES[fact.factKind].factKind,

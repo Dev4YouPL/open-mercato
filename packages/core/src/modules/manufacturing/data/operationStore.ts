@@ -5,7 +5,7 @@ import { findOneWithDecryption } from '@open-mercato/shared/lib/encryption/find'
 import {
   PRODUCTION_FACT_KINDS,
   type ExecutionDocumentDraft,
-  type PlannedExecution,
+  type PlannedDocument,
   type PlannedFact,
 } from '../domain/executionDocument'
 import type { ManufacturingScope } from '../domain/manufacturingScope'
@@ -65,10 +65,15 @@ function toPlannedFacts(row: ManufacturingOperation): PlannedFact[] {
   return parsed.data
 }
 
-function toExecution(row: ManufacturingOperation): PlannedExecution | null {
+function toPlan(row: ManufacturingOperation): PlannedDocument | null {
   if (!row.documentType) return null
 
-  return { documentType: row.documentType, movement: toMovement(row), facts: toPlannedFacts(row) }
+  return {
+    documentType: row.documentType,
+    orderId: row.orderId ?? null,
+    movement: toMovement(row),
+    facts: toPlannedFacts(row),
+  }
 }
 
 function toState(row: ManufacturingOperation): OperationState {
@@ -92,11 +97,11 @@ function toRecord(row: ManufacturingOperation): OperationRecord {
   return {
     operationId: row.operationId,
     action: row.action,
-    orderId: row.orderId,
+    executionId: row.executionId,
     payloadHash: row.payloadHash,
     requestedBy: row.requestedBy,
     sourceDocumentId: row.sourceDocumentId ?? null,
-    execution: toExecution(row),
+    plan: toPlan(row),
     state: toState(row),
   }
 }
@@ -113,11 +118,12 @@ function toStateColumns(state: OperationState) {
   }
 }
 
-function toExecutionColumns(execution: PlannedExecution | null) {
+function toPlanColumns(plan: PlannedDocument | null) {
   return {
-    documentType: execution?.documentType ?? null,
-    plannedFacts: execution?.facts ?? null,
-    ...toMovementColumns(execution?.movement ?? null),
+    documentType: plan?.documentType ?? null,
+    orderId: plan?.orderId ?? null,
+    plannedFacts: plan?.facts ?? null,
+    ...toMovementColumns(plan?.movement ?? null),
   }
 }
 
@@ -149,11 +155,11 @@ export function createMikroOperationStore({ em }: MikroOperationStoreOptions): O
       return row ? toRecord(row) : null
     },
 
-    async findUnresolved(orderId, action, scope) {
+    async findUnresolved(executionId, action, scope) {
       const row = await findOneWithDecryption(
         em.fork(),
         ManufacturingOperation,
-        { ...scope, orderId, action, status: { $in: [...UNRESOLVED_OPERATION_STATUSES] } },
+        { ...scope, executionId, action, status: { $in: [...UNRESOLVED_OPERATION_STATUSES] } },
         undefined,
         scope,
       )
@@ -166,11 +172,11 @@ export function createMikroOperationStore({ em }: MikroOperationStoreOptions): O
         ...scope,
         operationId: operation.operationId,
         action: operation.action,
-        orderId: operation.orderId,
+        executionId: operation.executionId,
         payloadHash: operation.payloadHash,
         requestedBy: operation.requestedBy,
         sourceDocumentId: operation.sourceDocumentId,
-        ...toExecutionColumns(operation.execution),
+        ...toPlanColumns(operation.plan),
         ...toStateColumns(operation.state),
       })
 

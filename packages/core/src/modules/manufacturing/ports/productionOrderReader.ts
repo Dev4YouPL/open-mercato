@@ -11,6 +11,7 @@ export type ProductionOrderDto = OrderExecutionPermissions & {
   productVariantId: string
   sourceLocationId: string | null
   targetLocationId: string | null
+  plannedQuantity: number
 }
 
 export interface ProductionOrderReader {

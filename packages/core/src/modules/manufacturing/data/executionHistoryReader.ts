@@ -24,7 +24,8 @@ function toDocument(row: ExecutionDocument, facts: ProductionFactDto[], reversed
   return {
     id: row.id,
     documentType: row.documentType,
-    orderId: row.orderId,
+    executionId: row.executionId,
+    orderId: row.orderId ?? null,
     operationId: row.operationId,
     postedBy: row.postedBy,
     postedAt: row.postedAt,
@@ -48,11 +49,15 @@ function factsOf(facts: ProductionFact[], documentId: string): ProductionFactDto
   return facts.filter((fact) => fact.document.id === documentId).map(toFact)
 }
 
-async function listForOrder(em: EntityManager, orderId: string, scope: ManufacturingScope): Promise<ExecutionDocumentDto[]> {
+async function listDocuments(
+  em: EntityManager,
+  where: { executionId: string } | { orderId: string },
+  scope: ManufacturingScope,
+): Promise<ExecutionDocumentDto[]> {
   const documents = await findWithDecryption(
     em,
     ExecutionDocument,
-    { ...scope, orderId },
+    { ...scope, ...where },
     { orderBy: { postedAt: 'asc', id: 'asc' } },
     scope,
   )
@@ -84,7 +89,8 @@ async function getDocument(em: EntityManager, documentId: string, scope: Manufac
 
 export function createMikroExecutionHistoryReader({ em }: MikroExecutionHistoryReaderOptions): ExecutionHistoryReader {
   return {
-    listForOrder: (orderId, scope) => listForOrder(em.fork(), orderId, scope),
+    listForExecution: (executionId, scope) => listDocuments(em.fork(), { executionId }, scope),
+    listForOrder: (orderId, scope) => listDocuments(em.fork(), { orderId }, scope),
     getDocument: (documentId, scope) => getDocument(em.fork(), documentId, scope),
   }
 }

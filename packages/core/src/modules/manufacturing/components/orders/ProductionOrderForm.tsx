@@ -8,12 +8,11 @@ import { apiCall } from '@open-mercato/ui/backend/utils/apiCall'
 import { createCrud } from '@open-mercato/ui/backend/utils/crud'
 import { createCrudFormError } from '@open-mercato/ui/backend/utils/serverErrors'
 import { Button } from '@open-mercato/ui/primitives/button'
+import { loadActiveLocationOptions } from '../shared/useReferenceLabels'
 import {
-  ACTIVE_LOCATIONS_URL,
   buildCreateOrderPayload,
   RELEASED_BOM_REVISIONS_URL,
   toBomRevisionOptions,
-  toLocationOptions,
   type BomRevisionOption,
   type ProductionOrderFormValues,
 } from './orderFormConfig'
@@ -27,11 +26,6 @@ const FIELD_ERROR_KEYS = {
   required: 'manufacturing.orders.form.errors.required',
   invalidQuantity: 'manufacturing.orders.form.errors.invalidQuantity',
 } as const
-
-async function loadLocations() {
-  const call = await apiCall<unknown>(ACTIVE_LOCATIONS_URL)
-  return call.ok ? toLocationOptions(call.result) : []
-}
 
 export function ProductionOrderForm({ onCreated, onCancel }: ProductionOrderFormProps) {
   const t = useT()
@@ -66,7 +60,7 @@ export function ProductionOrderForm({ onCreated, onCancel }: ProductionOrderForm
         type: 'select',
         required: true,
         disabled: isSaving,
-        loadOptions: loadLocations,
+        loadOptions: loadActiveLocationOptions,
       },
       {
         id: 'targetLocationId',
@@ -74,7 +68,7 @@ export function ProductionOrderForm({ onCreated, onCancel }: ProductionOrderForm
         type: 'select',
         required: true,
         disabled: isSaving,
-        loadOptions: loadLocations,
+        loadOptions: loadActiveLocationOptions,
       },
       {
         id: 'dueAt',

@@ -20,11 +20,11 @@ function recordWith(state: OperationRecord['state']): OperationRecord {
   return {
     operationId: 'operation-1',
     action: 'issueMaterial',
-    orderId: 'order-1',
+    executionId: 'execution-1',
     payloadHash: hashOperationPayload(payload),
     requestedBy: 'user-1',
     sourceDocumentId: null,
-    execution: null,
+    plan: null,
     state,
   }
 }

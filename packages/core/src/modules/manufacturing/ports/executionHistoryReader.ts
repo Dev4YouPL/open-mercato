@@ -17,7 +17,8 @@ export type ProductionFactDto = {
 export type ExecutionDocumentDto = {
   id: string
   documentType: ExecutionDocumentType
-  orderId: string
+  executionId: string
+  orderId: string | null
   operationId: string
   postedBy: string
   postedAt: Date
@@ -27,6 +28,7 @@ export type ExecutionDocumentDto = {
 }
 
 export interface ExecutionHistoryReader {
+  listForExecution(executionId: string, scope: ManufacturingScope): Promise<ExecutionDocumentDto[]>
   listForOrder(orderId: string, scope: ManufacturingScope): Promise<ExecutionDocumentDto[]>
   getDocument(documentId: string, scope: ManufacturingScope): Promise<ExecutionDocumentDto | null>
 }

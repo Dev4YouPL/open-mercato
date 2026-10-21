@@ -28,6 +28,7 @@ export function createMikroProductionOrderReader({ em }: MikroProductionOrderRea
         productVariantId: order.productVariantId,
         sourceLocationId: order.sourceLocationId,
         targetLocationId: order.targetLocationId,
+        plannedQuantity: Number(order.plannedQuantity),
         ...executionPermissionsFor(order.status),
       }
     },

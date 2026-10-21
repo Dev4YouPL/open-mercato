@@ -9,7 +9,7 @@ export type OperationInsertResultDto = 'inserted' | 'duplicate_operation' | 'unr
 
 export interface OperationStore {
   find(operationId: string, scope: ManufacturingScope): Promise<OperationRecord | null>
-  findUnresolved(orderId: string, action: OperationAction, scope: ManufacturingScope): Promise<OperationRecord | null>
+  findUnresolved(executionId: string, action: OperationAction, scope: ManufacturingScope): Promise<OperationRecord | null>
   insert(operation: OperationRecord, scope: ManufacturingScope): Promise<OperationInsertResultDto>
   resolveIfUnresolved(
     operationId: string,

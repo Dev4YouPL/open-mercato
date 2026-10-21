@@ -10,21 +10,15 @@ import { useOrganizationScopeVersion } from '@open-mercato/shared/lib/frontend/u
 import { DataTable } from '@open-mercato/ui/backend/DataTable'
 import type { FilterDef, FilterValues } from '@open-mercato/ui/backend/FilterBar'
 import { ListEmptyState } from '@open-mercato/ui/backend/filters/ListEmptyState'
+import { RowActions } from '@open-mercato/ui/backend/RowActions'
 import { apiCall } from '@open-mercato/ui/backend/utils/apiCall'
 import { raiseCrudError } from '@open-mercato/ui/backend/utils/serverErrors'
 import { Button } from '@open-mercato/ui/primitives/button'
 import { StatusBadge } from '@open-mercato/ui/primitives/status-badge'
 import { PRODUCTION_ORDER_STATUSES } from '../../domain/orderExecutionPermissions'
 import type { ProductionOrderListItem } from '../../data/validators'
-import {
-  buildOrderListQuery,
-  CATALOG_VARIANTS_API_PATH,
-  ORDER_LIST_PAGE_SIZE,
-  ORDER_STATUS_BADGES,
-  ORDERS_API_PATH,
-  toVariantLabels,
-  toVariantOptions,
-} from './orderListConfig'
+import { searchVariantOptions, useVariantLabels } from '../shared/useReferenceLabels'
+import { buildOrderListQuery, ORDER_LIST_PAGE_SIZE, ORDER_STATUS_BADGES, ORDERS_API_PATH } from './orderListConfig'
 
 type OrderListResponse = {
   items: ProductionOrderListItem[]
@@ -34,13 +28,7 @@ type OrderListResponse = {
 }
 
 const CREATE_HREF = '/backend/manufacturing/orders/create'
-
-async function loadVariantOptions(query?: string) {
-  const params = new URLSearchParams({ pageSize: '20' })
-  if (query?.trim()) params.set('search', query.trim())
-  const call = await apiCall<unknown>(`${CATALOG_VARIANTS_API_PATH}?${params.toString()}`)
-  return call.ok ? toVariantOptions(call.result) : []
-}
+const EXECUTIONS_HREF = '/backend/manufacturing/executions'
 
 export function ProductionOrdersTable() {
   const t = useT()
@@ -62,17 +50,7 @@ export function ProductionOrdersTable() {
   })
 
   const rows = orders.data?.items ?? []
-  const variantIds = [...new Set(rows.map((row) => row.productVariantId))].sort()
-
-  const variantLabels = useQuery({
-    queryKey: ['manufacturing-order-variant-labels', variantIds.join(','), scopeVersion],
-    enabled: variantIds.length > 0,
-    queryFn: async () => {
-      const params = new URLSearchParams({ ids: variantIds.join(','), pageSize: String(ORDER_LIST_PAGE_SIZE) })
-      const call = await apiCall<unknown>(`${CATALOG_VARIANTS_API_PATH}?${params.toString()}`)
-      return call.ok ? toVariantLabels(call.result) : {}
-    },
-  })
+  const variantLabels = useVariantLabels(rows.map((row) => row.productVariantId))
 
   const filters = React.useMemo<FilterDef[]>(
     () => [
@@ -89,7 +67,7 @@ export function ProductionOrdersTable() {
         id: 'productVariantId',
         label: t('manufacturing.orders.list.filters.productVariant'),
         type: 'combobox',
-        loadOptions: loadVariantOptions,
+        loadOptions: searchVariantOptions,
       },
       {
         id: 'dueAt',
@@ -109,7 +87,7 @@ export function ProductionOrdersTable() {
         header: t('manufacturing.orders.list.columns.productVariant'),
         enableSorting: false,
         meta: { truncate: true, maxWidth: '280px' },
-        cell: ({ row }) => variantLabels.data?.[row.original.productVariantId] ?? row.original.productVariantId,
+        cell: ({ row }) => variantLabels[row.original.productVariantId] ?? row.original.productVariantId,
       },
       {
         id: 'plannedQuantity',
@@ -139,7 +117,7 @@ export function ProductionOrdersTable() {
         cell: ({ row }) => new Date(row.original.createdAt).toLocaleString(),
       },
     ],
-    [t, variantLabels.data],
+    [t, variantLabels],
   )
 
   return (
@@ -172,6 +150,22 @@ export function ProductionOrdersTable() {
       sortable
       sorting={sorting}
       onSortingChange={setSorting}
+      rowActions={(row) => (
+        <RowActions
+          items={[
+            {
+              id: 'create-execution',
+              label: t('manufacturing.orders.list.actions.createExecution'),
+              href: `${EXECUTIONS_HREF}/create?orderId=${encodeURIComponent(row.id)}`,
+            },
+            {
+              id: 'show-executions',
+              label: t('manufacturing.orders.list.actions.showExecutions'),
+              href: `${EXECUTIONS_HREF}?orderId=${encodeURIComponent(row.id)}`,
+            },
+          ]}
+        />
+      )}
       emptyState={
         <ListEmptyState
           entityName={t('manufacturing.backend.orders.nav.title')}

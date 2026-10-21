@@ -13,6 +13,12 @@ import { PRODUCTION_ORDER_READER_DI_KEY, type ProductionOrderReader } from './po
 import { PRODUCTION_ORDER_STORE_DI_KEY, type ProductionOrderStore } from './ports/productionOrderStore'
 import { createMikroProductionOrderReader } from './data/productionOrderReader'
 import { createMikroProductionOrderStore } from './data/productionOrderStore'
+import { EXECUTION_CONTEXT_READER_DI_KEY, type ExecutionContextReader } from './ports/executionContextReader'
+import { PRODUCTION_EXECUTION_STORE_DI_KEY, type ProductionExecutionStore } from './ports/productionExecutionStore'
+import { createMikroExecutionContextReader } from './data/executionContextReader'
+import { createMikroProductionExecutionStore } from './data/productionExecutionStore'
+import { EXAMPLE_CATALOG_DI_KEY, type ExampleCatalog } from './ports/exampleCatalog'
+import { createCatalogExampleProducts } from './adapters/catalog/catalogExampleProducts'
 import { createWmsInventoryGateway } from './adapters/wms/wmsInventoryGateway'
 import { createWmsInventoryPolicyReader } from './adapters/wms/wmsInventoryPolicyReader'
 
@@ -21,21 +27,32 @@ export function register(container: AppContainer): void {
     [INVENTORY_GATEWAY_FACTORY_DI_KEY]: asFunction(
       ({ commandBus }: { commandBus: CommandBus }): InventoryGatewayFactory =>
         (ctx, organizationId) => createWmsInventoryGateway({ commandBus, ctx, organizationId }),
-    ).scoped(),
+    ).scoped().proxy(),
+    [EXAMPLE_CATALOG_DI_KEY]: asFunction(
+      ({ commandBus, queryEngine }: { commandBus: CommandBus; queryEngine: QueryEngine }): ExampleCatalog =>
+        createCatalogExampleProducts({ commandBus, queryEngine }),
+    ).scoped().proxy(),
     [INVENTORY_POLICY_READER_DI_KEY]: asFunction(
       ({ queryEngine }: { queryEngine: QueryEngine }): InventoryPolicyReader => createWmsInventoryPolicyReader({ queryEngine }),
-    ).scoped(),
+    ).scoped().proxy(),
     [OPERATION_STORE_DI_KEY]: asFunction(
       ({ em }: { em: EntityManager }): OperationStore => createMikroOperationStore({ em }),
-    ).scoped(),
+    ).scoped().proxy(),
     [EXECUTION_HISTORY_READER_DI_KEY]: asFunction(
       ({ em }: { em: EntityManager }): ExecutionHistoryReader => createMikroExecutionHistoryReader({ em }),
-    ).scoped(),
+    ).scoped().proxy(),
     [PRODUCTION_ORDER_READER_DI_KEY]: asFunction(
       ({ em }: { em: EntityManager }): ProductionOrderReader => createMikroProductionOrderReader({ em }),
-    ).scoped(),
+    ).scoped().proxy(),
     [PRODUCTION_ORDER_STORE_DI_KEY]: asFunction(
       ({ em }: { em: EntityManager }): ProductionOrderStore => createMikroProductionOrderStore({ em }),
-    ).scoped(),
+    ).scoped().proxy(),
+    [PRODUCTION_EXECUTION_STORE_DI_KEY]: asFunction(
+      ({ em }: { em: EntityManager }): ProductionExecutionStore => createMikroProductionExecutionStore({ em }),
+    ).scoped().proxy(),
+    [EXECUTION_CONTEXT_READER_DI_KEY]: asFunction(
+      ({ em, manufacturingProductionOrderReader }: { em: EntityManager; manufacturingProductionOrderReader: ProductionOrderReader }): ExecutionContextReader =>
+        createMikroExecutionContextReader({ em, productionOrderReader: manufacturingProductionOrderReader }),
+    ).scoped().proxy(),
   })
 }

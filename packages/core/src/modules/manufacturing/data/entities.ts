@@ -16,7 +16,7 @@ export const MANUFACTURING_OPERATION_UNRESOLVED_UNIQUE = 'manufacturing_operatio
 @Index({
   name: MANUFACTURING_OPERATION_UNRESOLVED_UNIQUE,
   expression:
-    `create unique index "${MANUFACTURING_OPERATION_UNRESOLVED_UNIQUE}" on "manufacturing_operations" ("tenant_id", "organization_id", "order_id", "action") where "status" in ('in_progress', 'unknown')`,
+    `create unique index "${MANUFACTURING_OPERATION_UNRESOLVED_UNIQUE}" on "manufacturing_operations" ("tenant_id", "organization_id", "execution_id", "action") where "status" in ('in_progress', 'unknown')`,
 })
 export class ManufacturingOperation {
   [OptionalProps]?:
@@ -31,6 +31,7 @@ export class ManufacturingOperation {
     | 'locationId'
     | 'quantity'
     | 'sourceDocumentId'
+    | 'orderId'
     | 'documentType'
     | 'plannedFacts'
 
@@ -49,8 +50,11 @@ export class ManufacturingOperation {
   @Property({ name: 'action', type: 'text' })
   action!: OperationAction
 
-  @Property({ name: 'order_id', type: 'uuid' })
-  orderId!: string
+  @Property({ name: 'execution_id', type: 'uuid' })
+  executionId!: string
+
+  @Property({ name: 'order_id', type: 'uuid', nullable: true })
+  orderId?: string | null
 
   @Property({ name: 'payload_hash', type: 'text' })
   payloadHash!: string
@@ -114,12 +118,16 @@ export const EXECUTION_DOCUMENT_REVERSAL_UNIQUE = 'manufacturing_execution_docum
   properties: ['tenantId', 'organizationId', 'orderId', 'postedAt'],
 })
 @Index({
+  name: 'manufacturing_execution_documents_execution_idx',
+  properties: ['tenantId', 'organizationId', 'executionId', 'postedAt'],
+})
+@Index({
   name: EXECUTION_DOCUMENT_REVERSAL_UNIQUE,
   expression:
     `create unique index "${EXECUTION_DOCUMENT_REVERSAL_UNIQUE}" on "manufacturing_execution_documents" ("tenant_id", "organization_id", "reverses_document_id") where "reverses_document_id" is not null`,
 })
 export class ExecutionDocument {
-  [OptionalProps]?: 'createdAt' | 'reversesDocumentId'
+  [OptionalProps]?: 'createdAt' | 'reversesDocumentId' | 'orderId'
 
   @PrimaryKey({ type: 'uuid', defaultRaw: 'gen_random_uuid()' })
   id!: string
@@ -133,8 +141,11 @@ export class ExecutionDocument {
   @Property({ name: 'document_type', type: 'text' })
   documentType!: ExecutionDocumentType
 
-  @Property({ name: 'order_id', type: 'uuid' })
-  orderId!: string
+  @Property({ name: 'execution_id', type: 'uuid' })
+  executionId!: string
+
+  @Property({ name: 'order_id', type: 'uuid', nullable: true })
+  orderId?: string | null
 
   @Property({ name: 'operation_id', type: 'uuid' })
   operationId!: string
@@ -255,6 +266,88 @@ export class ProductionOrder {
   properties: ['tenantId', 'organizationId'],
 })
 export class ProductionOrderSequence {
+  [OptionalProps]?: 'createdAt' | 'updatedAt' | 'nextNumber'
+
+  @PrimaryKey({ type: 'uuid', defaultRaw: 'gen_random_uuid()' })
+  id!: string
+
+  @Property({ name: 'organization_id', type: 'uuid' })
+  organizationId!: string
+
+  @Property({ name: 'tenant_id', type: 'uuid' })
+  tenantId!: string
+
+  @Property({ name: 'next_number', type: 'int', default: 1 })
+  nextNumber: number = 1
+
+  @Property({ name: 'created_at', type: Date, onCreate: () => new Date() })
+  createdAt: Date = new Date()
+
+  @Property({ name: 'updated_at', type: Date, onCreate: () => new Date(), onUpdate: () => new Date() })
+  updatedAt: Date = new Date()
+}
+
+export const PRODUCTION_EXECUTION_NUMBER_UNIQUE = 'manufacturing_executions_number_unique'
+
+@Entity({ tableName: 'manufacturing_executions' })
+@Unique({
+  name: PRODUCTION_EXECUTION_NUMBER_UNIQUE,
+  properties: ['tenantId', 'organizationId', 'executionNumber'],
+})
+@Index({ name: 'manufacturing_executions_order_idx', properties: ['tenantId', 'organizationId', 'orderId'] })
+export class ProductionExecution {
+  [OptionalProps]?:
+    | 'createdAt'
+    | 'updatedAt'
+    | 'deletedAt'
+    | 'orderId'
+    | 'productVariantId'
+    | 'sourceLocationId'
+    | 'targetLocationId'
+
+  @PrimaryKey({ type: 'uuid', defaultRaw: 'gen_random_uuid()' })
+  id!: string
+
+  @Property({ name: 'organization_id', type: 'uuid' })
+  organizationId!: string
+
+  @Property({ name: 'tenant_id', type: 'uuid' })
+  tenantId!: string
+
+  @Property({ name: 'execution_number', type: 'text' })
+  executionNumber!: string
+
+  @Property({ name: 'order_id', type: 'uuid', nullable: true })
+  orderId?: string | null
+
+  @Property({ name: 'product_variant_id', type: 'uuid', nullable: true })
+  productVariantId?: string | null
+
+  @Property({ name: 'source_location_id', type: 'uuid', nullable: true })
+  sourceLocationId?: string | null
+
+  @Property({ name: 'target_location_id', type: 'uuid', nullable: true })
+  targetLocationId?: string | null
+
+  @Property({ name: 'created_by', type: 'uuid' })
+  createdBy!: string
+
+  @Property({ name: 'created_at', type: Date, onCreate: () => new Date() })
+  createdAt: Date = new Date()
+
+  @Property({ name: 'updated_at', type: Date, onCreate: () => new Date(), onUpdate: () => new Date() })
+  updatedAt: Date = new Date()
+
+  @Property({ name: 'deleted_at', type: Date, nullable: true })
+  deletedAt?: Date | null
+}
+
+@Entity({ tableName: 'manufacturing_execution_sequences' })
+@Unique({
+  name: 'manufacturing_execution_sequences_scope_unique',
+  properties: ['tenantId', 'organizationId'],
+})
+export class ProductionExecutionSequence {
   [OptionalProps]?: 'createdAt' | 'updatedAt' | 'nextNumber'
 
   @PrimaryKey({ type: 'uuid', defaultRaw: 'gen_random_uuid()' })

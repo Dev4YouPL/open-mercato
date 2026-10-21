@@ -4,7 +4,6 @@ import { parseLocaleNumber } from '@open-mercato/shared/lib/number'
 import type { CreateProductionOrderInput } from '../../data/validators'
 
 export const RELEASED_BOM_REVISIONS_URL = '/api/manufacturing/boms?status=released&pageSize=100'
-export const ACTIVE_LOCATIONS_URL = '/api/wms/locations?isActive=true&pageSize=100'
 
 const bomRevisionListSchema = z.object({
   items: z.array(
@@ -12,17 +11,6 @@ const bomRevisionListSchema = z.object({
       id: z.string(),
       outputVariantId: z.string(),
       revision: z.string(),
-    }),
-  ),
-})
-
-const locationListSchema = z.object({
-  items: z.array(
-    z.object({
-      id: z.string(),
-      code: z.string().nullable().optional(),
-      warehouse_code: z.string().nullable().optional(),
-      warehouse_name: z.string().nullable().optional(),
     }),
   ),
 })
@@ -53,19 +41,6 @@ export function toBomRevisionOptions(response: unknown): BomRevisionOption[] {
     label: `${item.revision} · ${item.outputVariantId}`,
     productVariantId: item.outputVariantId,
   }))
-}
-
-export function toLocationOptions(response: unknown): CrudFieldOption[] {
-  const parsed = locationListSchema.safeParse(response)
-
-  if (!parsed.success) return []
-
-  return parsed.data.items.map((item) => {
-    const warehouse = item.warehouse_code ?? item.warehouse_name
-    const code = item.code ?? item.id
-
-    return { value: item.id, label: warehouse ? `${warehouse} / ${code}` : code }
-  })
 }
 
 function asText(value: unknown): string | null {

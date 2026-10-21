@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import type { PlannedExecution } from './executionDocument'
+import type { PlannedDocument } from './executionDocument'
 
 export const OPERATION_ACTIONS = [
   'issueMaterial',
@@ -26,11 +26,11 @@ export const UNRESOLVED_OPERATION_STATUSES = ['in_progress', 'unknown'] as const
 export type OperationRecord = {
   operationId: string
   action: OperationAction
-  orderId: string
+  executionId: string
   payloadHash: string
   requestedBy: string
   sourceDocumentId: string | null
-  execution: PlannedExecution | null
+  plan: PlannedDocument | null
   state: OperationState
 }
 

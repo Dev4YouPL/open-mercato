@@ -1,6 +1,8 @@
 import type { ModuleSetupConfig } from '@open-mercato/shared/modules/setup'
+import { seedManufacturingExamples } from './lib/exampleSeed'
 
 export const setup: ModuleSetupConfig = {
+  seedExamples: seedManufacturingExamples,
   defaultRoleFeatures: {
     superadmin: ['manufacturing.*'],
     admin: ['manufacturing.*'],

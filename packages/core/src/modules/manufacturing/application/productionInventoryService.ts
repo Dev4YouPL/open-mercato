@@ -1,4 +1,5 @@
-import type { ExecutionDocumentType, PlannedExecution, PlannedFact, ProductionFactKind } from '../domain/executionDocument'
+import type { ExecutionContext } from '../domain/executionContext'
+import type { ExecutionDocumentType, PlannedDocument, PlannedFact, ProductionFactKind } from '../domain/executionDocument'
 import type { ManufacturingScope } from '../domain/manufacturingScope'
 import type { MovementKind, PlannedMovement } from '../domain/movement'
 import { hasAllowedPrecision, toPositiveQuantity, type PositiveQuantity } from '../domain/quantity'
@@ -6,22 +7,22 @@ import { planReversal, type ReversibleDocument } from '../domain/reversal'
 import { isTrackingSupported } from '../domain/trackingSupport'
 import type { InventoryGateway, InventoryMovementResultDto } from '../ports/inventoryGateway'
 import type { InventoryPolicyReader } from '../ports/inventoryPolicyReader'
-import type { ProductionOrderDto, ProductionOrderReader } from '../ports/productionOrderReader'
+import type { ExecutionContextReader } from '../ports/executionContextReader'
 
 export type MaterialMovementInput = {
-  orderId: string
+  executionId: string
   variantId: string
   quantity: number
 }
 
 export type ProductionConfirmationInput = {
-  orderId: string
+  executionId: string
   goodQuantity: number
   scrapQuantity: number
 }
 
 export type ExecutionPlanResultDto =
-  | { status: 'planned'; execution: PlannedExecution }
+  | { status: 'planned'; plan: PlannedDocument }
   | { status: 'rejected'; code: string; message: string }
 
 export interface ProductionInventoryService {
@@ -36,32 +37,32 @@ type MaterialActionRule = {
   documentType: ExecutionDocumentType
   factKind: ProductionFactKind
   movementKind: MovementKind
-  isAllowed: (order: ProductionOrderDto) => boolean
+  isAllowed: (context: ExecutionContext) => boolean
 }
 
 const issueMaterialRule: MaterialActionRule = {
   documentType: 'issue',
   factKind: 'material_consumed',
   movementKind: 'consume',
-  isAllowed: (order) => order.allowsIssue,
+  isAllowed: (context) => context.allowsIssue,
 }
 const returnMaterialRule: MaterialActionRule = {
   documentType: 'return',
   factKind: 'material_returned',
   movementKind: 'restock',
-  isAllowed: (order) => order.allowsReturn,
+  isAllowed: (context) => context.allowsReturn,
 }
 
 type ProductionInventoryDeps = {
   inventoryGateway: InventoryGateway
   inventoryPolicyReader: InventoryPolicyReader
-  productionOrderReader: ProductionOrderReader
+  executionContextReader: ExecutionContextReader
   scope: ManufacturingScope
 }
 
 type PlanRejection = Extract<ExecutionPlanResultDto, { status: 'rejected' }>
 
-type LoadedOrder = { status: 'loaded'; order: ProductionOrderDto }
+type LoadedContext = { status: 'loaded'; context: ExecutionContext }
 
 type ResolvedLocation = { status: 'resolved'; warehouseId: string; locationId: string }
 
@@ -73,16 +74,20 @@ function tooPrecise(): PlanRejection {
   return rejected('quantity_too_precise', 'Quantities may have at most 4 decimal places.')
 }
 
-function planned(execution: PlannedExecution): ExecutionPlanResultDto {
-  return { status: 'planned', execution }
+function planned(plan: PlannedDocument): ExecutionPlanResultDto {
+  return { status: 'planned', plan }
 }
 
-async function loadOrder(deps: ProductionInventoryDeps, orderId: string): Promise<LoadedOrder | PlanRejection> {
-  const order = await deps.productionOrderReader.getForExecution(orderId, deps.scope)
+function notAllowed(): PlanRejection {
+  return rejected('action_not_allowed', 'The production order of this execution does not allow this action.')
+}
 
-  if (!order) return rejected('order_not_found', 'Production order was not found.')
+async function loadContext(deps: ProductionInventoryDeps, executionId: string): Promise<LoadedContext | PlanRejection> {
+  const context = await deps.executionContextReader.getContext(executionId, deps.scope)
 
-  return { status: 'loaded', order }
+  if (!context) return rejected('execution_not_found', 'Production execution was not found.')
+
+  return { status: 'loaded', context }
 }
 
 async function checkTrackingSupport(
@@ -102,15 +107,15 @@ async function checkTrackingSupport(
   return null
 }
 
-async function resolveOrderLocation(
+async function resolveLocation(
   deps: ProductionInventoryDeps,
   locationId: string | null,
 ): Promise<ResolvedLocation | PlanRejection> {
-  if (!locationId) return rejected('location_missing', 'Production order has no location for this action.')
+  if (!locationId) return rejected('location_missing', 'The execution has no location for this action.')
 
   const location = await deps.inventoryPolicyReader.getActiveLocation(locationId, deps.scope)
 
-  if (!location) return rejected('location_unavailable', 'Production order location is missing or inactive in WMS.')
+  if (!location) return rejected('location_unavailable', 'The execution location is missing or inactive in WMS.')
 
   return { status: 'resolved', warehouseId: location.warehouseId, locationId }
 }
@@ -125,16 +130,19 @@ async function planMaterial(
   if (quantity === null) return rejected('invalid_quantity', 'Movement quantity must be a positive number.')
   if (!hasAllowedPrecision(quantity)) return tooPrecise()
 
-  const loaded = await loadOrder(deps, input.orderId)
+  const loaded = await loadContext(deps, input.executionId)
 
   if (loaded.status === 'rejected') return loaded
-  if (!rule.isAllowed(loaded.order)) return rejected('action_not_allowed', 'Production order does not allow this action.')
+
+  const { context } = loaded
+
+  if (!rule.isAllowed(context)) return notAllowed()
 
   const trackingRejection = await checkTrackingSupport(deps, input.variantId)
 
   if (trackingRejection) return trackingRejection
 
-  const location = await resolveOrderLocation(deps, loaded.order.sourceLocationId)
+  const location = await resolveLocation(deps, context.sourceLocationId)
 
   if (location.status === 'rejected') return location
 
@@ -148,6 +156,7 @@ async function planMaterial(
 
   return planned({
     documentType: rule.documentType,
+    orderId: context.orderId,
     movement,
     facts: [movingFact(rule.factKind, movement)],
   })
@@ -164,10 +173,10 @@ function movingFact(factKind: ProductionFactKind, movement: PlannedMovement): Pl
   }
 }
 
-function scrapFact(order: ProductionOrderDto, quantity: PositiveQuantity): PlannedFact {
+function scrapFact(variantId: string, quantity: PositiveQuantity): PlannedFact {
   return {
     factKind: 'scrap_recorded',
-    variantId: order.productVariantId,
+    variantId,
     warehouseId: null,
     locationId: null,
     quantity,
@@ -194,29 +203,33 @@ async function planConfirmation(
 
   if (!hasAllowedPrecision(goodQuantity) || !hasAllowedPrecision(scrapQuantity)) return tooPrecise()
 
-  const loaded = await loadOrder(deps, input.orderId)
+  const loaded = await loadContext(deps, input.executionId)
 
   if (loaded.status === 'rejected') return loaded
 
-  const { order } = loaded
+  const { context } = loaded
+  const productVariantId = context.productVariantId
 
-  if (!order.allowsConfirmation) return rejected('action_not_allowed', 'Production order does not allow this action.')
+  if (!context.allowsConfirmation) return notAllowed()
+  if (!productVariantId) return rejected('product_variant_missing', 'Set the product variant on the execution before confirming production.')
 
-  const scrapFacts = scrapQuantity === 0 ? [] : [scrapFact(order, scrapQuantity)]
+  const scrapFacts = scrapQuantity === 0 ? [] : [scrapFact(productVariantId, scrapQuantity)]
 
-  if (goodQuantity === 0) return planned({ documentType: 'confirmation', movement: null, facts: scrapFacts })
+  if (goodQuantity === 0) {
+    return planned({ documentType: 'confirmation', orderId: context.orderId, movement: null, facts: scrapFacts })
+  }
 
-  const trackingRejection = await checkTrackingSupport(deps, order.productVariantId)
+  const trackingRejection = await checkTrackingSupport(deps, productVariantId)
 
   if (trackingRejection) return trackingRejection
 
-  const location = await resolveOrderLocation(deps, order.targetLocationId)
+  const location = await resolveLocation(deps, context.targetLocationId)
 
   if (location.status === 'rejected') return location
 
   const movement: PlannedMovement = {
     kind: 'receiveOutput',
-    variantId: order.productVariantId,
+    variantId: productVariantId,
     warehouseId: location.warehouseId,
     locationId: location.locationId,
     quantity: goodQuantity,
@@ -224,6 +237,7 @@ async function planConfirmation(
 
   return planned({
     documentType: 'confirmation',
+    orderId: context.orderId,
     movement,
     facts: [movingFact('output_received', movement), ...scrapFacts],
   })
@@ -233,7 +247,7 @@ async function planDocumentReversal(
   deps: ProductionInventoryDeps,
   document: ReversibleDocument,
 ): Promise<ExecutionPlanResultDto> {
-  const loaded = await loadOrder(deps, document.orderId)
+  const loaded = await loadContext(deps, document.executionId)
 
   if (loaded.status === 'rejected') return loaded
 
@@ -245,7 +259,7 @@ async function planDocumentReversal(
     case 'unsupported':
       return rejected('reversal_not_supported', 'This document cannot be reversed with a single inventory movement.')
     case 'planned':
-      return planned(plan.execution)
+      return planned(plan.plan)
   }
 }
 

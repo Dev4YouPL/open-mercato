@@ -5,7 +5,6 @@ import { PRODUCTION_ORDER_LIST_SORT_FIELDS } from '../../data/validators'
 
 export const ORDER_LIST_PAGE_SIZE = 25
 export const ORDERS_API_PATH = '/api/manufacturing/orders'
-export const CATALOG_VARIANTS_API_PATH = '/api/catalog/variants'
 
 export const ORDER_STATUS_BADGES: StatusMap<ProductionOrderStatus> = {
   draft: 'neutral',
@@ -34,10 +33,6 @@ export type OrderListRequest = {
 
 const dueRangeSchema = z.object({ from: z.string().optional(), to: z.string().optional() })
 
-const variantListSchema = z.object({
-  items: z.array(z.object({ id: z.string(), name: z.string().nullish(), sku: z.string().nullish() })),
-})
-
 function isSortField(value: string): value is SortField {
   return (PRODUCTION_ORDER_LIST_SORT_FIELDS as readonly string[]).includes(value)
 }
@@ -65,24 +60,4 @@ export function buildOrderListQuery({ page, search, filters, sorting }: OrderLis
   }
 
   return params.toString()
-}
-
-export function toVariantLabels(response: unknown): Record<string, string> {
-  const parsed = variantListSchema.safeParse(response)
-
-  if (!parsed.success) return {}
-
-  return Object.fromEntries(
-    parsed.data.items.map((variant) => {
-      const name = variant.name?.trim()
-      const sku = variant.sku?.trim()
-      const label = name && sku && name !== sku ? `${name} (${sku})` : name || sku || variant.id
-
-      return [variant.id, label]
-    }),
-  )
-}
-
-export function toVariantOptions(response: unknown): { value: string; label: string }[] {
-  return Object.entries(toVariantLabels(response)).map(([value, label]) => ({ value, label }))
 }

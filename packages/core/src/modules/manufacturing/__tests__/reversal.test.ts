@@ -22,7 +22,7 @@ const scrapFact: ProductionFactDraft = {
 }
 
 function documentWith(facts: ProductionFactDraft[], reversedByDocumentId: string | null = null): ReversibleDocument {
-  return { id: 'document-1', orderId: 'order-1', reversedByDocumentId, facts }
+  return { id: 'document-1', executionId: 'execution-1', orderId: 'order-1', reversedByDocumentId, facts }
 }
 
 describe('document reversal', () => {
@@ -34,8 +34,9 @@ describe('document reversal', () => {
   ] as const)('reverses a %s fact with a %s movement and a %s fact from its snapshot', (factKind, kind, reversedKind) => {
     expect(planReversal(documentWith([{ ...issuedFact, factKind }]))).toEqual({
       status: 'planned',
-      execution: {
+      plan: {
         documentType: 'reversal',
+        orderId: 'order-1',
         movement: { kind, variantId: 'variant-1', warehouseId: 'warehouse-1', locationId: 'location-1', quantity: 4 },
         facts: [
           { factKind: reversedKind, variantId: 'variant-1', warehouseId: 'warehouse-1', locationId: 'location-1', quantity: 4, moves: true },
@@ -47,8 +48,9 @@ describe('document reversal', () => {
   it('reverses a scrap-only document without any movement', () => {
     expect(planReversal(documentWith([scrapFact]))).toEqual({
       status: 'planned',
-      execution: {
+      plan: {
         documentType: 'reversal',
+        orderId: 'order-1',
         movement: null,
         facts: [
           { factKind: 'scrap_reversed', variantId: 'product-1', warehouseId: null, locationId: null, quantity: 2, moves: false },
@@ -60,8 +62,8 @@ describe('document reversal', () => {
   it('reverses a confirmation with output and scrap as one movement plus both opposite facts', () => {
     const plan = planReversal(documentWith([{ ...issuedFact, factKind: 'output_received' }, scrapFact]))
 
-    expect(plan).toMatchObject({ status: 'planned', execution: { movement: { kind: 'consume' } } })
-    expect(plan.status === 'planned' && plan.execution.facts.map((fact) => [fact.factKind, fact.moves])).toEqual([
+    expect(plan).toMatchObject({ status: 'planned', plan: { movement: { kind: 'consume' } } })
+    expect(plan.status === 'planned' && plan.plan.facts.map((fact) => [fact.factKind, fact.moves])).toEqual([
       ['output_reversed', true],
       ['scrap_reversed', false],
     ])
@@ -70,7 +72,7 @@ describe('document reversal', () => {
   it('reverses a scrap reversal back to recorded scrap', () => {
     const plan = planReversal(documentWith([{ ...scrapFact, factKind: 'scrap_reversed' }]))
 
-    expect(plan.status === 'planned' && plan.execution.facts[0].factKind).toBe('scrap_recorded')
+    expect(plan.status === 'planned' && plan.plan.facts[0].factKind).toBe('scrap_recorded')
   })
 
   it('refuses a document that was already reversed', () => {

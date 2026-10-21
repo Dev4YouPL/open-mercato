@@ -18,6 +18,7 @@ const orderRow = {
   productVariantId: 'table',
   sourceLocationId: 'issue-location',
   targetLocationId: 'receipt-location',
+  plannedQuantity: '10.0000',
   status: 'released',
 }
 
@@ -32,6 +33,7 @@ describe('production order reader', () => {
       productVariantId: 'table',
       sourceLocationId: 'issue-location',
       targetLocationId: 'receipt-location',
+      plannedQuantity: 10,
       allowsIssue: true,
       allowsReturn: true,
       allowsConfirmation: true,

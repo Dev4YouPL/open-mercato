@@ -1,6 +1,6 @@
 /** @jest-environment node */
 
-import { buildOrderListQuery, toVariantLabels, toVariantOptions } from '../orderListConfig'
+import { buildOrderListQuery } from '../orderListConfig'
 
 const base = { page: 1, search: '', filters: {}, sorting: [] }
 
@@ -44,24 +44,5 @@ describe('production order list config', () => {
         sorting: [{ id: 'productVariantId', desc: true }],
       }),
     ).toBe('page=1&pageSize=25')
-  })
-
-  it('labels variants by name and SKU, falling back to whichever exists', () => {
-    expect(
-      toVariantLabels({
-        items: [
-          { id: 'variant-1', name: 'Oak table', sku: 'TBL-OAK' },
-          { id: 'variant-2', name: null, sku: 'TBL-PINE' },
-          { id: 'variant-3', name: null, sku: null },
-        ],
-      }),
-    ).toEqual({ 'variant-1': 'Oak table (TBL-OAK)', 'variant-2': 'TBL-PINE', 'variant-3': 'variant-3' })
-  })
-
-  it('turns variants into filter options and tolerates unexpected responses', () => {
-    expect(toVariantOptions({ items: [{ id: 'variant-1', name: 'Oak table', sku: 'Oak table' }] })).toEqual([
-      { value: 'variant-1', label: 'Oak table' },
-    ])
-    expect(toVariantOptions({ error: 'forbidden' })).toEqual([])
   })
 })

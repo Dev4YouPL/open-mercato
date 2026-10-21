@@ -1,6 +1,6 @@
 /** @jest-environment node */
 
-import { buildCreateOrderPayload, toBomRevisionOptions, toLocationOptions, type BomRevisionOption } from '../orderFormConfig'
+import { buildCreateOrderPayload, toBomRevisionOptions, type BomRevisionOption } from '../orderFormConfig'
 
 const revisions: BomRevisionOption[] = [{ value: 'revision-1', label: 'R1 · table', productVariantId: 'table' }]
 
@@ -11,23 +11,8 @@ describe('production order form config', () => {
     )
   })
 
-  it('maps WMS locations to warehouse and location labels', () => {
-    expect(
-      toLocationOptions({
-        items: [
-          { id: 'location-1', code: 'A-1', warehouse_code: 'WH1' },
-          { id: 'location-2', code: 'B-1', warehouse_code: null, warehouse_name: null },
-        ],
-      }),
-    ).toEqual([
-      { value: 'location-1', label: 'WH1 / A-1' },
-      { value: 'location-2', label: 'B-1' },
-    ])
-  })
-
   it('returns no options for an unexpected response', () => {
     expect(toBomRevisionOptions({ data: [] })).toEqual([])
-    expect(toLocationOptions(null)).toEqual([])
   })
 
   it('builds the payload with the product variant taken from the selected revision', () => {
